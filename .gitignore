@@ -1,0 +1,25 @@
+# Data — never commit (GBs)
+*.zip
+*.csv
+telemetry_*/
+*.duckdb
+*.parquet
+
+# Build
+/build/
+cmake-build-*/
+*.o
+*.obj
+*.a
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Claude local
+.claude/settings.local.json
+
+# OS
+.DS_Store
