@@ -12,12 +12,13 @@ void CapEventExtractor::process(const RawRow& row, std::vector<CapEvent>& out) {
             continue;
         }
         if (c > *last) {                  // real cap applied
+            const int delta = static_cast<int>(c - *last);
             CapEvent e;
             e.head_id = h + 1;
             e.ts = row.ts;
             e.cap_seq = c;
-            e.delta = 1;                  // generalized in Task 2
-            e.aggregated = false;         // generalized in Task 2
+            e.delta = delta;
+            e.aggregated = delta > 1;
             e.is_fault = false;           // set in Task 3
             // app_torque, status: also set in Task 3 (left 0.0 until then)
             e.reset = false;

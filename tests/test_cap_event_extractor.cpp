@@ -58,4 +58,24 @@ TEST(CapEventExtractor, HeadsAreIndependent) {
     EXPECT_EQ(out[0].head_id, 1);
 }
 
+TEST(CapEventExtractor, SingleIncrementHasDeltaOne) {
+    mas::CapEventExtractor ex;
+    std::vector<mas::CapEvent> out;
+    ex.process(makeRow("t0", {{1, 100}}), out);
+    ex.process(makeRow("t1", {{1, 101}}), out);
+    ASSERT_EQ(out.size(), 1u);
+    EXPECT_EQ(out[0].delta, 1);
+    EXPECT_FALSE(out[0].aggregated);
+}
+
+TEST(CapEventExtractor, DeltaGreaterThanOneIsAggregated) {
+    mas::CapEventExtractor ex;
+    std::vector<mas::CapEvent> out;
+    ex.process(makeRow("t0", {{1, 100}}), out);
+    ex.process(makeRow("t1", {{1, 103}}), out);   // production faster than polling
+    ASSERT_EQ(out.size(), 1u);
+    EXPECT_EQ(out[0].delta, 3);
+    EXPECT_TRUE(out[0].aggregated);
+}
+
 } // namespace
