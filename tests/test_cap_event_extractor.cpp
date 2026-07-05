@@ -98,6 +98,10 @@ TEST(CapEventExtractor, CounterResetEmitsResetMarker) {
     EXPECT_TRUE(out[0].reset);
     EXPECT_EQ(out[0].cap_seq, 40);
     EXPECT_EQ(out[0].delta, 0);
+    ex.process(makeRow("t2", {{1, 41}}), out);   // next cap after reset
+    ASSERT_EQ(out.size(), 2u);
+    EXPECT_EQ(out[1].delta, 1);                  // 41-40: last_count was re-seeded to 40
+    EXPECT_FALSE(out[1].reset);
 }
 
 TEST(CapEventExtractor, DeltaSumEqualsFinalMinusInitialAcrossSpan) {
