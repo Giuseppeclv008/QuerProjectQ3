@@ -1,5 +1,6 @@
 #pragma once
 #include "mas/CapEvent.hpp"
+#include <cstddef>
 #include <fstream>
 #include <string>
 
@@ -12,8 +13,12 @@ public:
     explicit CsvRawReader(const std::string& path);
     bool next(RawRow& out);   // false at EOF
 
+    bool is_open() const;          // false if the file could not be opened
+    std::size_t skipped() const;   // rows dropped: short or malformed numeric fields
+
 private:
     std::ifstream in_;
+    std::size_t skipped_ = 0;
 };
 
 } // namespace mas
