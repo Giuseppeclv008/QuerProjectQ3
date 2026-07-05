@@ -11,6 +11,7 @@ long long clean_file(const std::string& in_path, const std::string& out_path,
     CsvRawReader reader(in_path);
     if (!reader.is_open()) return -1;   // input missing/unreadable
     std::ofstream out(out_path);
+    if (!out.is_open()) return -2;      // output cannot be created
     out << "machine_id,head_id,ts,cap_seq,app_torque,status,delta,is_fault,aggregated,reset\n";
 
     CapEventExtractor ex;
@@ -28,6 +29,8 @@ long long clean_file(const std::string& in_path, const std::string& out_path,
             ++n;
         }
     }
+    out.flush();
+    if (out.fail()) return -2;          // write error (e.g. disk full)
     return n;
 }
 

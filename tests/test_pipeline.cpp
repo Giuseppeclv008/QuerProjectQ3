@@ -60,4 +60,16 @@ TEST(Pipeline, CleanFileReturnsMinusOneOnMissingInput) {
     std::remove("pipe_unused_out.csv");
 }
 
+TEST(Pipeline, CleanFileReturnsMinusTwoOnUnwritableOutput) {
+    const std::string in = "pipe_in_unwritable.csv";
+    std::string header = "timestamp";
+    for (int i = 0; i < 108; ++i) header += ",c";
+    std::ostringstream body;
+    body << header << "\n" << rawLine("t0", 100) << "\n" << rawLine("t1", 101) << "\n";
+    writeFile(in, body.str());
+    const long long n = mas::clean_file(in, "no_such_dir_xyz/out.csv", "MCC");
+    EXPECT_EQ(n, -2);
+    std::remove(in.c_str());
+}
+
 } // namespace
