@@ -78,4 +78,15 @@ TEST(CapEventExtractor, DeltaGreaterThanOneIsAggregated) {
     EXPECT_TRUE(out[0].aggregated);
 }
 
+TEST(CapEventExtractor, CapturesTorqueStatusAndFaultFlag) {
+    mas::CapEventExtractor ex;
+    std::vector<mas::CapEvent> out;
+    ex.process(makeRow("t0", {{2, 200}}, 2.0, 2.0), out);        // seed, OK
+    ex.process(makeRow("t1", {{2, 201}}, 1.907, 65.0), out);     // fault cap
+    ASSERT_EQ(out.size(), 1u);
+    EXPECT_DOUBLE_EQ(out[0].app_torque, 1.907);
+    EXPECT_DOUBLE_EQ(out[0].status, 65.0);
+    EXPECT_TRUE(out[0].is_fault);
+}
+
 } // namespace

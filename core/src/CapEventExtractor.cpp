@@ -19,8 +19,9 @@ void CapEventExtractor::process(const RawRow& row, std::vector<CapEvent>& out) {
             e.cap_seq = c;
             e.delta = delta;
             e.aggregated = delta > 1;
-            e.is_fault = false;           // set in Task 3
-            // app_torque, status: also set in Task 3 (left 0.0 until then)
+            e.app_torque = row.torque[h];
+            e.status = row.status[h];
+            e.is_fault = is_fault_status(row.status[h]);
             e.reset = false;
             out.push_back(e);
             last = c;
