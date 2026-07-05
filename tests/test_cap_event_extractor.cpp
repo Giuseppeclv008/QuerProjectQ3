@@ -89,4 +89,26 @@ TEST(CapEventExtractor, CapturesTorqueStatusAndFaultFlag) {
     EXPECT_TRUE(out[0].is_fault);
 }
 
+TEST(CapEventExtractor, CounterResetEmitsResetMarker) {
+    mas::CapEventExtractor ex;
+    std::vector<mas::CapEvent> out;
+    ex.process(makeRow("t0", {{1, 100}}), out);
+    ex.process(makeRow("t1", {{1, 40}}), out);    // reset / rollover
+    ASSERT_EQ(out.size(), 1u);
+    EXPECT_TRUE(out[0].reset);
+    EXPECT_EQ(out[0].cap_seq, 40);
+    EXPECT_EQ(out[0].delta, 0);
+}
+
+TEST(CapEventExtractor, DeltaSumEqualsFinalMinusInitialAcrossSpan) {
+    mas::CapEventExtractor ex;
+    std::vector<mas::CapEvent> out;
+    const long long seq[] = {1000, 1000, 1001, 1001, 1004, 1004, 1005};
+    for (int i = 0; i < 7; ++i)
+        ex.process(makeRow("t" + std::to_string(i), {{3, seq[i]}}), out);
+    long long sum = 0;
+    for (const auto& e : out) sum += e.delta;
+    EXPECT_EQ(sum, 1005 - 1000);   // 5 caps, independent of poll cadence
+}
+
 } // namespace

@@ -26,6 +26,20 @@ void CapEventExtractor::process(const RawRow& row, std::vector<CapEvent>& out) {
             out.push_back(e);
             last = c;
         }
+        else if (c < *last) {             // counter reset / rollover
+            CapEvent e;
+            e.head_id = h + 1;
+            e.ts = row.ts;
+            e.cap_seq = c;
+            e.app_torque = row.torque[h];
+            e.status = row.status[h];
+            e.delta = 0;
+            e.is_fault = is_fault_status(row.status[h]);
+            e.aggregated = false;
+            e.reset = true;
+            out.push_back(e);
+            last = c;
+        }
         // held (c == *last): emit nothing
     }
 }
