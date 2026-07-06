@@ -90,8 +90,12 @@ long long DuckDbEventStore::count() const {
     return res->GetValue(0, 0).GetValue<int64_t>();
 }
 
-void DuckDbEventStore::export_parquet(const std::string&) {
-    throw std::runtime_error("export_parquet: implemented in Task 5");
+void DuckDbEventStore::export_parquet(const std::string& parquet_path) {
+    // Note: path is spliced into SQL — fine for trusted local paths, but a
+    // path containing a single quote would break the statement.
+    execOrThrow(impl_->con,
+        "COPY (SELECT * FROM cap_events ORDER BY head_id, ts) TO '" +
+        parquet_path + "' (FORMAT PARQUET)");
 }
 
 } // namespace mas

@@ -101,4 +101,31 @@ TEST(DuckDbEventStore, ReopenKeepsRowsAndUpsertsAcrossRuns) {
     removeDb(path);
 }
 
+TEST(DuckDbEventStore, ExportParquetRoundtrips) {
+    const std::string path = "t_store_parquet.duckdb";
+    const std::string pq = "t_store_events.parquet";
+    removeDb(path);
+    std::remove(pq.c_str());
+
+    mas::DuckDbEventStore store(path, "MCC1");
+    std::vector<mas::CapEvent> batch = {
+        ev(1, "2026-02-01T00:00:01.000", 101),
+        ev(1, "2026-02-01T00:00:05.000", 102),
+        ev(7, "2026-02-01T00:00:03.000", 900, 2),
+    };
+    store.write(batch);
+    store.export_parquet(pq);
+
+    duckdb::DuckDB mem(nullptr);
+    duckdb::Connection con(mem);
+    auto res = con.Query("SELECT COUNT(*), MIN(head_id), MAX(cap_seq) FROM read_parquet('" + pq + "')");
+    ASSERT_FALSE(res->HasError()) << res->GetError();
+    EXPECT_EQ(res->GetValue(0, 0).GetValue<int64_t>(), 3);
+    EXPECT_EQ(res->GetValue(1, 0).GetValue<int16_t>(), 1);
+    EXPECT_EQ(res->GetValue(2, 0).GetValue<int64_t>(), 900);
+
+    std::remove(pq.c_str());
+    removeDb(path);
+}
+
 } // namespace
