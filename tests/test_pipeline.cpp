@@ -1,5 +1,6 @@
 #include "mas/Pipeline.hpp"
 #include "mas/EventStore.hpp"
+#include "mas/DuckDbEventStore.hpp"
 #include <gtest/gtest.h>
 #include <cstdio>
 #include <fstream>
@@ -106,6 +107,31 @@ TEST(Pipeline, CleanFileWithStoreReturnsMinusOneOnMissingInput) {
     FakeEventStore fake;
     EXPECT_EQ(mas::clean_file("no_such_input_file.csv", fake), -1);
     EXPECT_TRUE(fake.got.empty());
+}
+
+TEST(Pipeline, CleanFileIntoDuckDbTwiceIsIdempotent) {
+    const std::string in = "pipe_in_ddb.csv", db = "pipe_out_ddb.duckdb";
+    std::remove(db.c_str());
+    std::remove((db + ".wal").c_str());
+
+    std::string header = "timestamp";
+    for (int i = 0; i < 108; ++i) header += ",c";
+    std::ostringstream body;
+    body << header << "\n";
+    body << rawLine("2026-02-01T00:00:00.000", 100) << "\n";   // seed
+    body << rawLine("2026-02-01T00:00:01.000", 101) << "\n";   // +1
+    body << rawLine("2026-02-01T00:00:02.000", 104) << "\n";   // +3
+    writeFile(in, body.str());
+
+    mas::DuckDbEventStore store(db, "MCCtest");
+    EXPECT_EQ(mas::clean_file(in, store), 2);
+    EXPECT_EQ(store.count(), 2);
+    EXPECT_EQ(mas::clean_file(in, store), 2);   // fresh extractor emits the same 2 events
+    EXPECT_EQ(store.count(), 2);                // upsert drops them — reprocessing is safe
+
+    std::remove(in.c_str());
+    std::remove(db.c_str());
+    std::remove((db + ".wal").c_str());
 }
 
 } // namespace
