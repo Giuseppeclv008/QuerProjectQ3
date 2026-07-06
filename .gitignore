@@ -4,6 +4,7 @@
 telemetry_*/
 *.duckdb
 *.parquet
+*.wal
 
 # Build
 /build/

@@ -31,8 +31,10 @@ add_library(mas_core
   core/src/CapEventExtractor.cpp
   core/src/CsvRawReader.cpp
   core/src/CsvEventStore.cpp
+  core/src/DuckDbEventStore.cpp
   core/src/Pipeline.cpp)
 target_include_directories(mas_core PUBLIC core/include)
+target_link_libraries(mas_core PRIVATE duckdb_imported)
 
 add_executable(clean_exe core/src/clean_main.cpp)
 target_link_libraries(clean_exe PRIVATE mas_core)
@@ -43,7 +45,8 @@ add_executable(unit_tests
   tests/test_cap_event_extractor.cpp
   tests/test_csv_raw_reader.cpp
   tests/test_pipeline.cpp
-  tests/test_duckdb_smoke.cpp)
+  tests/test_duckdb_smoke.cpp
+  tests/test_duckdb_event_store.cpp)
 target_link_libraries(unit_tests PRIVATE mas_core GTest::gtest_main duckdb_imported)
 set_target_properties(unit_tests clean_exe PROPERTIES
   BUILD_RPATH "${duckdb_prebuilt_SOURCE_DIR}")
