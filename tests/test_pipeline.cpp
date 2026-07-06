@@ -1,9 +1,11 @@
 #include "mas/Pipeline.hpp"
+#include "mas/EventStore.hpp"
 #include <gtest/gtest.h>
 #include <cstdio>
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -70,6 +72,40 @@ TEST(Pipeline, CleanFileReturnsMinusTwoOnUnwritableOutput) {
     const long long n = mas::clean_file(in, "no_such_dir_xyz/out.csv", "MCC");
     EXPECT_EQ(n, -2);
     std::remove(in.c_str());
+}
+
+struct FakeEventStore : mas::IEventStore {
+    std::vector<mas::CapEvent> got;
+    void write(std::span<const mas::CapEvent> events) override {
+        got.insert(got.end(), events.begin(), events.end());
+    }
+};
+
+TEST(Pipeline, CleanFileWritesEventsToInjectedStore) {
+    const std::string in = "pipe_in_seam.csv";
+    std::string header = "timestamp";
+    for (int i = 0; i < 108; ++i) header += ",c";
+    std::ostringstream body;
+    body << header << "\n";
+    body << rawLine("t0", 100) << "\n";   // seed
+    body << rawLine("t1", 101) << "\n";   // +1
+    body << rawLine("t2", 104) << "\n";   // +3 (aggregated)
+    writeFile(in, body.str());
+
+    FakeEventStore fake;
+    const long long n = mas::clean_file(in, fake);
+    EXPECT_EQ(n, 2);
+    ASSERT_EQ(fake.got.size(), 2u);
+    EXPECT_EQ(fake.got[0].cap_seq, 101);
+    EXPECT_EQ(fake.got[1].delta, 3);
+
+    std::remove(in.c_str());
+}
+
+TEST(Pipeline, CleanFileWithStoreReturnsMinusOneOnMissingInput) {
+    FakeEventStore fake;
+    EXPECT_EQ(mas::clean_file("no_such_input_file.csv", fake), -1);
+    EXPECT_TRUE(fake.got.empty());
 }
 
 } // namespace

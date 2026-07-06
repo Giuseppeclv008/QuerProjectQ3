@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 project(mas_telemetry LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include(FetchContent)
@@ -13,6 +13,7 @@ FetchContent_MakeAvailable(googletest)
 add_library(mas_core
   core/src/CapEventExtractor.cpp
   core/src/CsvRawReader.cpp
+  core/src/CsvEventStore.cpp
   core/src/Pipeline.cpp)
 target_include_directories(mas_core PUBLIC core/include)
 
