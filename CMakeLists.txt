@@ -70,6 +70,10 @@ add_library(mas_core
 target_include_directories(mas_core PUBLIC core/include)
 target_link_libraries(mas_core PRIVATE duckdb_imported)
 
+add_library(mas_transport core/src/ZmqTransport.cpp)
+target_include_directories(mas_transport PUBLIC core/include)
+target_link_libraries(mas_transport PUBLIC cppzmq)
+
 add_executable(clean_exe core/src/clean_main.cpp)
 target_link_libraries(clean_exe PRIVATE mas_core)
 set_target_properties(clean_exe PROPERTIES OUTPUT_NAME clean)
@@ -82,8 +86,9 @@ add_executable(unit_tests
   tests/test_duckdb_smoke.cpp
   tests/test_duckdb_event_store.cpp
   tests/test_zmq_smoke.cpp
-  tests/test_message.cpp)
-target_link_libraries(unit_tests PRIVATE mas_core GTest::gtest_main duckdb_imported cppzmq)
+  tests/test_message.cpp
+  tests/test_zmq_transport.cpp)
+target_link_libraries(unit_tests PRIVATE mas_core mas_transport GTest::gtest_main duckdb_imported cppzmq)
 target_include_directories(unit_tests PRIVATE tests)
 set_target_properties(unit_tests clean_exe PROPERTIES
   BUILD_RPATH "${duckdb_prebuilt_SOURCE_DIR}")
