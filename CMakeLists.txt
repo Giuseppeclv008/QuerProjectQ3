@@ -84,6 +84,14 @@ add_executable(merge_exe core/src/merge_main.cpp)
 target_link_libraries(merge_exe PRIVATE mas_core)
 set_target_properties(merge_exe PROPERTIES OUTPUT_NAME mas_merge)
 
+add_executable(worker_exe core/src/worker_main.cpp)
+target_link_libraries(worker_exe PRIVATE mas_core mas_transport)
+set_target_properties(worker_exe PROPERTIES OUTPUT_NAME mas_worker)
+
+add_executable(coordinator_exe core/src/coordinator_main.cpp)
+target_link_libraries(coordinator_exe PRIVATE mas_core mas_transport)
+set_target_properties(coordinator_exe PROPERTIES OUTPUT_NAME mas_coordinator)
+
 enable_testing()
 add_executable(unit_tests
   tests/test_cap_event_extractor.cpp
@@ -98,7 +106,7 @@ add_executable(unit_tests
   tests/test_coordinator.cpp)
 target_link_libraries(unit_tests PRIVATE mas_core mas_transport GTest::gtest_main duckdb_imported cppzmq)
 target_include_directories(unit_tests PRIVATE tests)
-set_target_properties(unit_tests clean_exe merge_exe PROPERTIES
+set_target_properties(unit_tests clean_exe merge_exe worker_exe coordinator_exe PROPERTIES
   BUILD_RPATH "${duckdb_prebuilt_SOURCE_DIR}")
 include(GoogleTest)
 gtest_discover_tests(unit_tests)
