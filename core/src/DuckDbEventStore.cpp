@@ -109,4 +109,15 @@ void DuckDbEventStore::export_parquet(const std::string& parquet_path) {
         parquet_path + "' (FORMAT PARQUET)");
 }
 
+void DuckDbEventStore::merge_from(const std::string& other_db_path) {
+    // Same trusted-local-path caveat as export_parquet: the path is spliced
+    // into SQL, so a quote in it would break the statement.
+    execOrThrow(impl_->con, "ATTACH '" + other_db_path + "' AS src (READ_ONLY)");
+    execOrThrow(impl_->con, R"sql(
+        INSERT OR IGNORE INTO cap_events (machine_id, head_id, ts, cap_seq, app_torque, status, delta, is_fault, aggregated, is_reset)
+        SELECT machine_id, head_id, ts, cap_seq, app_torque, status, delta, is_fault, aggregated, is_reset
+        FROM src.cap_events)sql");
+    execOrThrow(impl_->con, "DETACH src");
+}
+
 } // namespace mas

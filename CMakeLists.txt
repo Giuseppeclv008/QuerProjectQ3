@@ -80,6 +80,10 @@ add_executable(clean_exe core/src/clean_main.cpp)
 target_link_libraries(clean_exe PRIVATE mas_core)
 set_target_properties(clean_exe PROPERTIES OUTPUT_NAME clean)
 
+add_executable(merge_exe core/src/merge_main.cpp)
+target_link_libraries(merge_exe PRIVATE mas_core)
+set_target_properties(merge_exe PROPERTIES OUTPUT_NAME mas_merge)
+
 enable_testing()
 add_executable(unit_tests
   tests/test_cap_event_extractor.cpp
@@ -94,7 +98,7 @@ add_executable(unit_tests
   tests/test_coordinator.cpp)
 target_link_libraries(unit_tests PRIVATE mas_core mas_transport GTest::gtest_main duckdb_imported cppzmq)
 target_include_directories(unit_tests PRIVATE tests)
-set_target_properties(unit_tests clean_exe PROPERTIES
+set_target_properties(unit_tests clean_exe merge_exe PROPERTIES
   BUILD_RPATH "${duckdb_prebuilt_SOURCE_DIR}")
 include(GoogleTest)
 gtest_discover_tests(unit_tests)
