@@ -157,4 +157,43 @@ TEST(DuckDbEventStore, MergeFromUnionsStoresIdempotently) {
     removeDb(a); removeDb(b); removeDb(dst);
 }
 
+// --- Deferred from Plan 2's final review ---
+
+TEST(DuckDbEventStore, ConstructorThrowsWhenParentDirectoryMissing) {
+    // The ctor's open-failure path was untested. A path inside a directory
+    // that doesn't exist can't be created by DuckDB, so the ctor should
+    // wrap the underlying failure (see DuckDbEventStore.hpp: "Throws
+    // std::runtime_error if the database cannot be opened.").
+    EXPECT_THROW(
+        mas::DuckDbEventStore store("no_such_dir_for_ctor_test/foo.duckdb", "MCC1"),
+        std::runtime_error);
+}
+
+TEST(DuckDbEventStore, WriteHandlesBatchLargerThanPipelineKBatchSize) {
+    // Deferral note: this was filed as a "kBatch flush-boundary" test on the
+    // premise that DuckDbEventStore.cpp has an internal kBatch constant
+    // whose flush branch is untested. On inspection, no such constant or
+    // branch exists in this file: write() appends the whole input span via
+    // one duckdb::Appender session unconditionally, regardless of size.
+    // kBatch (=8192) actually lives in Pipeline.cpp, where clean_file()
+    // chunks CapEvents before calling store.write() repeatedly — that's a
+    // different component. Kept as a regression test at the same scale: it
+    // exercises write() with kBatch+1 events in a single call (larger than
+    // any existing test), confirming the Appender-based path has no hidden
+    // row-count limitation of its own.
+    const std::string path = "t_store_large_batch.duckdb";
+    removeDb(path);
+    mas::DuckDbEventStore store(path, "MCC1");
+
+    constexpr long long kBatch = 8192;   // mirrors Pipeline.cpp's chunk size
+    std::vector<mas::CapEvent> batch;
+    batch.reserve(static_cast<std::size_t>(kBatch + 1));
+    for (long long seq = 0; seq < kBatch + 1; ++seq) {
+        batch.push_back(ev(1, "2026-02-01T00:00:01.000", seq));
+    }
+    store.write(batch);
+    EXPECT_EQ(store.count(), kBatch + 1);
+    removeDb(path);
+}
+
 } // namespace
