@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.16)
 project(mas_telemetry LANGUAGES CXX)
 
+# Allow building external dependencies with older minimum CMake versions
+cmake_policy(VERSION 3.5...3.30)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -10,6 +13,22 @@ FetchContent_Declare(googletest
   URL_HASH SHA256=1f357c27ca988c3f7c6b4bf68a9395005ac6761f034046e9dde0896e3aba00e4)
 set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googletest)
+
+# ZeroMQ: libzmq compiled from source + cppzmq header-only bindings (spec §15).
+# cppzmq's CMake picks up the in-tree `libzmq` target automatically.
+set(ZMQ_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(WITH_PERF_TOOL OFF CACHE BOOL "" FORCE)
+set(WITH_DOCS OFF CACHE BOOL "" FORCE)
+set(ENABLE_DRAFTS OFF CACHE BOOL "" FORCE)
+set(BUILD_STATIC OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(libzmq
+  URL https://github.com/zeromq/libzmq/releases/download/v4.3.5/zeromq-4.3.5.tar.gz
+  URL_HASH SHA256=6653ef5910f17954861fe72332e68b03ca6e4d9c7160eb3a8de5a5a913bfab43)
+set(CPPZMQ_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(cppzmq
+  URL https://github.com/zeromq/cppzmq/archive/refs/tags/v4.10.0.tar.gz
+  URL_HASH SHA256=c81c81bba8a7644c84932225f018b5088743a22999c6d82a2b5f5cd1e6942b74)
+FetchContent_MakeAvailable(libzmq cppzmq)
 
 # DuckDB v1.2.2 prebuilt binary (never build from source — 30+ min).
 if(APPLE)
@@ -58,8 +77,9 @@ add_executable(unit_tests
   tests/test_csv_raw_reader.cpp
   tests/test_pipeline.cpp
   tests/test_duckdb_smoke.cpp
-  tests/test_duckdb_event_store.cpp)
-target_link_libraries(unit_tests PRIVATE mas_core GTest::gtest_main duckdb_imported)
+  tests/test_duckdb_event_store.cpp
+  tests/test_zmq_smoke.cpp)
+target_link_libraries(unit_tests PRIVATE mas_core GTest::gtest_main duckdb_imported cppzmq)
 set_target_properties(unit_tests clean_exe PROPERTIES
   BUILD_RPATH "${duckdb_prebuilt_SOURCE_DIR}")
 include(GoogleTest)
