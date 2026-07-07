@@ -20,6 +20,11 @@ public:
     long long count() const;                             // rows in cap_events
     void export_parquet(const std::string& parquet_path); // implemented in Task 5
 
+    // Idempotently union another store file's cap_events into this one
+    // (ATTACH read-only + INSERT OR IGNORE). Sink-side answer to spec §14
+    // Q4: workers write per-worker stores, never one file concurrently.
+    void merge_from(const std::string& other_db_path);
+
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

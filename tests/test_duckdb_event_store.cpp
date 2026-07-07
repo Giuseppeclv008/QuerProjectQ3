@@ -128,4 +128,33 @@ TEST(DuckDbEventStore, ExportParquetRoundtrips) {
     removeDb(path);
 }
 
+TEST(DuckDbEventStore, MergeFromUnionsStoresIdempotently) {
+    const std::string a = "t_merge_a.duckdb";
+    const std::string b = "t_merge_b.duckdb";
+    const std::string dst = "t_merge_dst.duckdb";
+    removeDb(a); removeDb(b); removeDb(dst);
+    {
+        mas::DuckDbEventStore sa(a, "MCC1");
+        std::vector<mas::CapEvent> ba = {
+            ev(1, "2026-02-01T00:00:01.000", 101),
+            ev(1, "2026-02-01T00:00:02.000", 102),
+        };
+        sa.write(ba);
+        mas::DuckDbEventStore sb(b, "MCC1");
+        std::vector<mas::CapEvent> bb = {
+            ev(1, "2026-02-01T00:00:02.000", 102),   // overlaps store a
+            ev(2, "2026-02-01T00:00:03.000", 55),
+        };
+        sb.write(bb);
+    }   // close source stores before attaching them read-only
+
+    mas::DuckDbEventStore d(dst, "MCC1");
+    d.merge_from(a);
+    d.merge_from(b);
+    EXPECT_EQ(d.count(), 3);   // union: (1,101), (1,102), (2,55)
+    d.merge_from(b);           // re-merge is safe (spec §10 idempotency)
+    EXPECT_EQ(d.count(), 3);
+    removeDb(a); removeDb(b); removeDb(dst);
+}
+
 } // namespace
