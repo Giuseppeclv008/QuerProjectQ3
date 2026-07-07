@@ -32,6 +32,8 @@ TEST(MessageCodec, MalformedPayloadsDecodeToNullopt) {
     EXPECT_FALSE(mas::decode_result(mas::Message{"RESULT\n/x\nnotanumber\n0.1"}).has_value());
     EXPECT_FALSE(mas::decode_result(mas::Message{"RESULT\n/x\n5"}).has_value());    // missing field
     EXPECT_FALSE(mas::decode_result(mas::Message{""}).has_value());
+    EXPECT_FALSE(mas::decode_result(mas::Message{"RESULT\n/x\n5garbage\n0.1"}).has_value());
+    EXPECT_FALSE(mas::decode_result(mas::Message{"RESULT\n/x\n5\n1.2extra"}).has_value());
 }
 
 TEST(FakeTransport, SourceDrainsQueueThenReturnsNullopt) {

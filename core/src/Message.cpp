@@ -44,7 +44,16 @@ std::optional<WorkResult> decode_result(const Message& m) {
     const auto f = split_lines(m.payload);
     if (f.size() != 4 || f[0] != kResultTag) return std::nullopt;
     try {
-        return WorkResult{f[1], std::stoll(f[2]), std::stod(f[3])};
+        std::size_t events_end = 0;
+        std::size_t seconds_end = 0;
+        const long long events = std::stoll(f[2], &events_end);
+        const double seconds = std::stod(f[3], &seconds_end);
+        // Wire bytes are untrusted: a field with trailing garbage ("5x")
+        // still stoll/stod-parses its prefix, so require full consumption.
+        if (events_end != f[2].size() || seconds_end != f[3].size()) {
+            return std::nullopt;
+        }
+        return WorkResult{f[1], events, seconds};
     } catch (const std::exception&) {
         return std::nullopt;   // non-numeric events/seconds
     }
