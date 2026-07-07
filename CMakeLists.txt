@@ -65,7 +65,8 @@ add_library(mas_core
   core/src/CsvRawReader.cpp
   core/src/CsvEventStore.cpp
   core/src/DuckDbEventStore.cpp
-  core/src/Pipeline.cpp)
+  core/src/Pipeline.cpp
+  core/src/Message.cpp)
 target_include_directories(mas_core PUBLIC core/include)
 target_link_libraries(mas_core PRIVATE duckdb_imported)
 
@@ -80,8 +81,10 @@ add_executable(unit_tests
   tests/test_pipeline.cpp
   tests/test_duckdb_smoke.cpp
   tests/test_duckdb_event_store.cpp
-  tests/test_zmq_smoke.cpp)
+  tests/test_zmq_smoke.cpp
+  tests/test_message.cpp)
 target_link_libraries(unit_tests PRIVATE mas_core GTest::gtest_main duckdb_imported cppzmq)
+target_include_directories(unit_tests PRIVATE tests)
 set_target_properties(unit_tests clean_exe PROPERTIES
   BUILD_RPATH "${duckdb_prebuilt_SOURCE_DIR}")
 include(GoogleTest)
