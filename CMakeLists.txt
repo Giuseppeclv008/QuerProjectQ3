@@ -1,9 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(mas_telemetry LANGUAGES CXX)
 
-# Allow building external dependencies with older minimum CMake versions
-cmake_policy(VERSION 3.5...3.30)
-
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -21,6 +18,11 @@ set(WITH_PERF_TOOL OFF CACHE BOOL "" FORCE)
 set(WITH_DOCS OFF CACHE BOOL "" FORCE)
 set(ENABLE_DRAFTS OFF CACHE BOOL "" FORCE)
 set(BUILD_STATIC OFF CACHE BOOL "" FORCE)
+# libzmq 4.3.5 declares cmake_minimum_required(3.0.2); CMake >= 4.0 refuses
+# pre-3.5 compatibility. This variable propagates into the FetchContent
+# subdirectory (cmake_policy() would not) and is the mechanism CMake's own
+# error message documents.
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
 FetchContent_Declare(libzmq
   URL https://github.com/zeromq/libzmq/releases/download/v4.3.5/zeromq-4.3.5.tar.gz
   URL_HASH SHA256=6653ef5910f17954861fe72332e68b03ca6e4d9c7160eb3a8de5a5a913bfab43)
