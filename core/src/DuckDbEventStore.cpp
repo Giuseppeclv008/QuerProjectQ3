@@ -19,6 +19,14 @@ void execOrThrow(duckdb::Connection& con, const std::string& sql) {
     if (res->HasError()) throw std::runtime_error(res->GetError());
 }
 
+// Same as execOrThrow, but returns the materialized result for callers that
+// need the data back (e.g. count()) instead of just checking for success.
+auto queryOrThrow(duckdb::Connection& con, const std::string& sql) {
+    auto res = con.Query(sql);
+    if (res->HasError()) throw std::runtime_error(res->GetError());
+    return res;
+}
+
 } // namespace
 
 DuckDbEventStore::DuckDbEventStore(const std::string& db_path,
@@ -76,8 +84,12 @@ void DuckDbEventStore::write(std::span<const CapEvent> events) {
         app.Close();
     }
     // Idempotent merge: UNIQUE key drops rows already in cap_events.
+    // Interim policy: the ts cast is strict — one malformed timestamp aborts
+    // the day-file loudly (no partial corruption; reprocessing is idempotent).
+    // Quarantine/skip-and-count belongs to the ingestion agent (spec §10);
+    // revisit with TRY_CAST + counter in that plan.
     execOrThrow(impl_->con, R"sql(
-        INSERT OR IGNORE INTO cap_events
+        INSERT OR IGNORE INTO cap_events (machine_id, head_id, ts, cap_seq, app_torque, status, delta, is_fault, aggregated, is_reset)
         SELECT machine_id, head_id, CAST(ts AS TIMESTAMP), cap_seq, app_torque,
                status, delta, is_fault, aggregated, is_reset
         FROM staging_cap_events)sql");
@@ -85,8 +97,7 @@ void DuckDbEventStore::write(std::span<const CapEvent> events) {
 }
 
 long long DuckDbEventStore::count() const {
-    auto res = impl_->con.Query("SELECT COUNT(*) FROM cap_events");
-    if (res->HasError()) throw std::runtime_error(res->GetError());
+    auto res = queryOrThrow(impl_->con, "SELECT COUNT(*) FROM cap_events");
     return res->GetValue(0, 0).GetValue<int64_t>();
 }
 

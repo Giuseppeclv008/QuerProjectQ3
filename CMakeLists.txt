@@ -6,7 +6,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include(FetchContent)
 FetchContent_Declare(googletest
-  URL https://github.com/google/googletest/archive/refs/tags/v1.14.0.zip)
+  URL https://github.com/google/googletest/archive/refs/tags/v1.14.0.zip
+  URL_HASH SHA256=1f357c27ca988c3f7c6b4bf68a9395005ac6761f034046e9dde0896e3aba00e4)
 set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googletest)
 
@@ -14,12 +15,23 @@ FetchContent_MakeAvailable(googletest)
 if(APPLE)
   set(DUCKDB_ASSET libduckdb-osx-universal.zip)
   set(DUCKDB_LIBNAME libduckdb.dylib)
+  set(DUCKDB_SHA256 150588828afd4e84cc7b13f69ba62247147a20c814a8b9a21efa55531d2fd3c9)
 else()
   set(DUCKDB_ASSET libduckdb-linux-amd64.zip)
   set(DUCKDB_LIBNAME libduckdb.so)
+  # Not pinned: only the macOS asset has been downloaded/verified so far (dev
+  # machine is macOS). Compute with `shasum -a 256` after this branch's first
+  # real download and fill in, mirroring the APPLE branch above.
+  set(DUCKDB_SHA256 "")
 endif()
-FetchContent_Declare(duckdb_prebuilt
-  URL https://github.com/duckdb/duckdb/releases/download/v1.2.2/${DUCKDB_ASSET})
+if(DUCKDB_SHA256)
+  FetchContent_Declare(duckdb_prebuilt
+    URL https://github.com/duckdb/duckdb/releases/download/v1.2.2/${DUCKDB_ASSET}
+    URL_HASH SHA256=${DUCKDB_SHA256})
+else()
+  FetchContent_Declare(duckdb_prebuilt
+    URL https://github.com/duckdb/duckdb/releases/download/v1.2.2/${DUCKDB_ASSET})
+endif()
 FetchContent_MakeAvailable(duckdb_prebuilt)
 
 add_library(duckdb_imported SHARED IMPORTED GLOBAL)

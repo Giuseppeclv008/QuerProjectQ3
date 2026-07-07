@@ -1,6 +1,8 @@
 #pragma once
+#include "mas/CapEvent.hpp"
 #include "mas/EventStore.hpp"
 #include <fstream>
+#include <span>
 #include <string>
 
 namespace mas {

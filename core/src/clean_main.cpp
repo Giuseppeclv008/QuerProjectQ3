@@ -1,7 +1,19 @@
+#include "mas/CsvRawReader.hpp"
 #include "mas/DuckDbEventStore.hpp"
 #include "mas/Pipeline.hpp"
 #include <iostream>
 #include <string>
+#include <string_view>
+
+namespace {
+
+// Shared by both output modes: identical wording for a missing/unreadable input.
+int report_missing_input(const std::string& in_path) {
+    std::cerr << "error: cannot open input file " << in_path << "\n";
+    return 1;
+}
+
+} // namespace
 
 int main(int argc, char** argv) {
     if (argc < 3) {
@@ -12,13 +24,16 @@ int main(int argc, char** argv) {
     const std::string machine = (argc > 3) ? argv[3] : "MCC";
 
     if (std::string_view(out).ends_with(".duckdb")) {
+        // Probe before constructing the store: DuckDbEventStore's constructor
+        // creates the .duckdb file as a side effect, so a missing input must
+        // never leave an empty database behind (mirrors the CSV wrapper's
+        // probe in Pipeline.cpp).
+        mas::CsvRawReader probe(in);
+        if (!probe.is_open()) return report_missing_input(in);
+
         try {
             mas::DuckDbEventStore store(out, machine);
             const long long n = mas::clean_file(in, store);
-            if (n == -1) {
-                std::cerr << "error: cannot open input file " << in << "\n";
-                return 1;
-            }
             std::cerr << "wrote " << n << " cap events; store now holds "
                       << store.count() << " rows\n";
         } catch (const std::exception& e) {
@@ -29,10 +44,7 @@ int main(int argc, char** argv) {
     }
 
     const long long n = mas::clean_file(in, out, machine);
-    if (n == -1) {
-        std::cerr << "error: cannot open input file " << in << "\n";
-        return 1;
-    }
+    if (n == -1) return report_missing_input(in);
     if (n < 0) {
         std::cerr << "error: cannot write output file " << out << "\n";
         return 1;
