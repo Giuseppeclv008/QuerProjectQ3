@@ -67,7 +67,8 @@ add_library(mas_core
   core/src/DuckDbEventStore.cpp
   core/src/Pipeline.cpp
   core/src/Message.cpp
-  core/src/CleaningWorker.cpp)
+  core/src/CleaningWorker.cpp
+  core/src/Coordinator.cpp)
 target_include_directories(mas_core PUBLIC core/include)
 target_link_libraries(mas_core PRIVATE duckdb_imported)
 
@@ -89,7 +90,8 @@ add_executable(unit_tests
   tests/test_zmq_smoke.cpp
   tests/test_message.cpp
   tests/test_zmq_transport.cpp
-  tests/test_cleaning_worker.cpp)
+  tests/test_cleaning_worker.cpp
+  tests/test_coordinator.cpp)
 target_link_libraries(unit_tests PRIVATE mas_core mas_transport GTest::gtest_main duckdb_imported cppzmq)
 target_include_directories(unit_tests PRIVATE tests)
 set_target_properties(unit_tests clean_exe PROPERTIES
