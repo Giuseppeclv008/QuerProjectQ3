@@ -20,8 +20,10 @@ int main(int argc, char** argv) {
         // coordinator already exited blocks forever PUSHing its result.
         mas::ZmqPullSource work(ctx, work_ep, /*bind=*/false);
         mas::ZmqPushSink results(ctx, result_ep, /*bind=*/false);
+        // Temporary bridge until Task 6 rewires the CLI (hb endpoint + worker_id args).
+        mas::ZmqPushSink heartbeats(ctx, "tcp://127.0.0.1:5559", /*bind=*/false);
         mas::DuckDbEventStore store(out, machine);
-        mas::CleaningWorker worker(work, results, store,
+        mas::CleaningWorker worker(work, results, heartbeats, store, "w0",
             [](const std::string& path, mas::IEventStore& s) {
                 return mas::clean_file(path, s);
             });
