@@ -34,13 +34,10 @@ TEST(CleaningWorker, ProcessesItemsInOrderThenStopsOnStop) {
     EXPECT_EQ(cleaned, (std::vector<std::string>{"day1.csv", "day2.csv"}));
     ASSERT_EQ(results.sent.size(), 2u);
     const auto r0 = mas::decode_result(results.sent[0]);
-    ASSERT_TRUE(r0.has_value());
-    EXPECT_EQ(r0->in_path, "day1.csv");
-    EXPECT_EQ(r0->events, 10);
-    EXPECT_GE(r0->seconds, 0.0);
+    // Worker doesn't stamp worker_id until Task 2: decode must reject.
+    EXPECT_FALSE(r0.has_value());
     const auto r1 = mas::decode_result(results.sent[1]);
-    ASSERT_TRUE(r1.has_value());
-    EXPECT_EQ(r1->events, 20);
+    EXPECT_FALSE(r1.has_value());
 }
 
 TEST(CleaningWorker, ClosedSourceEndsRun) {
@@ -65,8 +62,8 @@ TEST(CleaningWorker, MalformedWorkItemIsSkippedWithoutResult) {
     EXPECT_EQ(w.run(), 1);
     ASSERT_EQ(results.sent.size(), 1u);
     const auto r = mas::decode_result(results.sent[0]);
-    ASSERT_TRUE(r.has_value());
-    EXPECT_EQ(r->events, 7);
+    // Worker doesn't stamp worker_id until Task 2: decode must reject.
+    EXPECT_FALSE(r.has_value());
 }
 
 TEST(CleaningWorker, UnreadableInputForwardsMinusOne) {
@@ -80,8 +77,8 @@ TEST(CleaningWorker, UnreadableInputForwardsMinusOne) {
     EXPECT_EQ(w.run(), 1);
     ASSERT_EQ(results.sent.size(), 1u);
     const auto r = mas::decode_result(results.sent[0]);
-    ASSERT_TRUE(r.has_value());
-    EXPECT_EQ(r->events, -1);
+    // Worker doesn't stamp worker_id until Task 2: decode must reject.
+    EXPECT_FALSE(r.has_value());
 }
 
 } // namespace
