@@ -1,5 +1,6 @@
 #include "mas/ZmqTransport.hpp"
 #include <gtest/gtest.h>
+#include <stdexcept>
 
 namespace {
 
@@ -36,6 +37,17 @@ TEST(ZmqTransport, SinkBindsSourceConnectsBlockingRecvRoundtrips) {
     const auto m = source.recv();
     ASSERT_TRUE(m.has_value());
     EXPECT_EQ(m->payload, "hello");
+}
+
+// Final-review fix (Task 8 wave): a PUSH socket with no connected peer is
+// "mute" in ZeroMQ terms - binding gives it an endpoint but not a peer, so
+// send() blocks forever without a timeout. This reproduces the coordinator's
+// zero-workers hang scenario. With send_timeout_ms set, the mute-send EAGAIN
+// must surface as an exception instead of blocking indefinitely.
+TEST(ZmqTransport, SendTimesOutAndThrowsWhenNoPeerConnected) {
+    zmq::context_t ctx(0);
+    mas::ZmqPushSink sink(ctx, "inproc://t4", /*bind=*/true, /*send_timeout_ms=*/100);
+    EXPECT_THROW(sink.send(mas::Message{"hello"}), std::runtime_error);
 }
 
 } // namespace

@@ -21,17 +21,14 @@ int main(int argc, char** argv) {
         for (int i = 4; i < argc; ++i) items.push_back({argv[i]});
 
         zmq::context_t ctx(1);
-        // Known limitation (deferred to the resilience plan): PUSH blocks forever
-        // when no worker is connected (mute socket), and default infinite LINGER
-        // can block teardown if a STOP goes undelivered. Start workers BEFORE the
-        // coordinator; if all workers die mid-run, this process can hang rather
-        // than time out — the 60 s results timeout below only covers lost work
-        // items while at least one worker remains connected.
+        // Send-side liveness: send_timeout_ms=60000 sets ZMQ_SNDTIMEO and a
+        // finite ZMQ_LINGER, so a mute work socket (no workers ever connect,
+        // or all workers die mid-run) throws after 60 s instead of hanging
+        // this process forever. Start workers first for prompt dispatch;
+        // richer recovery (heartbeats, re-dispatch) is the resilience plan's.
         mas::ZmqPushSink work(ctx, work_ep, /*bind=*/true, /*send_timeout_ms=*/60000);
         // 60 s of sink silence => count stragglers as failed instead of
         // hanging forever (heartbeat-driven re-dispatch is a later plan).
-        // Symmetric on the send side: 60 s of send blockage (e.g. no workers
-        // ever connect) throws instead of hanging the coordinator forever.
         mas::ZmqPullSource results(ctx, result_ep, /*bind=*/true,
                                    /*timeout_ms=*/60000);
         const auto s = mas::run_coordinator(items, work, results, num_workers);
