@@ -23,4 +23,17 @@ struct FakeSink : IMessageSink {
     void send(const Message& m) override { sent.push_back(m); }
 };
 
+// Scripted source that can interleave empty ticks: a nullopt entry models a
+// recv timeout (production ZmqPullSource with a finite timeout). After the
+// script drains it reports nullopt forever, like FakeSource.
+struct FakeTickSource : IMessageSource {
+    std::deque<std::optional<Message>> script;
+    std::optional<Message> recv() override {
+        if (script.empty()) return std::nullopt;
+        std::optional<Message> m = std::move(script.front());
+        script.pop_front();
+        return m;
+    }
+};
+
 } // namespace mas::test
