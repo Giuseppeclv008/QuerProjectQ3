@@ -201,7 +201,7 @@ std::optional<Heartbeat> decode_heartbeat(const Message& m) {
 }
 ```
 
-**Expect collateral breakage** in `tests/test_cleaning_worker.cpp` and `core/src/CleaningWorker.cpp` if any encode call sites relied on 4-line results — they compile (aggregate gains a defaulted member) but `decode_result` of an id-less result now yields nullopt. Do **not** fix CleaningWorker behavior here (Task 2 owns it); only make this task's test file self-consistent. If `test_cleaning_worker.cpp` assertions on decoded results start failing because the worker sends no id yet, adjust those assertions minimally to check `has_value()` expectations that still hold, or mark the exact assertion lines with the fix landing in Task 2 — prefer the smallest edit that keeps the suite green.
+**Expect collateral breakage** in `tests/test_cleaning_worker.cpp` (and check `tests/test_zmq_transport.cpp` for any `WorkResult` literals) if any encode call sites relied on 4-line results — they compile (aggregate gains a defaulted member) but `decode_result` of an id-less result now yields nullopt. Do **not** fix CleaningWorker behavior here (Task 2 owns it); only make this task's test file self-consistent. If `test_cleaning_worker.cpp` assertions on decoded results start failing because the worker sends no id yet, adjust those assertions minimally to check `has_value()` expectations that still hold, or mark the exact assertion lines with the fix landing in Task 2 — prefer the smallest edit that keeps the suite green.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -1058,12 +1058,12 @@ TEST(Coordinator, LateResultFromTombstonedWorkerIsDropped) {
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cmake --build build -j 2>&1 | tail -3 && ./build/unit_tests --gtest_filter='Coordinator.*'`
-Expected: build OK; the new tests FAIL (hang is impossible — abort conditions missing means the loop spins with `open > 0` and a drained script... to avoid an actual infinite loop during RED, run with `--gtest_filter='Coordinator.SilentWorker*' timeout 30s` semantics: `timeout 30 ./build/unit_tests --gtest_filter='Coordinator.*'`; a timeout kill is the expected RED signal for the abort tests).
+Run: `cmake --build build -j 2>&1 | tail -3 && timeout 30 ./build/unit_tests --gtest_filter='Coordinator.*'; echo "exit=$?"`
+Expected RED: build OK; `SilentWorker...` fails its assertions (no sweep → no re-dispatch → `work.sent` is 3, not 4). The cap/abort tests **hang** without the missing sweep/abort code (the loop spins with `open > 0` on a drained script) — the `timeout 30` kill (`exit=124`) is their expected RED signal, not a test bug.
 
 - [ ] **Step 3: Implement**
 
-Replace sections 3/4 placeholders in `core/src/Coordinator.cpp`'s loop (and reorder the loop as pinned in Step 1 if needed):
+Replace the section-3/4 placeholders in `core/src/Coordinator.cpp`'s loop (the pass order — results tick, heartbeat drain, sweep, aborts — is already pinned by Task 3; do not reorder it):
 
 ```cpp
         // 3) Deadline sweep: tombstone silent workers, write their stores
@@ -1488,3 +1488,4 @@ git commit -m "test(e2e): chaos script — kill a worker mid-run, oracle-exact a
 - **Spec coverage:** §4 topology → T6; §5 codec/cadence → T1/T2; §6 coordinator (registration, attribution, sweep, re-dispatch set = open ∪ dead-completions via reopen, cap, aborts, STOP×live, logs) → T3/T4; §7 worker (tick recv, idle exit, send timeouts, hb, merge skip) → T2/T5/T6; §8 edge cases → T3/T4 tests (dup drop, zombie tombstone, dead-result drop, poison cap, all-dead abort, malformed drop) + T7 (crash store); §9 defaults → constants in T2/T6; §10 tests → T1–T4 units, T7 chaos; §11 criteria → T7 both directions. Gap check: spec §5 "one heartbeat before each blocking wait" is realized as hello-at-entry + per-empty-tick (a strict superset of the spec's liveness guarantee — documented in T2's header comment).
 - **Placeholders:** none — every step carries code or exact commands; the two "confirm by running" notes in T7 are verification instructions, not deferred design.
 - **Type consistency:** `CleaningWorker(work, results, heartbeats, store, worker_id, clean_fn)` used identically in T2/T6; `run_coordinator(items, work, results, heartbeats, cfg, now)` identical in T3/T4/T6; `WorkResult{path, events, seconds, worker_id}` aggregate order fixed by T1 and used in that order everywhere; stderr markers in T4 match the greps in T7.
+- **Determinism of fake-time tests:** the coordinator loop's pass order (results tick → heartbeat drain → sweep → aborts) is pinned in T3's implementation and every T4 test script was hand-traced against it pass-by-pass (registration times, refresh times, death pass, re-dispatch counts, STOP counts). If an implementer changes the pass order, T4's tests will fail — that is intended; restore the pinned order rather than editing the tests.
