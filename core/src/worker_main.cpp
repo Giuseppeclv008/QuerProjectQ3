@@ -15,6 +15,9 @@ int main(int argc, char** argv) {
     const std::string machine = (argc > 4) ? argv[4] : "MCC";
     try {
         zmq::context_t ctx(1);
+        // Known limitation (deferred to the resilience plan): blocking recv means
+        // this process waits forever if its STOP never arrives; a straggler whose
+        // coordinator already exited blocks forever PUSHing its result.
         mas::ZmqPullSource work(ctx, work_ep, /*bind=*/false);
         mas::ZmqPushSink results(ctx, result_ep, /*bind=*/false);
         mas::DuckDbEventStore store(out, machine);

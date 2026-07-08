@@ -64,7 +64,9 @@ TEST(CleaningWorker, MalformedWorkItemIsSkippedWithoutResult) {
         [](const std::string&, mas::IEventStore&) -> long long { return 7; });
     EXPECT_EQ(w.run(), 1);
     ASSERT_EQ(results.sent.size(), 1u);
-    EXPECT_EQ(mas::decode_result(results.sent[0])->events, 7);
+    const auto r = mas::decode_result(results.sent[0]);
+    ASSERT_TRUE(r.has_value());
+    EXPECT_EQ(r->events, 7);
 }
 
 TEST(CleaningWorker, UnreadableInputForwardsMinusOne) {
@@ -77,7 +79,9 @@ TEST(CleaningWorker, UnreadableInputForwardsMinusOne) {
         [](const std::string&, mas::IEventStore&) -> long long { return -1; });
     EXPECT_EQ(w.run(), 1);
     ASSERT_EQ(results.sent.size(), 1u);
-    EXPECT_EQ(mas::decode_result(results.sent[0])->events, -1);
+    const auto r = mas::decode_result(results.sent[0]);
+    ASSERT_TRUE(r.has_value());
+    EXPECT_EQ(r->events, -1);
 }
 
 } // namespace

@@ -31,6 +31,7 @@ FetchContent_Declare(cppzmq
   URL https://github.com/zeromq/cppzmq/archive/refs/tags/v4.10.0.tar.gz
   URL_HASH SHA256=c81c81bba8a7644c84932225f018b5088743a22999c6d82a2b5f5cd1e6942b74)
 FetchContent_MakeAvailable(libzmq cppzmq)
+unset(CMAKE_POLICY_VERSION_MINIMUM)
 
 # DuckDB v1.2.2 prebuilt binary (never build from source — 30+ min).
 if(APPLE)
