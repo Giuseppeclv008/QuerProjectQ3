@@ -9,9 +9,9 @@ TEST(Coordinator, DispatchesAllItemsCollectsResultsThenStopsWorkers) {
     const std::vector<mas::WorkItem> items = {{"d1.csv"}, {"d2.csv"}, {"d3.csv"}};
     mas::test::FakeSink work;
     mas::test::FakeSource results;   // out-of-order results are fine
-    results.queue.push_back(mas::encode(mas::WorkResult{"d1.csv", 10, 0.1}));
-    results.queue.push_back(mas::encode(mas::WorkResult{"d3.csv", 30, 0.3}));
-    results.queue.push_back(mas::encode(mas::WorkResult{"d2.csv", 20, 0.2}));
+    results.queue.push_back(mas::encode(mas::WorkResult{"d1.csv", 10, 0.1, "w1"}));
+    results.queue.push_back(mas::encode(mas::WorkResult{"d3.csv", 30, 0.3, "w2"}));
+    results.queue.push_back(mas::encode(mas::WorkResult{"d2.csv", 20, 0.2, "w1"}));
 
     const auto s = mas::run_coordinator(items, work, results, /*num_workers=*/2);
 
@@ -29,8 +29,8 @@ TEST(Coordinator, CountsFailedFilesAndUnreportedItems) {
     const std::vector<mas::WorkItem> items = {{"d1.csv"}, {"d2.csv"}, {"d3.csv"}};
     mas::test::FakeSink work;
     mas::test::FakeSource results;
-    results.queue.push_back(mas::encode(mas::WorkResult{"d1.csv", -1, 0.0}));  // unreadable
-    results.queue.push_back(mas::encode(mas::WorkResult{"d2.csv", 20, 0.2}));
+    results.queue.push_back(mas::encode(mas::WorkResult{"d1.csv", -1, 0.0, "w1"}));  // unreadable
+    results.queue.push_back(mas::encode(mas::WorkResult{"d2.csv", 20, 0.2, "w1"}));
     // d3 never reports (dead worker) -> source dries up (nullopt)
 
     const auto s = mas::run_coordinator(items, work, results, /*num_workers=*/1);
