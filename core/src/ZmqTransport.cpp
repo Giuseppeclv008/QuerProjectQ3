@@ -1,14 +1,26 @@
 #include "mas/ZmqTransport.hpp"
+#include <stdexcept>
 
 namespace mas {
 
-ZmqPushSink::ZmqPushSink(zmq::context_t& ctx, const std::string& endpoint, bool bind)
+ZmqPushSink::ZmqPushSink(zmq::context_t& ctx, const std::string& endpoint, bool bind,
+                         int send_timeout_ms)
     : sock_(ctx, zmq::socket_type::push) {
+    if (send_timeout_ms >= 0) {
+        sock_.set(zmq::sockopt::sndtimeo, send_timeout_ms);
+        sock_.set(zmq::sockopt::linger, send_timeout_ms);
+    }
     if (bind) sock_.bind(endpoint); else sock_.connect(endpoint);
 }
 
 void ZmqPushSink::send(const Message& m) {
-    sock_.send(zmq::buffer(m.payload), zmq::send_flags::none);
+    const auto sent = sock_.send(zmq::buffer(m.payload), zmq::send_flags::none);
+    if (!sent.has_value()) {
+        // EAGAIN: only reachable when send_timeout_ms >= 0 was set and the
+        // socket is mute (no connected peer) or the peer isn't draining.
+        throw std::runtime_error(
+            "ZmqPushSink: send timed out (no connected peer or peer not draining)");
+    }
 }
 
 ZmqPullSource::ZmqPullSource(zmq::context_t& ctx, const std::string& endpoint,
