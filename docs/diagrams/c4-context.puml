@@ -1,0 +1,21 @@
+@startuml C4_Context
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Context.puml
+
+LAYOUT_WITH_LEGEND()
+title System Context Diagram — IIoT Data Refinement MAS
+
+Person(operator, "Machine Operator / Data Engineer", "Launches processing, inspects refined events, runs analytics")
+
+System(mas, "IIoT Data Refinement MAS", "Multi-agent C++ system that ingests raw 1 Hz PLC telemetry CSV day-files, extracts real cap events, and persists them into DuckDB for analysis")
+
+System_Ext(plc, "AROL Capping Machine PLC", "Polls 36 capping heads at ~1 Hz; uploads wide CSV day-files (~86 400 rows × 109 columns)")
+System_Ext(fs, "File System", "Local or networked storage holding raw CSV day-files and output databases/CSVs")
+System_Ext(oracle, "Python Validation Oracle", "Independent Python re-implementation for cross-checking C++ dedup correctness")
+
+Rel(plc, fs, "Uploads raw CSV day-files")
+Rel(operator, mas, "Provides raw day-file paths, starts coordinator/workers")
+Rel(mas, fs, "Reads raw CSVs, writes DuckDB/CSV/Parquet outputs")
+Rel(operator, oracle, "Runs validation to cross-check C++ output")
+Rel(oracle, fs, "Reads raw CSVs and C++ output CSVs")
+
+@enduml

@@ -22,5 +22,8 @@ venv/
 # Claude local
 .claude/settings.local.json
 
+# Diagrams
+*.jar
+
 # OS
 .DS_Store

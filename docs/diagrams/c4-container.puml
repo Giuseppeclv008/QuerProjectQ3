@@ -1,0 +1,48 @@
+@startuml C4_Container
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+
+LAYOUT_WITH_LEGEND()
+title Container Diagram — IIoT Data Refinement MAS
+
+Person(operator, "Operator", "Runs CLI executables, inspects results")
+System_Ext(plc, "AROL PLC", "Uploads raw CSV day-files to filesystem")
+
+System_Boundary(mas, "IIoT Data Refinement MAS") {
+
+    Container(clean, "clean", "C++ CLI", "Single-process batch pipeline.\nReads one raw CSV day-file, runs CsvRawReader → CapEventExtractor → IEventStore.\nOutput: CSV or DuckDB.")
+
+    Container(coordinator, "mas_coordinator", "C++ CLI", "Ventilator + Sink agent.\nPUSHes WorkItem messages (one per day-file) to the work queue,\nPULLs WorkResult messages from workers,\nsends STOP signals to shut down the pool.")
+
+    Container(worker, "mas_worker", "C++ CLI", "Cleaning agent (1..N instances).\nPULLs WorkItems, runs the cleaning pipeline\ninto a per-worker DuckDB store,\nPUSHes WorkResult back to coordinator.")
+
+    Container(merge, "mas_merge", "C++ CLI", "Merge utility.\nATTACHes per-worker DuckDB store files (READ_ONLY)\nand INSERT OR IGNOREs into a unified destination store.")
+
+    ContainerDb(duckdb, "DuckDB Store", "DuckDB .duckdb file", "cap_events table with\nUNIQUE(machine_id, head_id, cap_seq).\nIdempotent INSERT OR IGNORE.\nOptional Parquet export.")
+
+    ContainerDb(csv_out, "CSV Event Output", "CSV file", "Flat event file with header:\nmachine_id,head_id,ts,cap_seq,\napp_torque,status,delta,\nis_fault,aggregated,reset")
+
+    Container(zmq, "ZeroMQ Fabric", "libzmq 4.3.5 + cppzmq", "IPC/TCP PUSH/PULL sockets.\nWork queue: coordinator → workers.\nResult queue: workers → coordinator.")
+}
+
+System_Boundary(validation, "Python Validation") {
+    Container(py_oracle, "oracle.py", "Python 3", "Independent dedup re-implementation.\nProduces reference event counts for\ncross-validation against C++ output.")
+    Container(py_validate, "validate_real.py", "Python 3", "Asserts C++ output row count matches\nthe Python oracle on real day-files.")
+}
+
+Rel(plc, clean, "Provides raw CSV day-files (via filesystem)")
+Rel(operator, clean, "Runs single-file batch")
+Rel(operator, coordinator, "Starts with day-file list + num_workers")
+Rel(operator, worker, "Starts N worker instances")
+Rel(operator, merge, "Merges per-worker stores post-run")
+
+Rel(coordinator, zmq, "PUSH WorkItems, PULL WorkResults", "tcp://")
+Rel(worker, zmq, "PULL WorkItems, PUSH WorkResults", "tcp://")
+Rel(clean, csv_out, "Writes events (CSV mode)")
+Rel(clean, duckdb, "Writes events (DuckDB mode)")
+Rel(worker, duckdb, "Writes events (per-worker store)")
+Rel(merge, duckdb, "ATTACH + INSERT OR IGNORE")
+
+Rel(operator, py_validate, "Runs cross-check")
+Rel(py_validate, py_oracle, "Calls extract()")
+
+@enduml
