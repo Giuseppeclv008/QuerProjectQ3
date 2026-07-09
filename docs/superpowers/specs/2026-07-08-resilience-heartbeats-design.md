@@ -183,6 +183,7 @@ mas_coordinator <work_ep> <result_ep> <hb_ep> <day1.csv> [day2.csv ...]
 | Re-dispatch cap | 2 per item | One honest retry + one bad-luck retry |
 | Worker idle exit | 60 consecutive empty ticks (~60 s) | Generous; STOP normally arrives in ms |
 | Send timeouts (all PUSH sockets) | 60 s | Matches existing coordinator setting |
+| Worker sink linger (results + heartbeats) | 0 ms | Discovered during chaos validation: Plan 3 coupled ZMQ_LINGER to the send timeout, so a worker with queued beats to a dead coordinator exited its loop on time but the process hung ~60 s more in context teardown, breaking §8's ≤ ~60 s promise. Zero linger is protocol-safe: the coordinator holds every result before it sends STOP, and heartbeats are fire-and-forget. Coordinator sockets keep the coupled default. |
 
 Thresholds live as constants in the mains (tunable at the CLI only if a task proves
 the need — YAGNI).
