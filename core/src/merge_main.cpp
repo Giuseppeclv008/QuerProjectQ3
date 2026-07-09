@@ -9,9 +9,21 @@ int main(int argc, char** argv) {
     }
     try {
         mas::DuckDbEventStore dst(argv[1], argv[2]);
-        for (int i = 3; i < argc; ++i) dst.merge_from(argv[i]);
-        std::cerr << "merged " << (argc - 3) << " stores; dst holds "
-                  << dst.count() << " rows\n";
+        int merged = 0, skipped = 0;
+        for (int i = 3; i < argc; ++i) {
+            // A crashed worker's store may be unreadable; the resilience
+            // design writes it off (its items were re-dispatched), so a
+            // failed source is skipped loudly instead of aborting the merge.
+            try {
+                dst.merge_from(argv[i]);
+                ++merged;
+            } catch (const std::exception& e) {
+                std::cerr << "skip " << argv[i] << ": " << e.what() << "\n";
+                ++skipped;
+            }
+        }
+        std::cerr << "merged " << merged << " stores (" << skipped
+                  << " skipped); dst holds " << dst.count() << " rows\n";
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";
         return 1;
