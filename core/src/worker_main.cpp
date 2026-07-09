@@ -7,29 +7,34 @@
 #include <string>
 
 int main(int argc, char** argv) {
-    if (argc < 4) {
-        std::cerr << "usage: mas_worker <work_endpoint> <result_endpoint> <out.duckdb> [machine_id]\n";
+    if (argc < 6) {
+        std::cerr << "usage: mas_worker <work_endpoint> <result_endpoint> "
+                     "<hb_endpoint> <out.duckdb> <worker_id> [machine_id]\n";
         return 2;
     }
-    const std::string work_ep = argv[1], result_ep = argv[2], out = argv[3];
-    const std::string machine = (argc > 4) ? argv[4] : "MCC";
+    const std::string work_ep = argv[1], result_ep = argv[2], hb_ep = argv[3];
+    const std::string out = argv[4], worker_id = argv[5];
+    const std::string machine = (argc > 6) ? argv[6] : "MCC";
     try {
         zmq::context_t ctx(1);
-        // Known limitation (deferred to the resilience plan): blocking recv means
-        // this process waits forever if its STOP never arrives; a straggler whose
-        // coordinator already exited blocks forever PUSHing its result.
-        mas::ZmqPullSource work(ctx, work_ep, /*bind=*/false);
-        mas::ZmqPushSink results(ctx, result_ep, /*bind=*/false);
-        // Temporary bridge until Task 6 rewires the CLI (hb endpoint + worker_id args).
-        mas::ZmqPushSink heartbeats(ctx, "tcp://127.0.0.1:5559", /*bind=*/false);
+        // Liveness (resilience spec §7): the 1 s work recv timeout is the
+        // wait tick — each empty tick heartbeats, 60 in a row exits. Send
+        // timeouts turn a dead coordinator into a thrown error instead of a
+        // forever-blocked PUSH.
+        mas::ZmqPullSource work(ctx, work_ep, /*bind=*/false,
+                                /*timeout_ms=*/1000);
+        mas::ZmqPushSink results(ctx, result_ep, /*bind=*/false,
+                                 /*send_timeout_ms=*/60000);
+        mas::ZmqPushSink heartbeats(ctx, hb_ep, /*bind=*/false,
+                                    /*send_timeout_ms=*/60000);
         mas::DuckDbEventStore store(out, machine);
-        mas::CleaningWorker worker(work, results, heartbeats, store, "w0",
+        mas::CleaningWorker worker(work, results, heartbeats, store, worker_id,
             [](const std::string& path, mas::IEventStore& s) {
                 return mas::clean_file(path, s);
             });
         const int handled = worker.run();
-        std::cerr << "worker done: " << handled << " work items, store holds "
-                  << store.count() << " rows\n";
+        std::cerr << "worker " << worker_id << " done: " << handled
+                  << " work items, store holds " << store.count() << " rows\n";
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";
         return 1;
