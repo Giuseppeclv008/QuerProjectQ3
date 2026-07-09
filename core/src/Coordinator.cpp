@@ -95,8 +95,59 @@ DispatchSummary run_coordinator(const std::vector<WorkItem>& items,
             touch(hb->worker_id);
         }
 
-        // 3) Deadline sweep + re-dispatch (completed in Task 4).
-        // 4) Abort conditions (completed in Task 4).
+        // 3) Deadline sweep: tombstone silent workers, write their stores
+        //    off, reopen their completions, re-dispatch every open item.
+        const auto t = now();
+        bool any_death = false;
+        for (auto& [id, w] : registry) {
+            if (!w.alive || t - w.last_seen <= cfg.death_threshold) continue;
+            w.alive = false;
+            any_death = true;
+            ++s.workers_died;
+            std::cerr << "coordinator: worker " << id << " dead (silent > "
+                      << cfg.death_threshold.count() << " ms)\n";
+            for (const auto& [path, events] : w.completed) {
+                auto st = state.find(path);
+                if (st == state.end() || !st->second.done) continue;
+                st->second.done = false;   // rows lived only in the dead store
+                ++open;
+                --s.files_ok;
+                s.total_events -= events;
+            }
+            w.completed.clear();
+        }
+        if (any_death) {
+            for (auto& [path, st] : state) {
+                if (st.done) continue;
+                if (st.redispatches >= cfg.redispatch_cap) {
+                    st.done = true;
+                    --open;
+                    ++s.files_failed;
+                    std::cerr << "coordinator: item " << path
+                              << " failed permanently (re-dispatch cap)\n";
+                    continue;
+                }
+                ++st.redispatches;
+                std::cerr << "coordinator: re-dispatch " << path << " (attempt "
+                          << (st.redispatches + 1) << ")\n";
+                work.send(encode(WorkItem{path}));
+            }
+        }
+
+        // 4) Abort: nobody to do the remaining work.
+        int live = 0;
+        for (const auto& [id, w] : registry) {
+            if (w.alive) ++live;
+            (void)id;
+        }
+        const bool nobody_ever = registry.empty() &&
+                                 (t - start > cfg.death_threshold);
+        if (open > 0 && ((live == 0 && !registry.empty()) || nobody_ever)) {
+            std::cerr << "coordinator: abort: no live workers, " << open
+                      << " items unsettled\n";
+            s.files_failed += static_cast<int>(open);
+            open = 0;   // leave the loop; STOP goes only to live workers (none)
+        }
     }
 
     for (const auto& [id, w] : registry) {
