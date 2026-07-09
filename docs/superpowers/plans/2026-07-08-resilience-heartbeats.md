@@ -882,23 +882,27 @@ TEST(Coordinator, SilentWorkerIsDeclaredDeadAndItsWorkRedispatched) {
 
 TEST(Coordinator, DeadWorkersCompletionsAreReopenedAndRecounted) {
     using namespace std::chrono_literals;
-    // w2 completes d2 (99 events), then dies. Its store is written off, so
-    // d2 reopens (files_ok/total_events roll back) and w1 re-completes it.
+    // w2 completes d2 (99 events), then dies while d1 is still open (the
+    // open item keeps the loop alive across the jump). Its store is written
+    // off, so d2 reopens (files_ok/total_events roll back) and w1
+    // re-completes it. Pass schedule: (1) w2 reports d2, both workers join;
+    // (2) jump to t=31 s, w1 refreshes, w2 dies -> d2 reopens and both open
+    // items re-dispatch (the extra d1 re-send is harmless — w1 completes it
+    // normally); (3) w1 completes d1; (4) w1 completes the re-dispatched d2.
     const std::vector<mas::WorkItem> items = {{"d1.csv"}, {"d2.csv"}};
     sc::time_point t{};
     mas::test::FakeSink work;
     TimedSource results;
     results.t = &t;
     results.script.push_back({mas::encode(mas::WorkResult{"d2.csv", 99, 0.1, "w2"}), 0ms});
-    results.script.push_back({mas::encode(mas::WorkResult{"d1.csv", 10, 0.1, "w1"}), 0ms});
     results.script.push_back({std::nullopt, 31000ms});
+    results.script.push_back({mas::encode(mas::WorkResult{"d1.csv", 10, 0.1, "w1"}), 0ms});
     results.script.push_back({mas::encode(mas::WorkResult{"d2.csv", 20, 0.1, "w1"}), 0ms});
     mas::test::FakeTickSource hbs;
     hbs.script.push_back(hb("w1", 0));
     hbs.script.push_back(hb("w2", 0));
     hbs.script.push_back(std::nullopt);   // end pass-1 drain
-    hbs.script.push_back(std::nullopt);   // pass 2: no beats
-    hbs.script.push_back(hb("w1", 1));    // pass 3: w1 alive at t=31 s
+    hbs.script.push_back(hb("w1", 1));    // pass 2: w1 alive at t=31 s
 
     const auto s = mas::run_coordinator(items, work, results, hbs,
                                         mas::CoordinatorConfig{},
@@ -1059,6 +1063,7 @@ TEST(Coordinator, LateResultFromTombstonedWorkerIsDropped) {
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `cmake --build build -j 2>&1 | tail -3 && timeout 30 ./build/unit_tests --gtest_filter='Coordinator.*'; echo "exit=$?"`
+(macOS has no GNU `timeout`; any equivalent kill-after-N-seconds wrapper with the exit-124 convention is fine.)
 Expected RED: build OK; `SilentWorker...` fails its assertions (no sweep → no re-dispatch → `work.sent` is 3, not 4). The cap/abort tests **hang** without the missing sweep/abort code (the loop spins with `open > 0` on a drained script) — the `timeout 30` kill (`exit=124`) is their expected RED signal, not a test bug.
 
 - [ ] **Step 3: Implement**
@@ -1489,3 +1494,4 @@ git commit -m "test(e2e): chaos script — kill a worker mid-run, oracle-exact a
 - **Placeholders:** none — every step carries code or exact commands; the two "confirm by running" notes in T7 are verification instructions, not deferred design.
 - **Type consistency:** `CleaningWorker(work, results, heartbeats, store, worker_id, clean_fn)` used identically in T2/T6; `run_coordinator(items, work, results, heartbeats, cfg, now)` identical in T3/T4/T6; `WorkResult{path, events, seconds, worker_id}` aggregate order fixed by T1 and used in that order everywhere; stderr markers in T4 match the greps in T7.
 - **Determinism of fake-time tests:** the coordinator loop's pass order (results tick → heartbeat drain → sweep → aborts) is pinned in T3's implementation and every T4 test script was hand-traced against it pass-by-pass (registration times, refresh times, death pass, re-dispatch counts, STOP counts). If an implementer changes the pass order, T4's tests will fail — that is intended; restore the pinned order rather than editing the tests.
+- **Execution-time correction (2026-07-09):** the original `DeadWorkersCompletionsAreReopenedAndRecounted` script completed both items before the time jump, so the loop exited at `open == 0` before the death pass could run — caught by the Task 4 implementer, verified by the controller, and fixed by reordering the script (d2's completion first, jump second, d1's completion third) with assertions unchanged. The version above is the corrected script.
