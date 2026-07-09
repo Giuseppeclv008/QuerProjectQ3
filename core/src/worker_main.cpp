@@ -23,10 +23,17 @@ int main(int argc, char** argv) {
         // forever-blocked PUSH.
         mas::ZmqPullSource work(ctx, work_ep, /*bind=*/false,
                                 /*timeout_ms=*/1000);
+        // linger_ms=0 on both sinks so process exit is prompt when the
+        // coordinator is gone (chaos E2E: the coupled 60 s linger held the
+        // orphan worker to 121 s vs the ~65 s budget). Protocol-safe:
+        // results — the coordinator STOPs only after every item is settled,
+        // so a result still queued at exit means the coordinator is dead and
+        // the item gets re-dispatched from a survivor anyway; heartbeats —
+        // fire-and-forget liveness, worthless once this process ends.
         mas::ZmqPushSink results(ctx, result_ep, /*bind=*/false,
-                                 /*send_timeout_ms=*/60000);
+                                 /*send_timeout_ms=*/60000, /*linger_ms=*/0);
         mas::ZmqPushSink heartbeats(ctx, hb_ep, /*bind=*/false,
-                                    /*send_timeout_ms=*/60000);
+                                    /*send_timeout_ms=*/60000, /*linger_ms=*/0);
         mas::DuckDbEventStore store(out, machine);
         mas::CleaningWorker worker(work, results, heartbeats, store, worker_id,
             [](const std::string& path, mas::IEventStore& s) {

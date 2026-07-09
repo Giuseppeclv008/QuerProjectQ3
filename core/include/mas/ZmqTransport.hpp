@@ -11,15 +11,28 @@ namespace mas {
 class ZmqPushSink : public IMessageSink {
 public:
     // send_timeout_ms < 0 (default): block forever on a full/mute socket
-    // (no connected peer draining it) and leave ZMQ_LINGER at its default
-    // (infinite) - existing behavior, unchanged for all current callers.
-    // send_timeout_ms >= 0: set both ZMQ_SNDTIMEO and ZMQ_LINGER to that
-    // value, applied before bind/connect (mirroring how ZmqPullSource sets
-    // rcvtimeo below). A send() that hits the timeout (EAGAIN: no connected
+    // (no connected peer draining it). send_timeout_ms >= 0: set ZMQ_SNDTIMEO
+    // to that value; a send() that hits the timeout (EAGAIN: no connected
     // peer, or a peer that isn't draining) throws std::runtime_error instead
     // of blocking forever.
+    //
+    // linger_ms == -2 (default, sentinel): historical coupling — ZMQ_LINGER
+    // follows send_timeout_ms when that is >= 0, else stays at the zmq
+    // default (infinite). Existing behavior, unchanged for callers that do
+    // not pass linger_ms.
+    // linger_ms >= 0: set ZMQ_LINGER to exactly this value, independent of
+    // send_timeout_ms. Use 0 for fire-and-forget sinks whose queued messages
+    // must not delay process teardown: a CONNECT-mode PUSH creates its pipe
+    // immediately and queues sends below HWM even if the peer never appears
+    // (SNDTIMEO cannot fire), and zmq_ctx_term then waits out ZMQ_LINGER on
+    // the undeliverable backlog (chaos E2E: the orphan worker outlived its
+    // ~65 s exit budget, 61 s idle exit + 60 s linger = 121 s).
+    // linger_ms == -1: explicit infinite linger, regardless of
+    // send_timeout_ms.
+    // All options are applied before bind/connect (mirroring how
+    // ZmqPullSource sets rcvtimeo below).
     ZmqPushSink(zmq::context_t& ctx, const std::string& endpoint, bool bind,
-                int send_timeout_ms = -1);
+                int send_timeout_ms = -1, int linger_ms = -2);
     void send(const Message& m) override;
 
 private:

@@ -4,12 +4,17 @@
 namespace mas {
 
 ZmqPushSink::ZmqPushSink(zmq::context_t& ctx, const std::string& endpoint, bool bind,
-                         int send_timeout_ms)
+                         int send_timeout_ms, int linger_ms)
     : sock_(ctx, zmq::socket_type::push) {
-    if (send_timeout_ms >= 0) {
-        sock_.set(zmq::sockopt::sndtimeo, send_timeout_ms);
+    if (send_timeout_ms >= 0) sock_.set(zmq::sockopt::sndtimeo, send_timeout_ms);
+    if (linger_ms >= 0) {
+        sock_.set(zmq::sockopt::linger, linger_ms);
+    } else if (linger_ms == -2 && send_timeout_ms >= 0) {
+        // Sentinel: historical coupling — linger follows the send timeout.
         sock_.set(zmq::sockopt::linger, send_timeout_ms);
     }
+    // linger_ms == -1 (or sentinel with send_timeout_ms < 0): zmq default,
+    // infinite linger.
     if (bind) sock_.bind(endpoint); else sock_.connect(endpoint);
 }
 
