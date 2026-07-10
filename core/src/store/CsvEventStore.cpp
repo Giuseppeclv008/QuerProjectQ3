@@ -1,4 +1,4 @@
-#include "mas/CsvEventStore.hpp"
+#include "mas/store/CsvEventStore.hpp"
 #include <stdexcept>
 
 namespace mas {

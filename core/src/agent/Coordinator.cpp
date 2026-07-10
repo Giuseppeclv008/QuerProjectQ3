@@ -1,4 +1,4 @@
-#include "mas/Coordinator.hpp"
+#include "mas/agent/Coordinator.hpp"
 #include <iostream>
 #include <string>
 #include <unordered_map>

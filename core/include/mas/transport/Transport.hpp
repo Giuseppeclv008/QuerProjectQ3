@@ -1,5 +1,5 @@
 #pragma once
-#include "mas/Message.hpp"
+#include "mas/agent/Message.hpp"
 #include <optional>
 
 namespace mas {

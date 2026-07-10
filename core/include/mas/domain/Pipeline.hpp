@@ -1,5 +1,5 @@
 #pragma once
-#include "mas/EventStore.hpp"
+#include "mas/store/EventStore.hpp"
 #include <string>
 
 namespace mas {

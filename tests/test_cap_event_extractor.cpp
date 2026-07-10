@@ -1,4 +1,4 @@
-#include "mas/CapEventExtractor.hpp"
+#include "mas/domain/CapEventExtractor.hpp"
 #include <gtest/gtest.h>
 #include <initializer_list>
 #include <string>

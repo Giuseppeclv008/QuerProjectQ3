@@ -1,5 +1,5 @@
 #pragma once
-#include "mas/CapEvent.hpp"
+#include "mas/domain/CapEvent.hpp"
 #include <cstddef>
 #include <fstream>
 #include <string>

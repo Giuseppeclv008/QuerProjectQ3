@@ -1,4 +1,4 @@
-#include "mas/Coordinator.hpp"
+#include "mas/agent/Coordinator.hpp"
 #include "fakes/FakeTransport.hpp"
 #include <chrono>
 #include <gtest/gtest.h>

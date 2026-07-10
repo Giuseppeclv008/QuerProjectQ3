@@ -1,4 +1,4 @@
-#include "mas/CapEventExtractor.hpp"
+#include "mas/domain/CapEventExtractor.hpp"
 #include <cmath>
 
 namespace mas {

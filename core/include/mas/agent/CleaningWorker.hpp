@@ -1,6 +1,6 @@
 #pragma once
-#include "mas/EventStore.hpp"
-#include "mas/Transport.hpp"
+#include "mas/store/EventStore.hpp"
+#include "mas/transport/Transport.hpp"
 #include <functional>
 #include <string>
 

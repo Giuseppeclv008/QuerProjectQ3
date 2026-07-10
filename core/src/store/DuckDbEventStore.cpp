@@ -1,4 +1,4 @@
-#include "mas/DuckDbEventStore.hpp"
+#include "mas/store/DuckDbEventStore.hpp"
 #include <duckdb.hpp>
 #include <stdexcept>
 

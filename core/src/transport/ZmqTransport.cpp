@@ -1,4 +1,4 @@
-#include "mas/ZmqTransport.hpp"
+#include "mas/transport/ZmqTransport.hpp"
 #include <stdexcept>
 
 namespace mas {

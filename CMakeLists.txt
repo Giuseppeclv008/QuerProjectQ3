@@ -62,34 +62,34 @@ set_target_properties(duckdb_imported PROPERTIES
   INTERFACE_INCLUDE_DIRECTORIES "${duckdb_prebuilt_SOURCE_DIR}")
 
 add_library(mas_core
-  core/src/CapEventExtractor.cpp
-  core/src/CsvRawReader.cpp
-  core/src/CsvEventStore.cpp
-  core/src/DuckDbEventStore.cpp
-  core/src/Pipeline.cpp
-  core/src/Message.cpp
-  core/src/CleaningWorker.cpp
-  core/src/Coordinator.cpp)
+  core/src/domain/CapEventExtractor.cpp
+  core/src/store/CsvRawReader.cpp
+  core/src/store/CsvEventStore.cpp
+  core/src/store/DuckDbEventStore.cpp
+  core/src/domain/Pipeline.cpp
+  core/src/agent/Message.cpp
+  core/src/agent/CleaningWorker.cpp
+  core/src/agent/Coordinator.cpp)
 target_include_directories(mas_core PUBLIC core/include)
 target_link_libraries(mas_core PRIVATE duckdb_imported)
 
-add_library(mas_transport core/src/ZmqTransport.cpp)
+add_library(mas_transport core/src/transport/ZmqTransport.cpp)
 target_include_directories(mas_transport PUBLIC core/include)
 target_link_libraries(mas_transport PUBLIC cppzmq)
 
-add_executable(clean_exe core/src/clean_main.cpp)
+add_executable(clean_exe core/src/apps/clean_main.cpp)
 target_link_libraries(clean_exe PRIVATE mas_core)
 set_target_properties(clean_exe PROPERTIES OUTPUT_NAME clean)
 
-add_executable(merge_exe core/src/merge_main.cpp)
+add_executable(merge_exe core/src/apps/merge_main.cpp)
 target_link_libraries(merge_exe PRIVATE mas_core)
 set_target_properties(merge_exe PROPERTIES OUTPUT_NAME mas_merge)
 
-add_executable(worker_exe core/src/worker_main.cpp)
+add_executable(worker_exe core/src/apps/worker_main.cpp)
 target_link_libraries(worker_exe PRIVATE mas_core mas_transport)
 set_target_properties(worker_exe PROPERTIES OUTPUT_NAME mas_worker)
 
-add_executable(coordinator_exe core/src/coordinator_main.cpp)
+add_executable(coordinator_exe core/src/apps/coordinator_main.cpp)
 target_link_libraries(coordinator_exe PRIVATE mas_core mas_transport)
 set_target_properties(coordinator_exe PROPERTIES OUTPUT_NAME mas_coordinator)
 

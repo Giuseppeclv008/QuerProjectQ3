@@ -1,7 +1,7 @@
-#include "mas/Pipeline.hpp"
-#include "mas/CapEventExtractor.hpp"
-#include "mas/CsvEventStore.hpp"
-#include "mas/CsvRawReader.hpp"
+#include "mas/domain/Pipeline.hpp"
+#include "mas/domain/CapEventExtractor.hpp"
+#include "mas/store/CsvEventStore.hpp"
+#include "mas/store/CsvRawReader.hpp"
 #include <vector>
 
 namespace mas {

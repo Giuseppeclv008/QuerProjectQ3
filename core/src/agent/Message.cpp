@@ -1,4 +1,4 @@
-#include "mas/Message.hpp"
+#include "mas/agent/Message.hpp"
 #include <exception>
 #include <vector>
 

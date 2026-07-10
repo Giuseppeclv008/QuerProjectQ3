@@ -1,5 +1,5 @@
-#include "mas/CleaningWorker.hpp"
-#include "mas/Message.hpp"
+#include "mas/agent/CleaningWorker.hpp"
+#include "mas/agent/Message.hpp"
 #include "fakes/FakeTransport.hpp"
 #include <gtest/gtest.h>
 #include <string>

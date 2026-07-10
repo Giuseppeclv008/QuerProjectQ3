@@ -1,4 +1,4 @@
-#include "mas/CsvRawReader.hpp"
+#include "mas/store/CsvRawReader.hpp"
 #include <gtest/gtest.h>
 #include <cstdio>
 #include <fstream>
