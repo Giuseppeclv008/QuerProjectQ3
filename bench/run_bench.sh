@@ -15,9 +15,10 @@ ROWS_PER_DAY=86399
 REPEATS=3
 WORK=tcp://127.0.0.1:5591 RES=tcp://127.0.0.1:5592 HB=tcp://127.0.0.1:5593
 
-for exe in mas_monolith mas_merge mas_worker mas_coordinator clean; do
+for exe in mas_monolith mas_merge mas_worker mas_coordinator; do
     [ -x "$BUILD/$exe" ] || { echo "missing $BUILD/$exe (build first)"; exit 2; }
 done
+[ -f python/oracle_union.py ] || { echo "missing python/oracle_union.py"; exit 2; }
 
 # --- disk guard --------------------------------------------------------------
 # 2 GiB covers first-time extraction (~1.5 GiB) plus the per-run working set;
@@ -49,7 +50,13 @@ PIDS=()
 cleanup() { for p in "${PIDS[@]:-}"; do kill -9 "$p" 2>/dev/null || true; done; rm -rf "$T"; }
 trap cleanup EXIT
 
-# --- oracle cache: sequential `clean` totals per volume ----------------------
+# --- oracle cache: expected UNIQUE(head,cap_seq) rows per volume -------------
+# python/oracle_union.py (independent Python reference, spec §11) instead of
+# summing per-file `clean` counts: the real month's Count counter reset
+# mid-day-16, so days 16-24 replay cap_seq ranges from days 1-15 and the
+# store's UNIQUE constraint dedupes them — the per-file sum overcounts the
+# union (21,872,663 events vs 14,372,237 rows across 28 days; found at the
+# Task 5 gate, where mono T=1 and T=8 both hold exactly the union count).
 # Plain indexed array, NOT `declare -A`: /usr/bin/env bash resolves to macOS's
 # stock bash 3.2.57 here (verified — no Homebrew bash on PATH), which lacks
 # associative arrays (`declare -A` errors under set -e and kills the script
@@ -57,16 +64,10 @@ trap cleanup EXIT
 # a sparse indexed array is equivalent.
 declare -a ORACLE
 for v in "${VOLUMES[@]}"; do
-    total=0
-    for ((i = 0; i < v; i++)); do
-        rm -f "$T/o.duckdb" "$T/o.duckdb.wal"
-        n="$("$BUILD/clean" "${FILES[$i]}" "$T/o.duckdb" 2>&1 >/dev/null \
-             | sed -n 's/^wrote \([0-9][0-9]*\) cap events.*/\1/p')" || n=""
-        case "$n" in (*[!0-9]*|"") echo "oracle failed for ${FILES[$i]}: '$n'"; exit 1;; esac
-        total=$((total + n))
-    done
-    ORACLE[$v]=$total
-    echo "oracle[$v days] = $total events"
+    n="$(python3 python/oracle_union.py "${FILES[@]:0:$v}")" || n=""
+    case "$n" in (*[!0-9]*|"") echo "oracle failed for $v days: '$n'"; exit 1;; esac
+    ORACLE[$v]=$n
+    echo "oracle[$v days] = $n rows"
 done
 
 mkdir -p bench
