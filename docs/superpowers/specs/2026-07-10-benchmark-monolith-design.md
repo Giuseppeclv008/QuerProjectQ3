@@ -10,7 +10,7 @@ Predecessors: Plans 1–4 (cleaning core, DuckDB store, ZeroMQ runtime, resilien
 Goal 5 — "Demonstrate MAS scalability vs a monolithic baseline" — is the course's
 graded core (§4: "brief demands parallelization + scalability proof"). The MAS side
 is complete and validated on real data; what is missing is the experimental control
-(a monolith), the second parallelism axis (§8's intra-process OpenMP), and the
+(a monolith), the second parallelism axis (§8's intra-process threading), and the
 measurement apparatus (§9's harness, metrics, and plots).
 
 Hardware reality this design targets: the development machine has 8 cores and
@@ -21,7 +21,7 @@ The user frees disk before the sweep; the harness still guards.
 
 **Goals**
 
-1. A monolithic baseline binary sharing the MAS's exact hot path, with an OpenMP
+1. A monolithic baseline binary sharing the MAS's exact hot path, with a std::thread
    thread knob — the experimental control.
 2. A reproducible sweep harness measuring both architectures across worker count,
    thread count, and data volume, with correctness asserted on every run.
@@ -35,10 +35,10 @@ The user frees disk before the sweep; the harness still guards.
 - KPI/anomaly agents, ingestion agent.
 - Distributed multi-host runs (parent spec non-goal).
 
-## 3. Key Decision — OpenMP grain: files, not heads
+## 3. Key Decision — thread grain: files, not heads
 
 Parent spec §8 names "OpenMP over 36 independent heads" as the intra-process axis.
-This design deliberately deviates to **file-grain** OpenMP and documents why:
+This design deliberately deviates to **file-grain** intra-process threading and documents why:
 
 - The hot path streams rows (`CsvRawReader::next` → `CapEventExtractor::process`);
   a row visits 36 heads with one integer compare each. Head-grain parallelism means
@@ -46,9 +46,9 @@ This design deliberately deviates to **file-grain** OpenMP and documents why:
   memory-bound with negligible arithmetic intensity (§8 itself concedes this for
   GPU), so overhead would swamp any gain, and it would force restructuring a
   validated hot path.
-- File-grain (`#pragma omp parallel for` over day-files, one `clean_file` per
+- File-grain (a fixed pool of T `std::thread`s pulling day-files off an atomic counter, one `clean_file` per
   thread into a thread-local store, idempotent merge at the end) keeps the work
-  grain **identical** to the MAS's unit of work. `mono-OMP(T)` vs `MAS(N)` then
+  grain **identical** to the MAS's unit of work. `mono-MT(T)` vs `MAS(N)` then
   differ only in mechanism — threads + shared-nothing stores vs processes + ZeroMQ
   — so their delta directly measures IPC/process overhead. A controlled experiment,
   not a conflated one.
@@ -85,17 +85,20 @@ resolve before merging. This plan's `mas_monolith` lands in `core/src/apps/`.
 
 ## 4. Components
 
-1. **`mas_monolith` CLI** (`core/src/monolith_main.cpp`):
+1. **`mas_monolith` CLI** (`core/src/apps/monolith_main.cpp`):
    `mas_monolith <out.duckdb> <machine_id> <threads> <day1.csv> [day2.csv ...]`
    - `threads == 1`: plain sequential loop (arch `mono-1T`).
-   - `threads > 1`: OpenMP parallel-for over files, thread-local stores
-     `<out>.tN.duckdb`, then `merge_from` each into `<out>` (arch `mono-OMP`).
+   - `threads > 1`: std::thread pool (T threads, atomic file counter) over files, thread-local stores
+     `<out>.tN.duckdb`, then `merge_from` each into `<out>` (arch `mono-MT`).
    - Prints per-phase timings and final count to stderr; exit conventions match the
      other mains (usage 2, runtime error 1, 0 on success).
-   - OpenMP via CMake `find_package(OpenMP)`; on Apple clang this may need
-     `libomp` — if unavailable, the binary falls back to sequential with a loud
-     stderr note and the harness records threads=1 (the plan verifies toolchain
-     support as its first task).
+   - Threading via `std::thread` (C++ stdlib; CMake links `Threads::Threads`).
+     Decision record: parent spec §8 named OpenMP, but Apple clang ships no
+     OpenMP runtime on this machine and installing one was declined — the
+     mechanism swaps to std::thread, the experiment (file-grain intra-process
+     threading vs multi-process MAS) is unchanged. The atomic-counter pool is
+     dynamic load balancing, slightly fairer than PUSH/PULL's static
+     round-robin — noted in results.md.
 2. **`bench/run_bench.sh`**: the sweep harness (details §5).
 3. **`python/bench_plots.py`**: plots + table (details §6).
 4. **Docs**: `docs/bench/results.md`, `docs/bench/*.png`, validation-log entry.
@@ -140,14 +143,14 @@ extracted, verify 28 files present) — part of the harness, gated by the disk g
 already used in `python/`):
 
 1. Throughput (events/s) vs N — MAS curve, `mono-1T` horizontal reference,
-   `mono-OMP(T)` points.
+   `mono-MT(T)` points.
 2. Speedup S = T₁/Tₙ and efficiency E = S/N vs N/T, with the ideal-linear line.
 3. Wall-clock vs volume (1/7/28 days) per architecture.
-4. Monolith OpenMP: speedup vs T.
+4. Monolith threading: speedup vs T.
 
 Outputs: `docs/bench/<name>.png` (committed) + `docs/bench/results.md` with the
 median table and a short honest findings section (expected: MAS ~linear until
-merge/I-O bound; mono-OMP similar until memory-bound; oversubscription plateau;
+merge/I-O bound; mono-MT similar until memory-bound; oversubscription plateau;
 merge share rising with N).
 
 ## 7. Testing
@@ -161,13 +164,13 @@ merge share rising with N).
   every run's count assertion; disk guard path exercised by a fake low-disk test
   (env override).
 - **Regression**: full existing suite stays green; no changes to library code
-  expected outside CMake (OpenMP flags) and the new main.
+  expected outside CMake (`find_package(Threads)`) and the new main.
 
 ## 8. Risks & Accepted Caveats
 
 | Risk | Handling |
 |---|---|
-| Apple clang lacks bundled OpenMP | First plan task verifies; fallback = sequential + loud note, harness records reality |
+| (retired) OpenMP unavailable | Resolved at design time: std::thread mechanism swap, decision recorded in §4 |
 | Laptop thermal variance | Median-of-3; caveat in results.md; no absolute-number claims beyond trends |
 | Merge dominates at high N | Timed separately, reported separately — a finding, not a flaw |
 | Disk fills mid-sweep | 2 GB pre-flight guard + per-volume extraction check |
