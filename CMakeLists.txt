@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
 project(mas_telemetry LANGUAGES CXX)
 
+find_package(Threads REQUIRED)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -93,6 +95,10 @@ add_executable(coordinator_exe core/src/apps/coordinator_main.cpp)
 target_link_libraries(coordinator_exe PRIVATE mas_core mas_transport)
 set_target_properties(coordinator_exe PROPERTIES OUTPUT_NAME mas_coordinator)
 
+add_executable(monolith_exe core/src/apps/monolith_main.cpp)
+target_link_libraries(monolith_exe PRIVATE mas_core Threads::Threads)
+set_target_properties(monolith_exe PROPERTIES OUTPUT_NAME mas_monolith)
+
 enable_testing()
 add_executable(unit_tests
   tests/test_cap_event_extractor.cpp
@@ -107,7 +113,7 @@ add_executable(unit_tests
   tests/test_coordinator.cpp)
 target_link_libraries(unit_tests PRIVATE mas_core mas_transport GTest::gtest_main duckdb_imported cppzmq)
 target_include_directories(unit_tests PRIVATE tests)
-set_target_properties(unit_tests clean_exe merge_exe worker_exe coordinator_exe PROPERTIES
+set_target_properties(unit_tests clean_exe merge_exe worker_exe coordinator_exe monolith_exe PROPERTIES
   BUILD_RPATH "${duckdb_prebuilt_SOURCE_DIR}")
 include(GoogleTest)
 gtest_discover_tests(unit_tests)
