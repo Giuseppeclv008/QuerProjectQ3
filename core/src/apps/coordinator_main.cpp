@@ -1,5 +1,5 @@
-#include "mas/Coordinator.hpp"
-#include "mas/ZmqTransport.hpp"
+#include "mas/agent/Coordinator.hpp"
+#include "mas/transport/ZmqTransport.hpp"
 #include <chrono>
 #include <exception>
 #include <iostream>

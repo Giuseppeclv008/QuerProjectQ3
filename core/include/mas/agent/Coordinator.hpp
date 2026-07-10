@@ -1,6 +1,6 @@
 #pragma once
-#include "mas/Message.hpp"
-#include "mas/Transport.hpp"
+#include "mas/agent/Message.hpp"
+#include "mas/transport/Transport.hpp"
 #include <chrono>
 #include <functional>
 #include <vector>

@@ -1,7 +1,7 @@
-#include "mas/CleaningWorker.hpp"
-#include "mas/DuckDbEventStore.hpp"
-#include "mas/Pipeline.hpp"
-#include "mas/ZmqTransport.hpp"
+#include "mas/agent/CleaningWorker.hpp"
+#include "mas/store/DuckDbEventStore.hpp"
+#include "mas/domain/Pipeline.hpp"
+#include "mas/transport/ZmqTransport.hpp"
 #include <exception>
 #include <iostream>
 #include <string>

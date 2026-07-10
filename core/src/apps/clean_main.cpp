@@ -1,6 +1,6 @@
-#include "mas/CsvRawReader.hpp"
-#include "mas/DuckDbEventStore.hpp"
-#include "mas/Pipeline.hpp"
+#include "mas/store/CsvRawReader.hpp"
+#include "mas/store/DuckDbEventStore.hpp"
+#include "mas/domain/Pipeline.hpp"
 #include <iostream>
 #include <string>
 #include <string_view>

@@ -1,6 +1,6 @@
 #pragma once
-#include "mas/CapEvent.hpp"
-#include "mas/EventStore.hpp"
+#include "mas/domain/CapEvent.hpp"
+#include "mas/store/EventStore.hpp"
 #include <fstream>
 #include <span>
 #include <string>

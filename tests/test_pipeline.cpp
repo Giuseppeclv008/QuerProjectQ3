@@ -1,6 +1,6 @@
-#include "mas/Pipeline.hpp"
-#include "mas/EventStore.hpp"
-#include "mas/DuckDbEventStore.hpp"
+#include "mas/domain/Pipeline.hpp"
+#include "mas/store/EventStore.hpp"
+#include "mas/store/DuckDbEventStore.hpp"
 #include <gtest/gtest.h>
 #include <cstdio>
 #include <fstream>
