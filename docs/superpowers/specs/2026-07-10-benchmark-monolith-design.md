@@ -61,6 +61,28 @@ Consequence: the MAS gets no thread knob (a worker holds one file at a time); §
 `clean_file` call constructs its own reader, extractor, and store — shared-nothing
 by construction; correctness gate is count-invariance vs the sequential run.
 
+## 3b. Repository Module Layout (precondition, standalone mini-PR)
+
+Before this plan executes, `core/` is restructured into responsibility modules —
+a pure mechanical move (zero logic change, suite stays green), merged as its own
+PR so the benchmark diff stays clean:
+
+```
+core/include/mas/domain/     CapEvent, CapEventExtractor, Pipeline    (hot path)
+core/include/mas/store/      EventStore, CsvEventStore, DuckDbEventStore, CsvRawReader
+core/include/mas/agent/      Coordinator, CleaningWorker, Message
+core/include/mas/transport/  Transport, ZmqTransport                  (DIP boundary)
+core/src/<module>/           mirrored .cpp files
+core/src/apps/               all CLI mains (clean, worker, coordinator, merge, monolith)
+tests/, tests/fakes/         unchanged
+```
+
+Includes are nested and self-documenting (`#include "mas/agent/Coordinator.hpp"`).
+CMake target names (`mas_core`, `mas_transport`) are unchanged. **Convention for
+all future files**: new code lands in the module matching its responsibility; new
+CLIs land in `core/src/apps/`; a file that fits no module is a design smell to
+resolve before merging. This plan's `mas_monolith` lands in `core/src/apps/`.
+
 ## 4. Components
 
 1. **`mas_monolith` CLI** (`core/src/monolith_main.cpp`):
