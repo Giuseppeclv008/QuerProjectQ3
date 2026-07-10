@@ -68,7 +68,7 @@ parse_time() {   # $1 = time-output file
     awk '
         /real/ && /user/ && /sys/ { real=$1; user=$3; sys=$5 }
         /maximum resident set size/ { rss=$1 }
-        END { printf "%s %s %s %s", real, user, sys, rss }
+        END { printf "%s %s %s %s\n", real, user, sys, rss }
     ' "$1"
 }
 
