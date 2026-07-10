@@ -19,10 +19,16 @@ for exe in mas_monolith mas_merge mas_worker mas_coordinator clean; do
     [ -x "$BUILD/$exe" ] || { echo "missing $BUILD/$exe (build first)"; exit 2; }
 done
 
-# --- disk guard: >= 2 GB free before any extraction -------------------------
+# --- disk guard --------------------------------------------------------------
+# 2 GiB covers first-time extraction (~1.5 GiB) plus the per-run working set;
+# once all 28 day CSVs are already extracted (idempotent unzip -n), only the
+# working set remains, so require a 512 MB floor instead.
 free_kb=$(df -k . | awk 'NR==2 {print $4}')
-[ "$free_kb" -ge $((2 * 1024 * 1024)) ] || {
-    echo "ABORT: only $((free_kb / 1024)) MB free; need >= 2048 MB"; exit 2; }
+csv_count=$(find "$DATA" -name '*.csv' 2>/dev/null | wc -l | tr -d ' ')
+need_mb=2048
+[ "$csv_count" -ge 28 ] && need_mb=512
+[ "$free_kb" -ge $((need_mb * 1024)) ] || {
+    echo "ABORT: only $((free_kb / 1024)) MB free; need >= $need_mb MB"; exit 2; }
 
 # --- volume prep: idempotent extraction -------------------------------------
 mkdir -p "$DATA"
