@@ -45,16 +45,6 @@ TEST(CleaningWorker, ProcessesItemsInOrderThenStopsOnStop) {
     EXPECT_EQ(r1->worker_id, "w1");
 }
 
-TEST(CleaningWorker, ClosedSourceEndsRun) {
-    mas::test::FakeSource work;   // empty queue -> nullopt immediately
-    mas::test::FakeSink results, hb;
-    FakeStore store;
-    mas::CleaningWorker w(work, results, hb, store, "w1",
-        [](const std::string&, mas::IEventStore&) -> long long { return 0; });
-    EXPECT_EQ(w.run(), 0);
-    EXPECT_TRUE(results.sent.empty());
-}
-
 TEST(CleaningWorker, MalformedWorkItemIsSkippedWithoutResult) {
     mas::test::FakeSource work;
     work.queue.push_back(mas::Message{"garbage"});

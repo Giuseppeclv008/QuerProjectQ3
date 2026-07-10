@@ -116,6 +116,18 @@ DispatchSummary run_coordinator(const std::vector<WorkItem>& items,
             }
             w.completed.clear();
         }
+
+        // Live-worker count for this pass: computed once, right after the
+        // tombstone pass, and reused below. A dead pool means an anonymous
+        // PUSH re-dispatch send has no pipes to round-robin into (bind-mode
+        // PUSH goes mute), which would otherwise block for the send timeout
+        // instead of letting the abort check (section 4) fire.
+        int live = 0;
+        for (const auto& [id, w] : registry) {
+            if (w.alive) ++live;
+            (void)id;
+        }
+
         if (any_death) {
             for (auto& [path, st] : state) {
                 if (st.done) continue;
@@ -130,16 +142,13 @@ DispatchSummary run_coordinator(const std::vector<WorkItem>& items,
                 ++st.redispatches;
                 std::cerr << "coordinator: re-dispatch " << path << " (attempt "
                           << (st.redispatches + 1) << ")\n";
-                work.send(encode(WorkItem{path}));
+                if (live > 0) {
+                    work.send(encode(WorkItem{path}));
+                }
             }
         }
 
         // 4) Abort: nobody to do the remaining work.
-        int live = 0;
-        for (const auto& [id, w] : registry) {
-            if (w.alive) ++live;
-            (void)id;
-        }
         const bool nobody_ever = registry.empty() &&
                                  (t - start > cfg.death_threshold);
         if (open > 0 && ((live == 0 && !registry.empty()) || nobody_ever)) {
