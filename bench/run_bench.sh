@@ -24,7 +24,10 @@ done
 # once all 28 day CSVs are already extracted (idempotent unzip -n), only the
 # working set remains, so require a 512 MB floor instead.
 free_kb=$(df -k . | awk 'NR==2 {print $4}')
-csv_count=$(find "$DATA" -name '*.csv' 2>/dev/null | wc -l | tr -d ' ')
+# `|| csv_count=0`: find exits 1 when $DATA doesn't exist yet; under pipefail
+# that status reaches the assignment and set -e would kill the script silently
+# before the guard can print ABORT (first-run path).
+csv_count=$(find "$DATA" -name '*.csv' 2>/dev/null | wc -l | tr -d ' ') || csv_count=0
 need_mb=2048
 [ "$csv_count" -ge 28 ] && need_mb=512
 [ "$free_kb" -ge $((need_mb * 1024)) ] || {
@@ -58,7 +61,7 @@ for v in "${VOLUMES[@]}"; do
     for ((i = 0; i < v; i++)); do
         rm -f "$T/o.duckdb" "$T/o.duckdb.wal"
         n="$("$BUILD/clean" "${FILES[$i]}" "$T/o.duckdb" 2>&1 >/dev/null \
-             | sed -n 's/^wrote \([0-9][0-9]*\) cap events.*/\1/p')"
+             | sed -n 's/^wrote \([0-9][0-9]*\) cap events.*/\1/p')" || n=""
         case "$n" in (*[!0-9]*|"") echo "oracle failed for ${FILES[$i]}: '$n'"; exit 1;; esac
         total=$((total + n))
     done
@@ -108,7 +111,8 @@ for v in "${VOLUMES[@]}"; do
             R="$T/run" && rm -rf "$R" && mkdir "$R"
             /usr/bin/time -l "$BUILD/mas_monolith" "$R/mono.duckdb" "$MACHINE" "$th" \
                 "${FILES[@]:0:$v}" 2>"$R/log" || { cat "$R/log"; exit 1; }
-            line=$(grep '^monolith:' "$R/log")
+            line=$(grep '^monolith:' "$R/log") \
+                || { echo "FAIL: no monolith summary line"; cat "$R/log"; exit 1; }
             ev=$(echo "$line"    | sed -n 's/.* files, \([0-9]*\) events.*/\1/p')
             clean=$(echo "$line" | sed -n 's/.*clean \([0-9.]*\) s.*/\1/p')
             merge=$(echo "$line" | sed -n 's/.*merge \([0-9.]*\) s.*/\1/p')
@@ -129,6 +133,10 @@ for v in "${VOLUMES[@]}"; do
         for rep in 1 2 3; do
             R="$T/run" && rm -rf "$R" && mkdir "$R"
             t_start=$(python3 -c 'import time; print(f"{time.time():.3f}")')
+            # Reset per rep: the EXIT trap must only ever target this run's
+            # workers — a sweep-long list would kill -9 long-reaped (possibly
+            # reused) PIDs at exit.
+            PIDS=()
             WPIDS=()
             for ((w = 1; w <= n; w++)); do
                 /usr/bin/time -l "$BUILD/mas_worker" "$WORK" "$RES" "$HB" \
