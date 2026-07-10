@@ -64,32 +64,40 @@
 """Two deterministic 109-column day-file fixtures for monolith smokes.
 
 Shape matches the real telemetry files (ts + 36 counts + 36 torques + 36
-statuses, ';'-separated). Each file yields exactly one cap event on head 1
-(count 1 -> 2), so expected totals are: per file 1 event, both files 2.
+statuses). Day 1 takes head 1's counter 1 -> 2, day 2 CONTINUES it 2 -> 3 —
+mirroring real day-files, whose machine counter is monotonic across days.
+(cap_seq IS that counter value; if day 2 replayed 1 -> 2 the idempotent
+UNIQUE(machine, head, cap_seq) store would dedupe the second event, and a
+2-file run would report 2 events but hold only 1 row — caught at execution
+time on 2026-07-10.) Expected totals: 1 event per file, 2 events and 2 rows
+for both files together.
 """
 import sys, pathlib
 
-def write_fixture(path: pathlib.Path, ts0: str, ts1: str) -> None:
-    header = ";".join(["ts"] + [f"c{i}" for i in range(1, 109)])
+def write_fixture(path: pathlib.Path, ts0: str, ts1: str,
+                  c0: int, c1: int) -> None:
+    header = ",".join(["ts"] + [f"c{i}" for i in range(1, 109)])
     def row(ts: str, head1_count: int) -> str:
         counts = [str(head1_count)] + ["0"] * 35
         torques = ["2.0"] * 36
         stats = ["2.0"] * 36
-        return ";".join([ts] + counts + torques + stats)
-    path.write_text(header + "\n" + row(ts0, 1) + "\n" + row(ts1, 2) + "\n")
+        return ",".join([ts] + counts + torques + stats)
+    path.write_text(header + "\n" + row(ts0, c0) + "\n" + row(ts1, c1) + "\n")
 
 def main() -> None:
     out = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else ".")
     out.mkdir(parents=True, exist_ok=True)
-    write_fixture(out / "tiny-day1.csv", "2026-02-01T00:00:00", "2026-02-01T00:00:01")
-    write_fixture(out / "tiny-day2.csv", "2026-02-02T00:00:00", "2026-02-02T00:00:01")
+    write_fixture(out / "tiny-day1.csv", "2026-02-01T00:00:00",
+                  "2026-02-01T00:00:01", 1, 2)
+    write_fixture(out / "tiny-day2.csv", "2026-02-02T00:00:00",
+                  "2026-02-02T00:00:01", 2, 3)
     print(f"wrote {out}/tiny-day1.csv {out}/tiny-day2.csv")
 
 if __name__ == "__main__":
     main()
 ```
 
-Column-order note for the implementer: confirm the real reader's column expectations against `tests/test_pipeline.cpp`'s fixture builder (header is positional, labels meaningless) — Plan 4 Task 6's smoke used exactly this 109-column shape and the worker cleaned 1 event from it. If the pipeline fixture disagrees with the layout above, match the pipeline fixture and adjust the expected totals accordingly; state what you found in your report.
+Column-order note for the implementer: the reader (`CsvRawReader.cpp`) splits on ',' — confirmed at execution time; header is positional, labels meaningless — Plan 4 Task 6's smoke used exactly this 109-column shape and the worker cleaned 1 event from it. If the pipeline fixture disagrees with the layout above, match the pipeline fixture and adjust the expected totals accordingly; state what you found in your report.
 
 - [ ] **Step 2: Write the main (sequential only)**
 
