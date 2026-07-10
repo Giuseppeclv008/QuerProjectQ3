@@ -168,10 +168,16 @@ mas_coordinator <work_ep> <result_ep> <hb_ep> <day1.csv> [day2.csv ...]
 | Worker dies after reporting results | Its completions re-dispatched; store written off | Survivor stores hold a superset |
 | False-positive death (slow file) | Zombie's late results dropped; no STOP for it; self-exits on idle timeout | Waste, never incorrectness; 30 s ≫ 7 s makes it rare |
 | Zombie heartbeat after tombstone | Ignored — no revival | Simplicity; zombie self-exits |
+| Zombie steals a STOP or a re-dispatched item | Delivery is count-accurate, not target-accurate (anonymous round-robin PUSH) | Waste, never incorrectness — bounded by the idle-exit → death-sweep → abort/cap cascade |
 | Poison item (crashes any worker) | Re-dispatch cap 2 → permanent fail; run completes, exit 1 | Pool survives; failure is loud |
 | All workers die | Abort with summary, exit 1 | Tick loop + timeouts: coordinator cannot hang |
 | Coordinator dies | Every worker exits within ~60 s (idle recv timeout or send-timeout throw) | No orphan processes |
 | Malformed heartbeat/result | Log + ignore (existing decode-failure pattern) | Never crashes the loop |
+
+On long skewed runs a starved-but-alive worker can exceed its 60-tick idle
+budget mid-run and self-exit, appearing to the coordinator as a phantom
+death; counts stay exact (its items re-dispatch), only the `workers_died`
+stat inflates.
 
 ## 9. Defaults
 

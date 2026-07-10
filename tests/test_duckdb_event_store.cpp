@@ -196,4 +196,45 @@ TEST(DuckDbEventStore, WriteHandlesBatchLargerThanPipelineKBatchSize) {
     removeDb(path);
 }
 
+// --- Final-review fix wave (Plan 4) ---
+
+TEST(DuckDbEventStore, MergeFromDetachesSourceOnInsertFailureSoAliasIsNotPoisoned) {
+    // merge_from's INSERT can throw after a successful ATTACH (e.g. a source
+    // whose cap_events schema doesn't match the SELECT list). Before this
+    // fix that left "src" attached, poisoning every later ATTACH ... AS src
+    // in the same connection (mas_merge's skip-and-continue loop hits this).
+    const std::string good = "t_merge_detach_good.duckdb";
+    const std::string bad = "t_merge_detach_bad.duckdb";
+    const std::string dst = "t_merge_detach_dst.duckdb";
+    removeDb(good); removeDb(bad); removeDb(dst);
+    {
+        // Healthy source via the normal ctor/schema.
+        mas::DuckDbEventStore sg(good, "MCC1");
+        std::vector<mas::CapEvent> bg = {ev(1, "2026-02-01T00:00:01.000", 101)};
+        sg.write(bg);
+    }
+    {
+        // Attachable-but-incompatible source: a real DuckDB file (so ATTACH
+        // succeeds) whose cap_events table doesn't have the columns
+        // merge_from's INSERT ... SELECT names (so the INSERT throws a
+        // Binder Error instead of a row ever moving).
+        duckdb::DuckDB bad_db(bad);
+        duckdb::Connection bad_con(bad_db);
+        auto res = bad_con.Query("CREATE TABLE cap_events (only_this_column INTEGER)");
+        ASSERT_FALSE(res->HasError()) << res->GetError();
+    }   // close before attaching read-only, same convention as the other tests
+
+    mas::DuckDbEventStore d(dst, "MCC1");
+    EXPECT_THROW(d.merge_from(bad), std::runtime_error);
+
+    // If the failed merge had left "src" attached, this second merge_from's
+    // own ATTACH ... AS src would fail (alias already in use) before its
+    // INSERT ever ran. A successful merge here is proof the DETACH on the
+    // throw path actually executed.
+    EXPECT_NO_THROW(d.merge_from(good));
+    EXPECT_EQ(d.count(), 1);
+
+    removeDb(good); removeDb(bad); removeDb(dst);
+}
+
 } // namespace

@@ -113,10 +113,19 @@ void DuckDbEventStore::merge_from(const std::string& other_db_path) {
     // Same trusted-local-path caveat as export_parquet: the path is spliced
     // into SQL, so a quote in it would break the statement.
     execOrThrow(impl_->con, "ATTACH '" + other_db_path + "' AS src (READ_ONLY)");
-    execOrThrow(impl_->con, R"sql(
-        INSERT OR IGNORE INTO cap_events (machine_id, head_id, ts, cap_seq, app_torque, status, delta, is_fault, aggregated, is_reset)
-        SELECT machine_id, head_id, ts, cap_seq, app_torque, status, delta, is_fault, aggregated, is_reset
-        FROM src.cap_events)sql");
+    try {
+        execOrThrow(impl_->con, R"sql(
+            INSERT OR IGNORE INTO cap_events (machine_id, head_id, ts, cap_seq, app_torque, status, delta, is_fault, aggregated, is_reset)
+            SELECT machine_id, head_id, ts, cap_seq, app_torque, status, delta, is_fault, aggregated, is_reset
+            FROM src.cap_events)sql");
+    } catch (...) {
+        // The alias must not survive a failed merge: mas_merge (Task 5) now
+        // skips-and-continues past an unopenable source, so a left-attached
+        // "src" from one corrupt-but-attachable store would poison every
+        // later ATTACH ... AS src in the same loop.
+        execOrThrow(impl_->con, "DETACH src");
+        throw;
+    }
     execOrThrow(impl_->con, "DETACH src");
 }
 

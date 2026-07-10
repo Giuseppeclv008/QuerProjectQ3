@@ -355,4 +355,68 @@ TEST(Coordinator, LateResultFromTombstonedWorkerIsDropped) {
     EXPECT_EQ(s.workers_died, 1);
 }
 
+// --- Final-review fix wave (Plan 4) ---
+
+TEST(Coordinator, SilentForExactlyDeathThresholdIsNotDeclaredDead) {
+    using namespace std::chrono_literals;
+    // Boundary pin: the sweep compares with `>` against death_threshold, not
+    // `>=`. w1 registers at t=0; the next tick jumps virtual time by exactly
+    // death_threshold (30000 ms, the CoordinatorConfig default) with no
+    // refresh in between. Right at the boundary the worker must survive
+    // (workers_died stays 0), and its still-open item completes normally
+    // in the pass after.
+    const std::vector<mas::WorkItem> items = {{"d1.csv"}};
+    sc::time_point t{};
+    mas::test::FakeSink work;
+    TimedSource results;
+    results.t = &t;
+    // pass 1: empty tick at t=0; drain registers w1.
+    // pass 2: empty tick jumps to t=30000 ms (== death_threshold exactly);
+    //         drain refreshes nobody -> sweep must NOT tombstone w1.
+    // pass 3: w1 completes d1 normally.
+    results.script.push_back({std::nullopt, 0ms});
+    results.script.push_back({std::nullopt, 30000ms});
+    results.script.push_back({mas::encode(mas::WorkResult{"d1.csv", 10, 0.1, "w1"}), 0ms});
+    mas::test::FakeTickSource hbs;
+    hbs.script.push_back(hb("w1", 0));
+    hbs.script.push_back(std::nullopt);   // end pass-1 drain
+    // pass 2: nothing scripted -> FakeTickSource reports an empty tick.
+
+    const auto s = mas::run_coordinator(items, work, results, hbs,
+                                        mas::CoordinatorConfig{},
+                                        [&] { return t; });
+
+    EXPECT_EQ(s.workers_died, 0);
+    EXPECT_EQ(s.files_ok, 1);
+    EXPECT_EQ(s.files_failed, 0);
+    EXPECT_EQ(s.total_events, 10);
+    // 1 WORK + 1 STOP; no re-dispatch, since w1 was never declared dead.
+    ASSERT_EQ(work.sent.size(), 2u);
+    EXPECT_TRUE(mas::is_stop(work.sent[1]));
+}
+
+TEST(Coordinator, MalformedHeartbeatAheadOfValidBeatsIsDroppedAtLoopLevel) {
+    // Pins the "coordinator: dropped malformed heartbeat" branch at loop
+    // level: a garbage frame ahead of a valid beat in the very same drain
+    // must be dropped with `continue` (not a `break` that would abandon the
+    // rest of the drain), so the valid beat right behind it still registers
+    // the worker in the same pass and the run completes normally.
+    const std::vector<mas::WorkItem> items = {{"d1.csv"}};
+    mas::test::FakeSink work;
+    mas::test::FakeSource results;
+    results.queue.push_back(result("d1.csv", 10, "w1"));
+    mas::test::FakeSource hbs;
+    hbs.queue.push_back(mas::Message{"garbage"});   // malformed: not "HB\n<id>\n<seq>"
+    hbs.queue.push_back(hb("w1", 0));
+
+    const auto s = mas::run_coordinator(items, work, results, hbs,
+                                        mas::CoordinatorConfig{}, fixed_clock());
+
+    EXPECT_EQ(s.files_ok, 1);
+    EXPECT_EQ(s.files_failed, 0);
+    EXPECT_EQ(s.total_events, 10);
+    ASSERT_EQ(work.sent.size(), 2u);   // 1 WORK + 1 STOP: w1 registered fine
+    EXPECT_TRUE(mas::is_stop(work.sent.back()));
+}
+
 } // namespace
