@@ -2,9 +2,35 @@
 
 - **Project**: AROL Q3 — MAS for Equatorque capping-machine telemetry
 - **Date**: 2026-07-04
-- **Status**: Approved design (pre-implementation)
+- **Status**: **PARTIALLY SUPERSEDED** — see the notice below
 - **Team**: 3 people, ~1 month
 - **Course**: System and Device Programming (Quer)
+
+---
+
+> ## ⚠️ Supersession notice (2026-07-11)
+>
+> This spec was written against a framing the project brief
+> (`AROL-presentation-project-Q3.pdf`) does not support. It designed a *distributed-MAS
+> scalability project*; the brief asks for an **"Agentic AI for Telemetry Analysis"** — an
+> AI agent with a BOT interface that selects analysis steps autonomously and produces
+> reports.
+>
+> **Still authoritative:** §1–§3 (context, data), §6 (the dedup transform), §7 (SOLID),
+> §8 (concurrency), §11 (testing). These describe the ingestion and cleaning tier, which is
+> built (Plans 1–5) and stands.
+>
+> **Superseded by `2026-07-11-agentic-analytics-reporting-design.md`:**
+> - §5.2's **C++ KPI Agent**, **Anomaly Agent as a ZeroMQ service**, the **`analyze` PUSH
+>   path**, and the separate **Results Store** — *will not be built*
+> - §5.4's **Isolation Forest / sklearn** model and its train-on-normal-months evaluation —
+>   *off the critical path*; the brief requires WP2 analytics to be **deterministic**
+> - **Goal 4** ("advanced analytics agents") is redefined there as WP2/WP3/WP4
+>
+> **Corrected by that spec:** the status-code semantics in §2 and in `CapEvent.hpp` are
+> **inverted**. Measured at closure: `status 0` + torque > 0 = a *real cap* (427,643/day);
+> `status 2` + torque == 0 = a *No-Load cycle* (337,772/day); `65` = fault (4/day). See §3.1
+> there.
 
 ---
 
