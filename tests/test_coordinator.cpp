@@ -419,4 +419,99 @@ TEST(Coordinator, MalformedHeartbeatAheadOfValidBeatsIsDroppedAtLoopLevel) {
     EXPECT_TRUE(mas::is_stop(work.sent.back()));
 }
 
+// --- Registration gate (Plan 5): fix for the PUSH slow-joiner capture ---
+
+TEST(Coordinator, GatedDispatchWaitsForExpectedWorkers) {
+    const std::vector<mas::WorkItem> items = {{"d1.csv"}, {"d2.csv"}};
+    mas::CoordinatorConfig cfg;
+    cfg.expected_workers = 2;
+    mas::test::FakeSink work;
+    // The gate's tick order is results-then-heartbeats, same as the main
+    // loop, and its first results.recv() runs unconditionally every
+    // iteration. A plain always-ready FakeSource would therefore hand the
+    // gate the first *dispatch-phase* result (meant for the main loop, after
+    // WORK goes out) and it would be silently dropped as pre-dispatch
+    // liveness noise, permanently losing it. FakeTickSource's leading
+    // nullopt models "nothing arrived yet" for that first tick, so the gate
+    // is satisfied by the two hellos alone, exactly as intended.
+    mas::test::FakeTickSource results;
+    results.script.push_back(std::nullopt);
+    results.script.push_back(result("d1.csv", 10, "w1"));
+    results.script.push_back(result("d2.csv", 20, "w2"));
+    mas::test::FakeSource hbs;
+    hbs.queue.push_back(hb("w1", 0));
+    hbs.queue.push_back(hb("w2", 0));
+
+    const auto s = mas::run_coordinator(items, work, results, hbs, cfg,
+                                        fixed_clock());
+
+    EXPECT_EQ(s.files_ok, 2);
+    EXPECT_EQ(s.files_failed, 0);
+    EXPECT_EQ(s.total_events, 30);
+    EXPECT_EQ(s.workers_died, 0);
+    // Gate consumes the hellos in its first HB drain, then dispatches:
+    // 2 WORK (round-robin over both registered pipes) + 2 STOP.
+    ASSERT_EQ(work.sent.size(), 4u);
+    EXPECT_TRUE(mas::decode_work(work.sent[0]).has_value());
+    EXPECT_TRUE(mas::decode_work(work.sent[1]).has_value());
+    EXPECT_TRUE(mas::is_stop(work.sent[2]));
+    EXPECT_TRUE(mas::is_stop(work.sent[3]));
+}
+
+TEST(Coordinator, GateAbortsWhenNobodyRegisters) {
+    using namespace std::chrono_literals;
+    const std::vector<mas::WorkItem> items = {{"d1.csv"}};
+    mas::CoordinatorConfig cfg;
+    cfg.expected_workers = 2;
+    sc::time_point t{};
+    mas::test::FakeSink work;
+    TimedSource results;
+    results.t = &t;
+    // Two empty ticks of 6000 ms each cross the 10 s registration_timeout
+    // (t: 0 -> 6000 -> 12000) with nobody ever registering.
+    results.script.push_back({std::nullopt, 6000ms});
+    results.script.push_back({std::nullopt, 6000ms});
+    mas::test::FakeTickSource hbs;   // nobody ever heartbeats
+
+    const auto s = mas::run_coordinator(items, work, results, hbs, cfg,
+                                        [&] { return t; });
+
+    EXPECT_EQ(s.files_ok, 0);
+    EXPECT_EQ(s.files_failed, 1);
+    // Discriminator: pre-fix code had already PUSHed the item before the
+    // registry could ever be checked. The gate must abort before dispatch.
+    EXPECT_TRUE(work.sent.empty());
+}
+
+TEST(Coordinator, GateProceedsDegradedAfterTimeout) {
+    using namespace std::chrono_literals;
+    const std::vector<mas::WorkItem> items = {{"d1.csv"}};
+    mas::CoordinatorConfig cfg;
+    cfg.expected_workers = 2;
+    sc::time_point t{};
+    mas::test::FakeSink work;
+    TimedSource results;
+    results.t = &t;
+    // pass 1: empty tick jumps t to 11000 ms, crossing the 10 s
+    //         registration_timeout; the same pass's HB drain (below)
+    //         registers w1 first, so the timeout check sees a non-empty
+    //         registry and proceeds degraded (1 of 2) instead of aborting.
+    // pass 2 (main loop): w1 completes d1.
+    results.script.push_back({std::nullopt, 11000ms});
+    results.script.push_back({result("d1.csv", 10, "w1"), 0ms});
+    mas::test::FakeTickSource hbs;
+    hbs.script.push_back(hb("w1", 0));
+
+    const auto s = mas::run_coordinator(items, work, results, hbs, cfg,
+                                        [&] { return t; });
+
+    EXPECT_EQ(s.files_ok, 1);
+    EXPECT_EQ(s.files_failed, 0);
+    EXPECT_EQ(s.total_events, 10);
+    // 1 WORK (degraded dispatch, only w1 ever registered) + 1 STOP.
+    ASSERT_EQ(work.sent.size(), 2u);
+    EXPECT_TRUE(mas::decode_work(work.sent[0]).has_value());
+    EXPECT_TRUE(mas::is_stop(work.sent[1]));
+}
+
 } // namespace
