@@ -1,6 +1,8 @@
 # Data — never commit (GBs)
 *.zip
 *.csv
+# sweep evidence (82 lines), committed by Plan 5 Task 5:
+!bench/results.csv
 telemetry_*/
 *.duckdb
 *.parquet
