@@ -9,39 +9,47 @@ System_Ext(plc, "AROL PLC", "Uploads raw CSV day-files to filesystem")
 
 System_Boundary(mas, "IIoT Data Refinement MAS") {
 
-    Container(clean, "clean", "C++ CLI", "Single-process batch pipeline.\nReads one raw CSV day-file, runs CsvRawReader → CapEventExtractor → IEventStore.\nOutput: CSV or DuckDB.")
+    Container(clean, "clean", "C++ CLI", "Single-process batch pipeline.\nReads one raw CSV day-file, runs\nCsvRawReader → CapEventExtractor → IEventStore.\nOutput: CSV or DuckDB.")
 
-    Container(coordinator, "mas_coordinator", "C++ CLI", "Ventilator + Sink agent.\nPUSHes WorkItem messages (one per day-file) to the work queue,\nPULLs WorkResult messages from workers,\nsends STOP signals to shut down the pool.")
+    Container(monolith, "mas_monolith", "C++ CLI", "Multi-threaded in-process pipeline.\nmono-1T: sequential single-store.\nmono-MT: thread pool with atomic\ncounter work-stealing, per-thread\nstores, post-join merge.")
 
-    Container(worker, "mas_worker", "C++ CLI", "Cleaning agent (1..N instances).\nPULLs WorkItems, runs the cleaning pipeline\ninto a per-worker DuckDB store,\nPUSHes WorkResult back to coordinator.")
+    Container(coordinator, "mas_coordinator", "C++ CLI", "Ventilator + Sink + Liveness monitor.\nPUSHes WorkItems, PULLs WorkResults,\ndrains Heartbeats, sweeps death\nthresholds (30 s), re-dispatches\ndead workers' items, sends STOP.")
 
-    Container(merge, "mas_merge", "C++ CLI", "Merge utility.\nATTACHes per-worker DuckDB store files (READ_ONLY)\nand INSERT OR IGNOREs into a unified destination store.")
+    Container(worker, "mas_worker", "C++ CLI", "Cleaning agent (1..N instances).\nPULLs WorkItems, cleans into\nper-worker DuckDB store, PUSHes\nWorkResults and Heartbeats.\nIdle-exit after 60 empty ticks.")
+
+    Container(merge, "mas_merge", "C++ CLI", "Merge utility: ATTACHes per-worker/\nper-thread DuckDB stores (READ_ONLY)\nand INSERT OR IGNOREs into unified\ndestination. Skips corrupt stores.")
 
     ContainerDb(duckdb, "DuckDB Store", "DuckDB .duckdb file", "cap_events table with\nUNIQUE(machine_id, head_id, cap_seq).\nIdempotent INSERT OR IGNORE.\nOptional Parquet export.")
 
     ContainerDb(csv_out, "CSV Event Output", "CSV file", "Flat event file with header:\nmachine_id,head_id,ts,cap_seq,\napp_torque,status,delta,\nis_fault,aggregated,reset")
 
-    Container(zmq, "ZeroMQ Fabric", "libzmq 4.3.5 + cppzmq", "IPC/TCP PUSH/PULL sockets.\nWork queue: coordinator → workers.\nResult queue: workers → coordinator.")
+    Container(zmq, "ZeroMQ Fabric", "libzmq 4.3.5 + cppzmq", "3-endpoint PUSH/PULL:\nWork: coordinator → workers\nResults: workers → coordinator\nHeartbeats: workers → coordinator")
 }
 
-System_Boundary(validation, "Python Validation") {
-    Container(py_oracle, "oracle.py", "Python 3", "Independent dedup re-implementation.\nProduces reference event counts for\ncross-validation against C++ output.")
-    Container(py_validate, "validate_real.py", "Python 3", "Asserts C++ output row count matches\nthe Python oracle on real day-files.")
+System_Boundary(validation, "Python Validation & Testing") {
+    Container(py_oracle, "oracle.py", "Python 3", "Independent dedup re-implementation.")
+    Container(py_validate, "validate_real.py", "Python 3", "Asserts C++ output row count\nmatches the Python oracle.")
+    Container(chaos, "chaos_e2e.sh", "Bash script", "Resilience test: kills a worker\nmid-run, asserts re-dispatch\nand final count match oracle.")
+    Container(bench, "run_bench.sh", "Bash script", "Performance sweep:\nmono T∈{1,2,4,8} + MAS N∈{1..16}\nacross 1/7/28-day volumes,\n3 repeats, oracle-checked.")
 }
 
 Rel(plc, clean, "Provides raw CSV day-files (via filesystem)")
 Rel(operator, clean, "Runs single-file batch")
-Rel(operator, coordinator, "Starts with day-file list + num_workers")
+Rel(operator, monolith, "Runs multi-threaded batch")
+Rel(operator, coordinator, "Starts with day-file list")
 Rel(operator, worker, "Starts N worker instances")
-Rel(operator, merge, "Merges per-worker stores post-run")
+Rel(operator, merge, "Merges per-worker/thread stores post-run")
 
-Rel(coordinator, zmq, "PUSH WorkItems, PULL WorkResults", "tcp://")
-Rel(worker, zmq, "PULL WorkItems, PUSH WorkResults", "tcp://")
+Rel(coordinator, zmq, "PUSH Work+STOP, PULL Results+HB", "tcp://")
+Rel(worker, zmq, "PULL Work, PUSH Results+HB", "tcp://")
 Rel(clean, csv_out, "Writes events (CSV mode)")
 Rel(clean, duckdb, "Writes events (DuckDB mode)")
+Rel(monolith, duckdb, "Per-thread stores + post-merge")
 Rel(worker, duckdb, "Writes events (per-worker store)")
 Rel(merge, duckdb, "ATTACH + INSERT OR IGNORE")
 
+Rel(operator, chaos, "Runs chaos E2E test")
+Rel(operator, bench, "Runs performance benchmark")
 Rel(operator, py_validate, "Runs cross-check")
 Rel(py_validate, py_oracle, "Calls extract()")
 

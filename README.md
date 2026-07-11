@@ -4,7 +4,9 @@ Multi-agent system (MAS) for refining and analyzing Industrial IoT telemetry
 from an AROL capping machine. Built for the **System and Device Programming**
 course at Politecnico di Torino.
 
-**Stack:** C++20 core · ZeroMQ IPC · DuckDB persistence · Python validation oracle
+**Stack:** C++20 core · ZeroMQ PUSH/PULL with heartbeat-driven liveness ·
+DuckDB persistence · Python validation oracle · Chaos E2E resilience testing ·
+Benchmark sweep harness
 
 ---
 
@@ -18,15 +20,10 @@ course at Politecnico di Torino.
 - [Project Structure](#project-structure)
 - [Core Domain: The Dedup Transform](#core-domain-the-dedup-transform)
 - [Components in Detail](#components-in-detail)
-  - [Domain Types](#domain-types)
-  - [Ingestion — CsvRawReader](#ingestion--csvrawreader)
-  - [Dedup Engine — CapEventExtractor](#dedup-engine--capeventextractor)
-  - [Persistence — IEventStore / CsvEventStore / DuckDbEventStore](#persistence--ieventstore--csveventstore--duckdbeventstore)
-  - [Pipeline Orchestration — clean_file()](#pipeline-orchestration--clean_file)
-  - [Agent Communication — Message Protocol](#agent-communication--message-protocol)
-  - [Transport Layer — IMessageSource / IMessageSink / ZmqTransport](#transport-layer--imessagesource--imessagesink--zmqtransport)
-  - [Cleaning Agent — CleaningWorker](#cleaning-agent--cleaningworker)
-  - [Coordinator Agent — run_coordinator()](#coordinator-agent--run_coordinator)
+  - [Domain Layer](#domain-layer)
+  - [Store Layer](#store-layer)
+  - [Agent Layer](#agent-layer)
+  - [Transport Layer](#transport-layer)
 - [Database Design](#database-design)
   - [DuckDB Schema](#duckdb-schema)
   - [Write Path (Staging + Merge)](#write-path-staging--merge)
@@ -35,18 +32,25 @@ course at Politecnico di Torino.
   - [Parquet Export](#parquet-export)
 - [Executables](#executables)
   - [clean — Single-File Batch Pipeline](#clean--single-file-batch-pipeline)
-  - [mas_coordinator — Ventilator + Sink Agent](#mas_coordinator--ventilator--sink-agent)
+  - [mas_monolith — Multi-Threaded In-Process Pipeline](#mas_monolith--multi-threaded-in-process-pipeline)
+  - [mas_coordinator — Ventilator + Sink + Liveness Monitor](#mas_coordinator--ventilator--sink--liveness-monitor)
   - [mas_worker — Cleaning Agent](#mas_worker--cleaning-agent)
   - [mas_merge — Post-Run Store Unification](#mas_merge--post-run-store-unification)
+- [Resilience: Heartbeats, Death Detection, and Re-Dispatch](#resilience-heartbeats-death-detection-and-re-dispatch)
 - [Distributed Processing Flow](#distributed-processing-flow)
 - [Python Validation Oracle](#python-validation-oracle)
+- [Benchmarking](#benchmarking)
+- [Chaos E2E Testing](#chaos-e2e-testing)
 - [Build & Run](#build--run)
   - [Prerequisites](#prerequisites)
   - [Build](#build)
   - [Run Tests](#run-tests)
   - [Single-File Processing](#single-file-processing)
+  - [Monolith Multi-Threaded Processing](#monolith-multi-threaded-processing)
   - [Distributed Multi-File Processing](#distributed-multi-file-processing)
   - [Validation Against Python Oracle](#validation-against-python-oracle)
+  - [Chaos E2E Test](#chaos-e2e-test)
+  - [Performance Benchmark](#performance-benchmark)
 - [Testing](#testing)
 - [Design Decisions](#design-decisions)
 - [Roadmap](#roadmap)
@@ -85,13 +89,13 @@ Shows the MAS system boundary, external actors, and data flows.
 
 **Key actors:**
 - **AROL PLC** — uploads raw CSV day-files to the filesystem
-- **Operator** — launches executables, inspects results
+- **Operator** — launches executables (single-file, monolith, or distributed MAS), inspects results
 - **Python Oracle** — independent cross-check for correctness
 
 ### C4 Container (Level 2)
 
-Shows the four C++ executables, the ZeroMQ fabric, database stores, and the
-Python validation scripts.
+Shows the five C++ executables, the ZeroMQ fabric (now with 3 endpoints),
+database stores, and the testing/validation scripts.
 
 ![C4 Container Diagram](docs/diagrams/C4_Container.png)
 
@@ -99,18 +103,19 @@ Python validation scripts.
 | Container | Type | Purpose |
 |-----------|------|---------|
 | `clean` | C++ CLI | Single-process batch pipeline (CSV or DuckDB output) |
-| `mas_coordinator` | C++ CLI | Ventilator + sink: dispatches work, collects results |
-| `mas_worker` | C++ CLI | Cleaning agent: processes assigned day-files |
-| `mas_merge` | C++ CLI | Merges per-worker DuckDB stores into a unified database |
-| ZeroMQ Fabric | libzmq 4.3.5 | PUSH/PULL sockets for work distribution and result collection |
+| `mas_monolith` | C++ CLI | Multi-threaded in-process pipeline (1T or MT modes) |
+| `mas_coordinator` | C++ CLI | Ventilator + sink + liveness monitor with death detection |
+| `mas_worker` | C++ CLI | Cleaning agent with heartbeat emission and idle-exit |
+| `mas_merge` | C++ CLI | Merges per-worker/thread DuckDB stores (skips corrupt ones) |
+| ZeroMQ Fabric | libzmq 4.3.5 | 3-endpoint PUSH/PULL: work, results, heartbeats |
 | DuckDB Store | DuckDB | Persistent `cap_events` table with idempotent upserts |
-| CSV Output | CSV file | Flat event file (alternative to DuckDB) |
-| `oracle.py` | Python 3 | Reference dedup implementation |
-| `validate_real.py` | Python 3 | Cross-validation script |
+| `chaos_e2e.sh` | Bash | Resilience test: SIGKILL a worker, verify full recovery |
+| `run_bench.sh` | Bash | Performance sweep across architectures, threads, and volumes |
 
 ### C4 Component (Level 3)
 
-Shows every class, interface, and function inside the C++ core libraries.
+Shows every class, interface, and function inside the C++ core libraries,
+organized by layer.
 
 ![C4 Component Diagram](docs/diagrams/C4_Component.png)
 
@@ -120,39 +125,49 @@ Shows every class, interface, and function inside the C++ core libraries.
 
 ```
 .
-├── CMakeLists.txt                   # Build system (CMake 3.16+, C++20)
-├── README.md                        # This file
+├── CMakeLists.txt                          # Build system (CMake 3.16+, C++20)
+├── README.md                               # This file
 │
-├── core/                            # C++ source code
-│   ├── include/mas/                 # Public headers
-│   │   ├── CapEvent.hpp             # Domain types: RawRow, CapEvent, NUM_HEADS
-│   │   ├── CapEventExtractor.hpp    # Stateful per-head dedup engine
-│   │   ├── CsvRawReader.hpp         # Raw telemetry CSV streaming reader
-│   │   ├── EventStore.hpp           # IEventStore abstract interface (DIP seam)
-│   │   ├── CsvEventStore.hpp        # CSV file persistence backend
-│   │   ├── DuckDbEventStore.hpp     # DuckDB persistence backend (PIMPL)
-│   │   ├── Pipeline.hpp             # clean_file() pipeline orchestrator
-│   │   ├── Message.hpp              # Wire protocol: WorkItem, WorkResult, STOP
-│   │   ├── Transport.hpp            # IMessageSource / IMessageSink interfaces
-│   │   ├── CleaningWorker.hpp       # Agent loop: PULL work → clean → PUSH result
-│   │   ├── Coordinator.hpp          # Ventilator + sink dispatcher
-│   │   └── ZmqTransport.hpp         # ZeroMQ PUSH/PULL socket adapters
-│   └── src/                         # Implementations
-│       ├── CapEventExtractor.cpp
-│       ├── CsvRawReader.cpp
-│       ├── CsvEventStore.cpp
-│       ├── DuckDbEventStore.cpp
-│       ├── Pipeline.cpp
-│       ├── Message.cpp
-│       ├── CleaningWorker.cpp
-│       ├── Coordinator.cpp
-│       ├── ZmqTransport.cpp
-│       ├── clean_main.cpp           # → clean executable
-│       ├── coordinator_main.cpp     # → mas_coordinator executable
-│       ├── worker_main.cpp          # → mas_worker executable
-│       └── merge_main.cpp           # → mas_merge executable
+├── core/                                   # C++ source code
+│   ├── include/mas/
+│   │   ├── domain/                         # Domain layer (pure logic, no I/O)
+│   │   │   ├── CapEvent.hpp                # RawRow, CapEvent, NUM_HEADS, is_fault_status
+│   │   │   ├── CapEventExtractor.hpp       # Stateful per-head dedup engine
+│   │   │   └── Pipeline.hpp                # clean_file() orchestrator
+│   │   ├── store/                          # Storage layer (persistence)
+│   │   │   ├── EventStore.hpp              # IEventStore abstract interface (DIP seam)
+│   │   │   ├── CsvRawReader.hpp            # Raw telemetry CSV streaming reader
+│   │   │   ├── CsvEventStore.hpp           # CSV file persistence backend
+│   │   │   └── DuckDbEventStore.hpp        # DuckDB persistence backend (PIMPL)
+│   │   ├── agent/                          # Agent layer (MAS coordination)
+│   │   │   ├── Message.hpp                 # Wire protocol: WorkItem, WorkResult, Heartbeat, STOP
+│   │   │   ├── CleaningWorker.hpp          # Worker agent with heartbeats + idle-exit
+│   │   │   └── Coordinator.hpp             # Coordinator with liveness + re-dispatch
+│   │   └── transport/                      # Transport layer (ZeroMQ abstraction)
+│   │       ├── Transport.hpp               # IMessageSource / IMessageSink interfaces
+│   │       └── ZmqTransport.hpp            # ZMQ PUSH/PULL adapters (linger_ms control)
+│   └── src/
+│       ├── domain/                         # Domain implementations
+│       │   ├── CapEventExtractor.cpp
+│       │   └── Pipeline.cpp
+│       ├── store/                          # Store implementations
+│       │   ├── CsvRawReader.cpp
+│       │   ├── CsvEventStore.cpp
+│       │   └── DuckDbEventStore.cpp
+│       ├── agent/                          # Agent implementations
+│       │   ├── Message.cpp
+│       │   ├── CleaningWorker.cpp
+│       │   └── Coordinator.cpp
+│       ├── transport/                      # Transport implementation
+│       │   └── ZmqTransport.cpp
+│       └── apps/                           # Executable entry points
+│           ├── clean_main.cpp              # → clean
+│           ├── monolith_main.cpp           # → mas_monolith
+│           ├── coordinator_main.cpp        # → mas_coordinator
+│           ├── worker_main.cpp             # → mas_worker
+│           └── merge_main.cpp              # → mas_merge
 │
-├── tests/                           # Google Test unit tests
+├── tests/                                  # Google Test unit tests (63 tests)
 │   ├── test_cap_event_extractor.cpp
 │   ├── test_csv_raw_reader.cpp
 │   ├── test_pipeline.cpp
@@ -164,25 +179,36 @@ Shows every class, interface, and function inside the C++ core libraries.
 │   ├── test_cleaning_worker.cpp
 │   ├── test_coordinator.cpp
 │   └── fakes/
-│       └── FakeTransport.hpp        # In-memory transport for unit tests
+│       └── FakeTransport.hpp               # FakeSource, FakeSink, FakeTickSource
 │
-├── python/                          # Python validation oracle
-│   ├── oracle.py                    # Reference dedup implementation
-│   ├── test_oracle.py               # Pytest unit tests for the oracle
-│   └── validate_real.py             # Cross-validation: C++ vs Python on real data
+├── python/                                 # Python validation oracle
+│   ├── oracle.py                           # Reference dedup implementation
+│   ├── test_oracle.py                      # Pytest unit tests for the oracle
+│   └── validate_real.py                    # Cross-validation: C++ vs Python on real data
+│
+├── scripts/
+│   └── chaos_e2e.sh                        # Resilience E2E: kill worker mid-run, verify recovery
+│
+├── bench/                                  # Performance benchmarking
+│   ├── run_bench.sh                        # Sweep: mono {1,2,4,8}T + MAS {1..16}W × {1,7,28}d
+│   ├── results.csv                         # Raw sweep data: 81 runs (27 configs × 3 repeats)
+│   └── fixtures/
+│       └── make_tiny_csvs.py               # Deterministic 2-row fixture generator
 │
 ├── docs/
-│   ├── validation-log.md            # Real-data test results log
-│   └── diagrams/                    # C4 architecture diagrams
-│       ├── c4-context.puml          # Level 1: System Context
-│       ├── c4-container.puml        # Level 2: Container
-│       ├── c4-component.puml        # Level 3: Component
-│       ├── C4_Context.png           # Rendered context diagram
-│       ├── C4_Container.png         # Rendered container diagram
-│       └── C4_Component.png         # Rendered component diagram
+│   ├── validation-log.md                   # Real-data test results log
+│   ├── bench/
+│   │   └── results.md                      # Benchmark analysis: medians, scaling, bottleneck
+│   └── diagrams/                           # C4 architecture diagrams
+│       ├── c4-context.puml                 # Level 1: System Context
+│       ├── c4-container.puml               # Level 2: Container
+│       ├── c4-component.puml               # Level 3: Component
+│       ├── C4_Context.png                  # Rendered context diagram
+│       ├── C4_Container.png                # Rendered container diagram
+│       └── C4_Component.png                # Rendered component diagram
 │
-├── telemetry_*/                     # Raw data (git-ignored, ~1.6 GB/month)
-└── build/                           # CMake build directory (git-ignored)
+├── telemetry_*/                            # Raw data (git-ignored, ~1.6 GB/month)
+└── build/                                  # CMake build directory (git-ignored)
 ```
 
 ---
@@ -206,99 +232,54 @@ Each event carries: `head_id` (1–36), `timestamp`, `cap_seq` (counter value),
 
 ## Components in Detail
 
-### Domain Types
+The C++ code is organized into **four layers** with strict dependency direction:
 
-**File:** [`CapEvent.hpp`](core/include/mas/CapEvent.hpp)
+```
+transport → agent → domain ← store
+                      ↓
+                  IEventStore (DIP seam)
+```
 
-- `NUM_HEADS = 36` — the AROL machine has 36 capping heads
-- `RawRow` — one 1 Hz poll: timestamp + three arrays of 36 doubles (count, torque, status)
-- `CapEvent` — one real cap event (or reset marker) with all fields
-- `is_fault_status(double)` — checks for AROL Equatorque fault code 65
+### Domain Layer
 
-### Ingestion — CsvRawReader
+**Directory:** `core/include/mas/domain/` · `core/src/domain/`
 
-**Files:** [`CsvRawReader.hpp`](core/include/mas/CsvRawReader.hpp) · [`CsvRawReader.cpp`](core/src/CsvRawReader.cpp)
+| Component | File(s) | Description |
+|-----------|---------|-------------|
+| `CapEvent` / `RawRow` | [`CapEvent.hpp`](core/include/mas/domain/CapEvent.hpp) | Domain value types. `NUM_HEADS=36`, `FAULT_STATUS=65`. |
+| `CapEventExtractor` | [`CapEventExtractor.hpp`](core/include/mas/domain/CapEventExtractor.hpp) · [`.cpp`](core/src/domain/CapEventExtractor.cpp) | Stateful per-head dedup. Maintains `last_count_[36]`. Not thread-safe. |
+| `clean_file()` | [`Pipeline.hpp`](core/include/mas/domain/Pipeline.hpp) · [`.cpp`](core/src/domain/Pipeline.cpp) | Orchestrator: CsvRawReader → CapEventExtractor → IEventStore in 8192-event batches. |
 
-Streams raw telemetry CSVs line by line. Expects **109 columns**: 1 timestamp +
-36 Count + 36 AppTorque + 36 Status. Discards the header row on construction.
-Silently skips truncated or malformed rows, tracking them via `skipped()`.
+### Store Layer
 
-### Dedup Engine — CapEventExtractor
+**Directory:** `core/include/mas/store/` · `core/src/store/`
 
-**Files:** [`CapEventExtractor.hpp`](core/include/mas/CapEventExtractor.hpp) · [`CapEventExtractor.cpp`](core/src/CapEventExtractor.cpp)
+| Component | File(s) | Description |
+|-----------|---------|-------------|
+| `IEventStore` | [`EventStore.hpp`](core/include/mas/store/EventStore.hpp) | Abstract `write(span<CapEvent>)` interface (DIP seam). |
+| `CsvRawReader` | [`CsvRawReader.hpp`](core/include/mas/store/CsvRawReader.hpp) · [`.cpp`](core/src/store/CsvRawReader.cpp) | Streams raw 109-column CSVs. Skips malformed rows with counter. |
+| `CsvEventStore` | [`CsvEventStore.hpp`](core/include/mas/store/CsvEventStore.hpp) · [`.cpp`](core/src/store/CsvEventStore.cpp) | CSV file backend. Writes header on construction. |
+| `DuckDbEventStore` | [`DuckDbEventStore.hpp`](core/include/mas/store/DuckDbEventStore.hpp) · [`.cpp`](core/src/store/DuckDbEventStore.cpp) | DuckDB backend (PIMPL). Staging → merge. `merge_from()` with try/catch DETACH. `export_parquet()`. |
 
-Stateful, per-head tracker. Maintains `last_count_[36]` (one `optional<long long>`
-per head). On the first observation of each head, it seeds the counter without
-emitting an event. Subsequent rows produce events only on counter transitions.
+### Agent Layer
 
-**Not thread-safe** — one instance per stream/partition.
+**Directory:** `core/include/mas/agent/` · `core/src/agent/`
 
-### Persistence — IEventStore / CsvEventStore / DuckDbEventStore
+| Component | File(s) | Description |
+|-----------|---------|-------------|
+| `Message` / `WorkItem` / `WorkResult` / `Heartbeat` | [`Message.hpp`](core/include/mas/agent/Message.hpp) · [`.cpp`](core/src/agent/Message.cpp) | Wire protocol with tags `WORK`, `RESULT`, `HB`, `STOP`. `WorkResult` carries `worker_id` for attribution. `Heartbeat` carries `worker_id` + monotonic `seq`. |
+| `CleaningWorker` | [`CleaningWorker.hpp`](core/include/mas/agent/CleaningWorker.hpp) · [`.cpp`](core/src/agent/CleaningWorker.cpp) | Agent loop with heartbeats: hello-beat on entry → PULL work → clean → PUSH result + beat. Idle-exit after `kIdleExitTicks=60` consecutive empty ticks (~60 s at 1 s recv timeout). |
+| `run_coordinator()` | [`Coordinator.hpp`](core/include/mas/agent/Coordinator.hpp) · [`.cpp`](core/src/agent/Coordinator.cpp) | Ventilator + Sink + Liveness monitor. 4-phase loop: (1) result tick, (2) heartbeat drain, (3) death sweep + re-dispatch, (4) abort check. Injectable `ClockFn` for deterministic tests. `CoordinatorConfig`: `death_threshold=30s`, `redispatch_cap=2`. |
 
-**Files:**
-- [`EventStore.hpp`](core/include/mas/EventStore.hpp) — abstract `write(span<CapEvent>)` interface (DIP seam)
-- [`CsvEventStore.hpp`](core/include/mas/CsvEventStore.hpp) · [`CsvEventStore.cpp`](core/src/CsvEventStore.cpp) — CSV file backend
-- [`DuckDbEventStore.hpp`](core/include/mas/DuckDbEventStore.hpp) · [`DuckDbEventStore.cpp`](core/src/DuckDbEventStore.cpp) — DuckDB backend (PIMPL)
+### Transport Layer
 
-The pipeline writes events through `IEventStore` and never sees which backend is
-used. Implementations own the `machine_id`. The `DuckDbEventStore` uses the
-PIMPL pattern to hide `duckdb.hpp` from callers.
+**Directory:** `core/include/mas/transport/` · `core/src/transport/`
 
-### Pipeline Orchestration — clean_file()
-
-**Files:** [`Pipeline.hpp`](core/include/mas/Pipeline.hpp) · [`Pipeline.cpp`](core/src/Pipeline.cpp)
-
-Two overloads:
-1. `clean_file(in_path, store)` — generic: reads CSV → extracts events → writes to any `IEventStore` in 8192-event batches. Returns event count or -1 on bad input.
-2. `clean_file(in_path, out_path, machine_id)` — CSV convenience wrapper. Returns -1 (bad input) or -2 (bad output).
-
-### Agent Communication — Message Protocol
-
-**Files:** [`Message.hpp`](core/include/mas/Message.hpp) · [`Message.cpp`](core/src/Message.cpp)
-
-Newline-separated wire format:
-
-| Tag | Direction | Fields |
-|-----|-----------|--------|
-| `WORK` | Coordinator → Worker | `in_path` |
-| `RESULT` | Worker → Coordinator | `in_path`, `events` (long long), `seconds` (double) |
-| `STOP` | Coordinator → Worker | *(none — bare tag)* |
-
-Full-consumption numeric validation (rejects trailing garbage like `"5x"`).
-
-### Transport Layer — IMessageSource / IMessageSink / ZmqTransport
-
-**Files:**
-- [`Transport.hpp`](core/include/mas/Transport.hpp) — ISP-split interfaces: `IMessageSource::recv()` and `IMessageSink::send()`
-- [`ZmqTransport.hpp`](core/include/mas/ZmqTransport.hpp) · [`ZmqTransport.cpp`](core/src/ZmqTransport.cpp) — ZeroMQ PUSH/PULL adapters
-
-Only `ZmqTransport.hpp`, its `.cpp`, and the executable mains include `zmq.hpp`.
-Domain code sees only the abstract interfaces (DIP boundary).
-
-- `ZmqPushSink` — PUSH socket with configurable `send_timeout_ms` (and matching `ZMQ_LINGER`)
-- `ZmqPullSource` — PULL socket with configurable `timeout_ms` (returns `nullopt` on expiry)
-
-### Cleaning Agent — CleaningWorker
-
-**Files:** [`CleaningWorker.hpp`](core/include/mas/CleaningWorker.hpp) · [`CleaningWorker.cpp`](core/src/CleaningWorker.cpp)
-
-Agent loop:
-1. `PULL` a `WorkItem` from the work queue
-2. Invoke the injected `CleanFn(path, store)` — in production this is `mas::clean_file`
-3. `PUSH` a `WorkResult` (path + event count + elapsed seconds)
-4. Repeat until `STOP` or source exhaustion
-
-`CleanFn` is injected via `std::function` so unit tests never touch the filesystem.
-
-### Coordinator Agent — run_coordinator()
-
-**Files:** [`Coordinator.hpp`](core/include/mas/Coordinator.hpp) · [`Coordinator.cpp`](core/src/Coordinator.cpp)
-
-Single function combining ventilator + sink roles:
-1. `PUSH` all `WorkItem` messages (one per day-file)
-2. `PULL` one `WorkResult` per item (timeout → count stragglers as failed)
-3. `PUSH` N `STOP` messages (one per worker) to shut down the pool
-4. Return `DispatchSummary` with `total_events`, `files_ok`, `files_failed`
+| Component | File(s) | Description |
+|-----------|---------|-------------|
+| `IMessageSource` / `IMessageSink` | [`Transport.hpp`](core/include/mas/transport/Transport.hpp) | ISP-split interfaces. `recv()` returns `nullopt` on timeout. |
+| `ZmqPushSink` | [`ZmqTransport.hpp`](core/include/mas/transport/ZmqTransport.hpp) · [`.cpp`](core/src/transport/ZmqTransport.cpp) | ZMQ PUSH adapter. Independent `linger_ms` parameter (default sentinel preserves backward compat; `linger_ms=0` for fire-and-forget sinks). |
+| `ZmqPullSource` | (same files) | ZMQ PULL adapter. Configurable `timeout_ms`. |
 
 ---
 
@@ -342,20 +323,24 @@ On construction, any stale rows from a crashed run are cleared from staging.
 
 Re-running the same day-file against the same database produces **zero new rows**
 thanks to `INSERT OR IGNORE` and the `UNIQUE(machine_id, head_id, cap_seq)` key.
-This was validated on real data: two runs of the same 86,399-row file both
-produce 765,711 events, but the second run adds 0 new rows.
+Validated on real data: two runs of the same 86,399-row file both produce
+765,711 events, but the second run adds 0 new rows.
 
 ### Cross-Worker Merge
 
-In distributed mode, each worker writes to its own `.duckdb` file (avoiding
-concurrent single-writer conflicts). After all workers finish, `mas_merge`
-unifies them:
+In distributed mode (MAS or monolith-MT), each worker/thread writes to its own
+`.duckdb` file. After completion, `mas_merge` (or the monolith's post-join
+phase) unifies them:
 
 ```sql
 ATTACH 'worker_N.duckdb' AS src (READ_ONLY);
 INSERT OR IGNORE INTO cap_events SELECT * FROM src.cap_events;
 DETACH src;
 ```
+
+**Error handling:** `merge_from()` wraps the INSERT in try/catch and always
+DETACHes `src` — a failed merge (corrupt store) doesn't poison subsequent
+ATTACHes. `mas_merge` skips corrupt stores loudly instead of aborting.
 
 **Precondition:** source stores must be closed/checkpointed before merge —
 `ATTACH READ_ONLY` may not see another connection's unflushed WAL.
@@ -380,28 +365,46 @@ usage: clean <raw_in.csv> <events_out.csv|events_out.duckdb> [machine_id]
 ```
 
 Processes a single raw CSV day-file. Detects output format by file extension:
-- `.duckdb` → uses `DuckDbEventStore` (probes input first to avoid creating an empty DB on missing files)
+- `.duckdb` → uses `DuckDbEventStore` (probes input first to avoid creating an empty DB)
 - anything else → uses `CsvEventStore`
 
 Default `machine_id`: `"MCC"`.
 
-### `mas_coordinator` — Ventilator + Sink Agent
+### `mas_monolith` — Multi-Threaded In-Process Pipeline
 
 ```
-usage: mas_coordinator <work_endpoint> <result_endpoint> <num_workers> <day1.csv> [day2.csv ...]
+usage: mas_monolith <out.duckdb> <machine_id> <threads> <day1.csv> [day2.csv ...]
 ```
 
-Binds PUSH socket on `work_endpoint`, binds PULL socket on `result_endpoint`.
-60-second timeout on both send (no workers) and receive (straggler detection).
+Two operating modes:
+
+- **`threads=1` (mono-1T):** Sequential baseline — one DuckDB store, files processed one after another. No merge step.
+- **`threads>1` (mono-MT):** Thread pool with atomic counter work-stealing. Each thread owns a per-thread `.duckdb` store (shared-nothing). After all threads join, the thread stores are merged into the output store. Uses `std::thread` + `std::atomic` (no ZeroMQ).
+
+### `mas_coordinator` — Ventilator + Sink + Liveness Monitor
+
+```
+usage: mas_coordinator <work_endpoint> <result_endpoint> <hb_endpoint> <day1.csv> [day2.csv ...]
+```
+
+Binds three PUSH/PULL sockets:
+- **Work** (PUSH, bind): sends `WorkItem` and `STOP` messages to workers
+- **Results** (PULL, bind, 200 ms timeout): receives `WorkResult` messages — paces the loop
+- **Heartbeats** (PULL, bind, 0 ms timeout): drained without blocking each tick
+
+Death detection: workers silent > 30 s are tombstoned, their completed items re-opened, and all open items re-dispatched (up to 2 re-sends per item).
 
 ### `mas_worker` — Cleaning Agent
 
 ```
-usage: mas_worker <work_endpoint> <result_endpoint> <out.duckdb> [machine_id]
+usage: mas_worker <work_endpoint> <result_endpoint> <hb_endpoint> <out.duckdb> <worker_id> [machine_id]
 ```
 
-Connects PULL to `work_endpoint`, connects PUSH to `result_endpoint`. Each worker
-writes to its own DuckDB store. Blocks forever on recv (relies on coordinator's STOP).
+Connects to all three coordinator endpoints. Key behaviors:
+- **1 s work recv timeout** — each empty tick emits a heartbeat
+- **Idle-exit after 60 consecutive empty ticks** (~60 s) — exits cleanly if the coordinator vanishes
+- **`linger_ms=0`** on result and heartbeat sinks — process exit is prompt (fixed a 121 s teardown bug found by chaos E2E)
+- **Hello heartbeat** on `run()` entry — registers with the coordinator promptly
 
 ### `mas_merge` — Post-Run Store Unification
 
@@ -409,44 +412,73 @@ writes to its own DuckDB store. Blocks forever on recv (relies on coordinator's 
 usage: mas_merge <dst.duckdb> <machine_id> <src1.duckdb> [src2.duckdb ...]
 ```
 
-Merges one or more per-worker stores into a unified destination. Idempotent:
-running twice produces the same result.
+Merges one or more per-worker stores into a unified destination. **Crash-tolerant:** a corrupt source store (from a killed worker) is skipped with a warning instead of aborting. Idempotent: running twice produces the same result.
+
+---
+
+## Resilience: Heartbeats, Death Detection, and Re-Dispatch
+
+The MAS implements a heartbeat-driven liveness protocol:
+
+```
+     ┌──────────────┐        Heartbeat (HB)        ┌──────────────┐
+     │  mas_worker   │ ──────────────────────────►  │mas_coordinator│
+     │               │        WorkResult            │               │
+     │  PULL work    │ ──────────────────────────►  │  PULL results │
+     │  PUSH result  │                              │  PULL HB      │
+     │  PUSH HB      │◄──────────────────────────── │  PUSH work    │
+     └──────────────┘        WorkItem / STOP        └──────────────┘
+```
+
+**Worker liveness contract:**
+1. Hello heartbeat on `run()` entry
+2. One heartbeat per empty recv tick (1 s period in production)
+3. One heartbeat after each `WorkResult`
+4. The only silent window is during `clean_file()` execution
+
+**Coordinator 4-phase loop (per tick):**
+1. **Result tick** — take one result (200 ms timeout paces the loop)
+2. **Heartbeat drain** — drain all pending heartbeats without blocking
+3. **Death sweep** — tombstone workers silent > `death_threshold` (30 s), reopen their completed items, re-dispatch all open items (capped at `redispatch_cap=2` per item)
+4. **Abort check** — if no live workers remain and items are open, abort
+
+**Dead-worker store write-off:** A dead worker's store is written off entirely
+— its items are re-dispatched to survivors. The idempotent upsert absorbs any
+overlap. `mas_merge` safely skips corrupt stores.
 
 ---
 
 ## Distributed Processing Flow
 
 ```
-┌─────────────────────┐
-│   mas_coordinator    │
-│ (ventilator + sink)  │
-│                      │
-│  PUSH work items     │──── tcp://127.0.0.1:5557 ────►┌───────────────┐
-│  (one per day-file)  │                                │  mas_worker 1 │
-│                      │                                │  → worker1.db │
-│  PULL results        │◄── tcp://127.0.0.1:5558 ──────│               │
-│  PUSH STOP × N       │──────────────────────────────►│               │
-│                      │                                └───────────────┘
-│                      │                                       ...
-│                      │── tcp://127.0.0.1:5557 ────►┌───────────────┐
-│                      │                              │  mas_worker N │
-│                      │◄── tcp://127.0.0.1:5558 ────│  → workerN.db │
-└─────────────────────┘                              └───────────────┘
+┌─────────────────────────┐
+│     mas_coordinator      │
+│ (ventilator + sink +     │
+│  liveness monitor)       │
+│                          │
+│  PUSH WorkItems          │── tcp://..:5591 (work) ──►┌───────────────┐
+│  PULL WorkResults        │◄─ tcp://..:5592 (results) │  mas_worker 1 │
+│  PULL Heartbeats         │◄─ tcp://..:5593 (hb) ─────│  → w1.duckdb  │
+│  Sweep deaths (30s)      │                            │  worker_id=w1 │
+│  Re-dispatch dead items  │                            └───────────────┘
+│  PUSH STOP × live workers│                                   ...
+│                          │── tcp://..:5591 ──────►┌───────────────┐
+│                          │◄─ tcp://..:5592 ───────│  mas_worker N │
+│                          │◄─ tcp://..:5593 ───────│  → wN.duckdb  │
+└─────────────────────────┘                         └───────────────┘
          │
          │  (after all workers done)
          ▼
-┌─────────────────────┐
-│     mas_merge        │
-│                      │
-│  ATTACH worker1.db   │
-│  ATTACH worker2.db   │──►  unified.duckdb
-│  ...                 │
-│  INSERT OR IGNORE    │
-└─────────────────────┘
+┌─────────────────────────┐
+│       mas_merge          │
+│                          │
+│  ATTACH w1.duckdb        │
+│  ATTACH w2.duckdb        │──►  unified.duckdb
+│  ...                     │
+│  INSERT OR IGNORE        │
+│  (skips corrupt stores)  │
+└─────────────────────────┘
 ```
-
-ZeroMQ's **PUSH/PULL** (pipeline pattern) provides automatic round-robin load
-balancing across connected workers.
 
 ---
 
@@ -465,6 +497,56 @@ An independent Python re-implementation of the dedup logic serves as a
 
 ---
 
+## Benchmarking
+
+The benchmark harness [`bench/run_bench.sh`](bench/run_bench.sh) runs a
+comprehensive sweep:
+
+- **Architectures:** monolith-1T, monolith-MT (threads ∈ {1,2,4,8}), MAS (workers ∈ {1,2,4,8,16})
+- **Volumes:** 1, 7, or 28 day-files (`--quick` flag for 1-day only)
+- **Repeats:** 3 per configuration
+- **Per-run correctness check** against the oracle
+- **Metrics captured:** clean time, merge time, total time, events, rows/s, events/s, peak RSS, CPU%
+
+Raw data (81 runs = 27 configs × 3 repeats) lands in
+[`bench/results.csv`](bench/results.csv); the analysis, with median tables and
+caveats, is in [`docs/bench/results.md`](docs/bench/results.md). The fixture
+generator [`bench/fixtures/make_tiny_csvs.py`](bench/fixtures/make_tiny_csvs.py)
+creates deterministic 2-row test files with cross-day counter continuity for
+smoke testing.
+
+**Headline finding — the merge phase is the scaling wall.** Cleaning
+parallelizes well (28-day medians: mono-1T 87.5 s → MAS N=8 27.0 s, a 3.2×
+speedup), but unifying the per-worker stores costs 35–54 s at month scale and
+*grows* with store count (MAS N=1 35 s → N≥4 ~50 s). End-to-end the MAS
+therefore tops out at ~1.15× over the sequential baseline (N=8: 78.0 s vs
+87.5 s), and mono-MT never meaningfully beats mono-1T. This is the measured
+price of the "per-worker single-writer stores, merge at the sink" design: the
+MAS earns its keep through crash isolation and scale-out across machines, not
+through single-machine speedup.
+
+All 81 runs matched the correctness oracle exactly.
+
+---
+
+## Chaos E2E Testing
+
+[`scripts/chaos_e2e.sh`](scripts/chaos_e2e.sh) validates resilience under
+real failure conditions:
+
+1. Starts a coordinator + 2 workers on real day-files
+2. **`kill -9`** worker 1 after 2 seconds (mid-processing)
+3. Waits for the coordinator to detect the death (30 s threshold), re-dispatch items, and complete
+4. Merges both worker stores (dead worker's store is harmlessly skipped or idempotently absorbed)
+5. Asserts merged row count matches the oracle
+
+**Result:** PASS — 2,290,233 events across 3 day-files, even with one worker
+killed mid-run. Wall clock ~57 s (30 s death threshold dominates).
+
+**Defect found:** Chaos testing exposed a 121 s teardown bug in orphan workers — connect-mode PUSH sockets with 60 s linger held undeliverable heartbeats. Fixed with `linger_ms=0`, regression-guarded by a unit test.
+
+---
+
 ## Build & Run
 
 ### Prerequisites
@@ -472,7 +554,7 @@ An independent Python re-implementation of the dedup logic serves as a
 - **CMake** ≥ 3.16
 - **C++20** compiler (clang 14+, gcc 12+, MSVC 2022+)
 - **Java** (for rendering PlantUML diagrams, optional)
-- **Python 3** (for validation oracle, optional)
+- **Python 3** (for validation oracle and benchmark, optional)
 
 All C++ dependencies are fetched automatically via CMake `FetchContent`:
 - Google Test v1.14.0
@@ -502,19 +584,31 @@ cd build && ctest --output-on-failure
 ./build/clean telemetry_*/2026-02-01.csv events.duckdb MCC
 ```
 
+### Monolith Multi-Threaded Processing
+
+```bash
+# Single-threaded baseline (mono-1T)
+./build/mas_monolith unified.duckdb MCC 1 telemetry_*/*.csv
+
+# 4-thread parallel (mono-MT)
+./build/mas_monolith unified.duckdb MCC 4 telemetry_*/*.csv
+```
+
 ### Distributed Multi-File Processing
 
 ```bash
-# Terminal 1 — start 2 workers
-./build/mas_worker tcp://127.0.0.1:5557 tcp://127.0.0.1:5558 worker1.duckdb MCC &
-./build/mas_worker tcp://127.0.0.1:5557 tcp://127.0.0.1:5558 worker2.duckdb MCC &
+# Terminal 1 — start 2 workers (note: 3 endpoints now)
+./build/mas_worker tcp://127.0.0.1:5591 tcp://127.0.0.1:5592 tcp://127.0.0.1:5593 \
+    w1.duckdb w1 MCC &
+./build/mas_worker tcp://127.0.0.1:5591 tcp://127.0.0.1:5592 tcp://127.0.0.1:5593 \
+    w2.duckdb w2 MCC &
 
-# Terminal 2 — start coordinator (must match num_workers)
-./build/mas_coordinator tcp://127.0.0.1:5557 tcp://127.0.0.1:5558 2 \
+# Terminal 2 — start coordinator
+./build/mas_coordinator tcp://127.0.0.1:5591 tcp://127.0.0.1:5592 tcp://127.0.0.1:5593 \
     telemetry_*/2026-02-01.csv telemetry_*/2026-02-02.csv
 
 # After completion — merge per-worker stores
-./build/mas_merge unified.duckdb MCC worker1.duckdb worker2.duckdb
+./build/mas_merge unified.duckdb MCC w1.duckdb w2.duckdb
 ```
 
 ### Validation Against Python Oracle
@@ -527,11 +621,27 @@ python3 python/oracle.py telemetry_*/2026-02-01.csv
 python3 python/validate_real.py telemetry_*/2026-02-01.csv events.csv
 ```
 
+### Chaos E2E Test
+
+```bash
+scripts/chaos_e2e.sh telemetry_*/2026-02-01.csv telemetry_*/2026-02-02.csv telemetry_*/2026-02-03.csv
+```
+
+### Performance Benchmark
+
+```bash
+# Full sweep (1, 7, 28-day volumes × all architectures × 3 repeats)
+bench/run_bench.sh
+
+# Quick sweep (1-day volume only)
+bench/run_bench.sh --quick
+```
+
 ---
 
 ## Testing
 
-The project has **10 Google Test files** covering all components:
+The project has **68 unit tests** (12 suites) across 10 Google Test files:
 
 | Test File | What It Tests |
 |-----------|---------------|
@@ -541,13 +651,14 @@ The project has **10 Google Test files** covering all components:
 | `test_duckdb_smoke.cpp` | DuckDB library linkage sanity |
 | `test_duckdb_event_store.cpp` | Schema creation, write/count, idempotent upsert, merge_from, export_parquet |
 | `test_zmq_smoke.cpp` | ZeroMQ library linkage sanity |
-| `test_zmq_transport.cpp` | PUSH/PULL round-trip, timeout behavior |
-| `test_message.cpp` | Encode/decode for WorkItem, WorkResult, STOP; malformed payload rejection |
-| `test_cleaning_worker.cpp` | Agent loop with FakeTransport: work processing, STOP handling, failure reporting |
-| `test_coordinator.cpp` | Dispatch + collect with FakeTransport: success, failure, timeout scenarios |
+| `test_zmq_transport.cpp` | PUSH/PULL round-trip, timeout behavior, zero-linger teardown regression |
+| `test_message.cpp` | Encode/decode for WorkItem, WorkResult, Heartbeat, STOP; malformed payload rejection |
+| `test_cleaning_worker.cpp` | Agent loop with FakeTransport: heartbeat emission, work processing, STOP handling, idle-exit countdown |
+| `test_coordinator.cpp` | Liveness sweep: heartbeat refreshes, death detection, re-dispatch, dead-worker store write-off, redispatch cap, abort, deterministic ClockFn tests |
 
 Test doubles: [`FakeTransport.hpp`](tests/fakes/FakeTransport.hpp) provides
-in-memory `FakeSource`/`FakeSink` that replace ZeroMQ in unit tests.
+`FakeSource`, `FakeSink`, and `FakeTickSource` (supports interleaved nullopt
+ticks to model recv timeouts).
 
 ---
 
@@ -555,22 +666,26 @@ in-memory `FakeSource`/`FakeSink` that replace ZeroMQ in unit tests.
 
 | Decision | Rationale |
 |----------|-----------|
-| **Dependency Inversion (DIP)** everywhere | `IEventStore`, `IMessageSource`, `IMessageSink` — domain code never depends on concrete implementations (DuckDB, ZeroMQ). Enables unit testing without I/O. |
+| **4-layer directory structure** | `domain/`, `store/`, `agent/`, `transport/` — strict dependency direction enforces separation of concerns. Domain code has zero I/O dependencies. |
+| **Dependency Inversion (DIP)** | `IEventStore`, `IMessageSource`, `IMessageSink` — domain code never depends on concrete implementations. Enables unit testing without I/O. |
 | **PIMPL for DuckDbEventStore** | Hides `duckdb.hpp` (heavy header) from all compilation units except `DuckDbEventStore.cpp`. |
-| **Per-worker DuckDB stores** | DuckDB is single-writer; distributed workers avoid file contention by writing isolated stores, merged post-run. |
-| **INSERT OR IGNORE + UNIQUE key** | Idempotent reprocessing: re-running a day-file is always safe. |
-| **Staging table for writes** | Bulk `Appender` into VARCHAR staging → `CAST(ts AS TIMESTAMP)` merge → strict timestamp validation (no partial corruption). |
-| **8192-event batch writes** | Amortizes store overhead without excessive memory use. |
-| **ZeroMQ PUSH/PULL** | Pipeline pattern with automatic round-robin load balancing across workers. |
-| **Injected `CleanFn`** | `CleaningWorker` accepts any `std::function<long long(string, IEventStore&)>`, so tests inject a lambda that never touches the filesystem. |
-| **Python oracle as separate implementation** | Independent re-implementation catches logic bugs that unit tests (which share the same assumptions) would miss. |
+| **Per-worker/thread DuckDB stores** | DuckDB is single-writer; distributed workers and monolith threads avoid file contention by writing isolated stores, merged post-run. |
+| **INSERT OR IGNORE + UNIQUE key** | Idempotent reprocessing: re-running a day-file is always safe. Dead-worker re-dispatches produce harmless overlap. |
+| **Heartbeat-driven liveness** | 3-endpoint design: dedicated HB channel drained without blocking. Workers beat on entry, per-tick, and per-result. Coordinator sweeps deaths with injectable `ClockFn` for deterministic testing. |
+| **Dead-worker store write-off** | A dead worker's completed items are re-opened and re-dispatched. Its store is written off — `mas_merge` skips corrupt stores, and the idempotent upsert absorbs any partial overlap. |
+| **`linger_ms=0` on worker sinks** | Connect-mode PUSH sockets create pipes immediately and queue sends below HWM even without a peer. Infinite linger delays teardown. `linger_ms=0` drops undeliverable heartbeats instantly at exit. |
+| **Injectable `ClockFn`** | Coordinator tests drive deadlines by advancing a fake clock, no sleeping. |
+| **`FakeTickSource`** | Models interleaved recv timeouts (nullopt entries) for testing idle-exit countdown without real timers. |
+| **Monolith mode** | Thread-based alternative to the MAS for environments where multi-process ZeroMQ is overkill. Same file-grain work unit and shared-nothing store strategy. |
+| **try/catch DETACH in merge_from** | A failed INSERT from one corrupt store must not leave `src` attached, poisoning subsequent ATTACHes in the same loop. |
 
 ---
 
 ## Roadmap
 
 - [ ] **Python analytics agents** — extend the MAS with analysis agents (trend detection, anomaly flagging)
-- [ ] **Heartbeat-driven re-dispatch** — detect dead workers and re-assign their work items
-- [ ] **Multi-process DuckDB concurrency** — explore DuckDB's concurrent access or use a shared store with WAL coordination
+- [ ] **Attack the merge bottleneck** — the benchmark's headline finding: partitioned Parquet output or a concurrent-writer store would remove the 35–54 s unification cost that currently caps end-to-end speedup at ~1.15×
+- [ ] **PUB/SUB fan-out and REQ/REP registration** — the two ZeroMQ patterns from the spec that the current 3-endpoint PUSH/PULL fabric does not yet use
 - [ ] **TRY_CAST + quarantine** — gracefully handle malformed timestamps (currently strict-CAST aborts the day-file)
 - [ ] **Monitoring dashboard** — live view of processing progress and per-head statistics
+- [ ] **Containerized deployment** — Docker Compose for coordinator + N workers

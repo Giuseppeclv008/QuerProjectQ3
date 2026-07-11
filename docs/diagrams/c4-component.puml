@@ -4,36 +4,42 @@
 LAYOUT_WITH_LEGEND()
 title Component Diagram — C++ Core Library (mas_core + mas_transport)
 
-Container_Boundary(core, "mas_core library") {
+Container_Boundary(domain, "mas_core / domain layer") {
 
-    Component(csv_reader, "CsvRawReader", "C++ class", "Streams raw telemetry CSV line by line.\nParses timestamp + 36 Count + 36 AppTorque + 36 Status columns.\nSkips malformed / truncated rows with counter.")
+    Component(csv_reader, "CsvRawReader", "C++ class", "Streams raw telemetry CSV line by line.\nParses timestamp + 36 Count +\n36 AppTorque + 36 Status columns.\nSkips malformed / truncated rows.")
 
-    Component(extractor, "CapEventExtractor", "C++ class", "Stateful dedup engine.\nTracks per-head Count via last_count_[36].\nEmits CapEvent on increment (delta=1 normal, delta>1 aggregated),\ncounter reset, or fault detection.\nNot thread-safe: one instance per stream.")
+    Component(extractor, "CapEventExtractor", "C++ class", "Stateful dedup engine.\nTracks per-head Count via last_count_[36].\nEmits CapEvent on increment, reset,\nor fault. Not thread-safe.")
 
-    Component(pipeline, "clean_file()", "Free function", "Orchestrator: CsvRawReader → CapEventExtractor → IEventStore.\n8192-event batch writes.\nReturns event count or error code (-1 bad input, -2 bad output).")
+    Component(pipeline, "clean_file()", "Free function", "Orchestrator: CsvRawReader →\nCapEventExtractor → IEventStore.\n8192-event batch writes.\nReturns event count or error code.")
 
-    Component(event_store_if, "IEventStore", "Abstract interface", "write(span<CapEvent>) — persistence seam.\nDIP: pipeline never sees CSV vs DuckDB.\nImplementations own machine_id.")
+    Component(cap_event, "CapEvent / RawRow", "C++ structs", "Domain value types.\nNUM_HEADS=36, FAULT_STATUS=65.")
+}
 
-    Component(csv_store, "CsvEventStore", "C++ class : IEventStore", "Appends CapEvents to a CSV file.\nWrites header on construction.\nclose() flushes and checks for write errors.")
+Container_Boundary(store, "mas_core / store layer") {
 
-    Component(duckdb_store, "DuckDbEventStore", "C++ class : IEventStore", "DuckDB-backed persistence.\nSchema: cap_events with UNIQUE(machine_id, head_id, cap_seq).\nStaging table + INSERT OR IGNORE for idempotency.\nmerge_from() via ATTACH READ_ONLY.\nexport_parquet() for analytics export.\nPIMPL pattern hides duckdb.hpp from callers.")
+    Component(event_store_if, "IEventStore", "Abstract interface", "write(span<CapEvent>) — persistence seam.\nDIP: pipeline never sees CSV vs DuckDB.")
 
-    Component(cap_event, "CapEvent / RawRow", "C++ structs", "Domain value types.\nRawRow: ts + arrays[36] of count, torque, status.\nCapEvent: head_id, ts, cap_seq, app_torque, status,\ndelta, is_fault, aggregated, reset.\nNUM_HEADS=36, FAULT_STATUS=65.")
+    Component(csv_store, "CsvEventStore", "C++ class : IEventStore", "Appends CapEvents to a CSV file.\nWrites header on construction.")
 
-    Component(message, "Message / WorkItem / WorkResult", "C++ structs + codec", "Wire protocol for agent communication.\nTags: WORK, RESULT, STOP.\nencode/decode functions with newline-separated fields.\nFull-consumption numeric validation.")
+    Component(duckdb_store, "DuckDbEventStore", "C++ class : IEventStore", "DuckDB-backed persistence.\nStaging table + INSERT OR IGNORE.\nmerge_from() with ATTACH READ_ONLY\n(try/catch detach on failure).\nexport_parquet(). PIMPL pattern.")
+}
 
-    Component(worker, "CleaningWorker", "C++ class", "Agent loop: PULL WorkItem → run CleanFn → PUSH WorkResult.\nInjected CleanFn for testability.\nExits on STOP or source exhaustion.")
+Container_Boundary(agent, "mas_core / agent layer") {
 
-    Component(coordinator, "run_coordinator()", "Free function", "Ventilator + Sink in one call.\nPUSH all WorkItems, PULL one result per item,\nthen PUSH N STOP signals.\nReturns DispatchSummary with event/file counts.")
+    Component(message, "Message / WorkItem /\nWorkResult / Heartbeat", "C++ structs + codec", "Wire protocol. Tags: WORK, RESULT,\nHB, STOP. WorkResult carries\nworker_id for attribution.\nFull-consumption numeric validation.")
+
+    Component(worker, "CleaningWorker", "C++ class", "Agent loop: PULL WorkItem → run\nCleanFn → PUSH WorkResult + HB.\nHello heartbeat on entry.\nIdle-exit after 60 empty ticks.\nInjected CleanFn for testability.")
+
+    Component(coordinator, "run_coordinator()", "Free function", "Ventilator + Sink + Liveness.\n4-phase loop: (1) result tick,\n(2) heartbeat drain, (3) death sweep\n+ re-dispatch, (4) abort check.\nInjectable ClockFn for deterministic\ntests. CoordinatorConfig: death\nthreshold 30 s, redispatch cap 2.")
 }
 
 Container_Boundary(transport_lib, "mas_transport library") {
 
-    Component(transport_if, "IMessageSource / IMessageSink", "Abstract interfaces", "Transport seam (ISP split by socket role).\nrecv() returns nullopt on timeout/closed.\nsend() pushes one Message frame.")
+    Component(transport_if, "IMessageSource / IMessageSink", "Abstract interfaces", "Transport seam (ISP split).\nrecv() returns nullopt on timeout.\nsend() pushes one Message frame.")
 
-    Component(zmq_push, "ZmqPushSink", "C++ class : IMessageSink", "ZMQ PUSH socket adapter.\nConfigurable send timeout + linger.\nbind or connect mode.")
+    Component(zmq_push, "ZmqPushSink", "C++ class : IMessageSink", "ZMQ PUSH socket adapter.\nConfigurable send_timeout_ms\nand independent linger_ms\n(sentinel default for backward compat).")
 
-    Component(zmq_pull, "ZmqPullSource", "C++ class : IMessageSource", "ZMQ PULL socket adapter.\nConfigurable receive timeout.\nbind or connect mode.\nReturns nullopt on rcvtimeo expiry.")
+    Component(zmq_pull, "ZmqPullSource", "C++ class : IMessageSource", "ZMQ PULL socket adapter.\nConfigurable timeout_ms.\nReturns nullopt on rcvtimeo expiry.")
 }
 
 Rel(pipeline, csv_reader, "Reads rows from")
@@ -43,10 +49,10 @@ Rel(csv_store, event_store_if, "Implements")
 Rel(duckdb_store, event_store_if, "Implements")
 Rel(extractor, cap_event, "Produces CapEvent, consumes RawRow")
 Rel(csv_reader, cap_event, "Produces RawRow")
-Rel(worker, transport_if, "Receives WorkItems / sends WorkResults via")
+Rel(worker, transport_if, "Receives WorkItems / sends Results+HB via")
 Rel(worker, event_store_if, "Writes events to injected store")
 Rel(worker, pipeline, "Calls clean_file() via injected CleanFn")
-Rel(coordinator, transport_if, "Sends WorkItems / receives WorkResults via")
+Rel(coordinator, transport_if, "Sends WorkItems / receives Results+HB via")
 Rel(coordinator, message, "Encodes/decodes messages")
 Rel(worker, message, "Encodes/decodes messages")
 Rel(zmq_push, transport_if, "Implements IMessageSink")
