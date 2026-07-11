@@ -144,7 +144,11 @@ for v in "${VOLUMES[@]}"; do
                     "$R/w$w.duckdb" "w$w" 2>"$R/w$w.log" &
                 WPIDS+=($!); PIDS+=($!)
             done
+            # --workers: gate dispatch on all N registering, else ZMQ PUSH
+            # queues every file into the first connected pipe (slow-joiner
+            # capture, found by sweep #1 — MAS was flat across N).
             /usr/bin/time -l "$BUILD/mas_coordinator" "$WORK" "$RES" "$HB" \
+                --workers "$n" \
                 "${FILES[@]:0:$v}" 2>"$R/coord.log" || { cat "$R/coord.log"; exit 1; }
             for p in "${WPIDS[@]}"; do wait "$p" || true; done
             t_clean=$(python3 -c "import time; print(f'{time.time() - $t_start:.3f}')")
@@ -159,6 +163,12 @@ for v in "${VOLUMES[@]}"; do
             check_count "$rows" "$v" "MAS N=$n v=$v rep=$rep"
             ev=$(sed -n 's/.* failed, \([0-9]*\) events.*/\1/p' "$R/coord.log")
             grep -q ' 0 failed' "$R/coord.log" || { echo "FAIL: files failed"; cat "$R/coord.log"; exit 1; }
+            # Benchmark integrity: a degraded start (gate timed out with fewer
+            # than n registered) or a late joiner would mislabel this row's
+            # n_workers — require exactly n pre-dispatch registrations.
+            joined=$(grep -c ' joined' "$R/coord.log") || joined=0
+            [ "$joined" = "$n" ] && ! grep -q 'proceeding with' "$R/coord.log" \
+                || { echo "FAIL: $joined of $n workers joined (or degraded start)"; cat "$R/coord.log"; exit 1; }
 
             # RSS = sum of per-process maxima; CPU% = aggregate (user+sys)/coordinator-real
             rss=0; user_sum=0; sys_sum=0
