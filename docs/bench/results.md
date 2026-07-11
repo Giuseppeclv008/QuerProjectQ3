@@ -53,7 +53,15 @@ Caveats: laptop thermals (no fan control), median-of-3, N=16 on 8 cores is a del
   86,401 raw rows, so it is approximate for the 7- and 28-day volumes —
   `events_per_s` is the measured throughput. 
 - **The merge phase is the scaling wall**: clean time parallelizes well
-  (mono-1T 87 s -> MAS N=8 26.5 s on 28 days) but merging per-worker/per-thread
-  stores into one costs ~45-54 s at month scale regardless of N/T, capping
-  end-to-end speedup near 1.1-1.2x. This is the measured cost of the
-  spec §14 Q4 "per-worker single-writer stores, merge at the sink" resolution.
+  (28-day medians: mono-1T 87.5 s -> MAS N=8 27.0 s, 3.2x; N=16 25.0 s, 3.5x)
+  but merging per-worker/per-thread stores into one costs ~35-54 s at month
+  scale, rising with store count (MAS N=1 35 s -> N>=4 ~50-51 s; mono-MT T=8
+  53 s). End-to-end: MAS tops out at 1.12-1.16x over mono-1T (N=8: 78.0 s vs
+  87.5 s); mono-MT never meaningfully beats mono-1T at month scale (best
+  1.01x at T=4, 86.6 s vs 87.5 s; T=2 is net slower). This is the measured
+  cost of the spec §14 Q4 "per-worker single-writer stores, merge at the
+  sink" resolution.
+- **MAS `clean_s` includes worker spawn, ZMQ connect, and the registration
+  wait** (`t_start` is stamped before workers fork; the window closes after
+  the post-coordinator `wait`). Empirically small — v=1 clean_s is flat
+  ~3.2-3.3 s across N=1..16 — but it is part of the measured number.
