@@ -31,7 +31,6 @@ DispatchSummary run_coordinator(const std::vector<WorkItem>& items,
     std::unordered_map<std::string, ItemState> state;   // in_path -> state
     for (const auto& item : items) state.emplace(item.in_path, ItemState{});
     std::size_t open = state.size();   // duplicate paths collapse by contract
-    for (const auto& item : items) work.send(encode(item));
 
     std::unordered_map<std::string, WorkerState> registry;
     const auto start = now();
@@ -48,6 +47,46 @@ DispatchSummary run_coordinator(const std::vector<WorkItem>& items,
         }
         return &it->second;
     };
+
+    // Registration gate (Plan 5): with expected_workers > 0, hold the initial
+    // dispatch until that many workers have said hello, so PUSH round-robins
+    // over all their pipes instead of queueing everything into the first one.
+    if (cfg.expected_workers > 0) {
+        while (static_cast<int>(registry.size()) < cfg.expected_workers) {
+            // Same tick order as the main loop: one results tick paces the
+            // wait (and, under test fakes, advances virtual time)...
+            if (const auto msg = results.recv()) {
+                if (const auto r = decode_result(*msg)) {
+                    touch(r->worker_id);   // liveness only; no items are open yet
+                    std::cerr << "coordinator: dropped pre-dispatch result from "
+                              << r->worker_id << "\n";
+                } else {
+                    std::cerr << "coordinator: dropped malformed result\n";
+                }
+            }
+            // ...then a heartbeat drain.
+            while (auto hb_msg = heartbeats.recv()) {
+                const auto hb = decode_heartbeat(*hb_msg);
+                if (!hb) {
+                    std::cerr << "coordinator: dropped malformed heartbeat\n";
+                    continue;
+                }
+                touch(hb->worker_id);
+            }
+            if (now() - start > cfg.registration_timeout) {
+                if (registry.empty()) {
+                    std::cerr << "coordinator: abort: no workers registered within "
+                              << cfg.registration_timeout.count() << " ms\n";
+                    s.files_failed = static_cast<int>(open);
+                    return s;
+                }
+                std::cerr << "coordinator: proceeding with " << registry.size()
+                          << " of " << cfg.expected_workers << " workers\n";
+                break;
+            }
+        }
+    }
+    for (const auto& item : items) work.send(encode(item));
 
     // Loop-pass order is load-bearing for deterministic tests and pinned
     // here: (1) one results tick — its recv timeout paces the loop and, under
