@@ -6,10 +6,29 @@ namespace mas {
 
 inline constexpr int NUM_HEADS = 36;
 
-// AROL Equatorque status codes: 0 = idle/held, 2 = OK cap, 65 = fault (rare).
-// Verify the fault set against real data (spec §14, Open Question 1).
+// AROL Equatorque status codes, measured at closure over 2026-02-01 (spec §3.1).
+// The joint (status, torque) distribution of 765,711 closures separates cleanly:
+//
+//   status 0,  torque > 0   -> 427,643/day  real capping operation, with load
+//   status 2,  torque == 0  -> 337,772/day  "No Load" cycle: the counter advances
+//                                           but no cap is applied (the idle signal)
+//   status 65, torque > 0   ->       4/day  fault
+//
+// An earlier version of this comment had 0 and 2 backwards. It cannot be right:
+// status 0 carries ~2.0 Nm on 427k closures a day, so it is not "idle", and
+// status 2 carries zero torque on 337k, so it is not an "OK cap".
 inline bool is_fault_status(double status) {
     return status == 65.0;
+}
+
+// A capping operation is a closure WITH load. No-load cycles are excluded from
+// every success denominator (spec §3.2).
+inline bool is_successful_cap(double status, double torque) {
+    return status == 0.0 && torque > 0.0;
+}
+
+inline bool is_no_load(double status, double torque) {
+    return status == 2.0 && torque == 0.0;
 }
 
 // One raw 1 Hz poll: timestamp + per-head Count / AppTorque / Status.
