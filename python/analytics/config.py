@@ -33,25 +33,31 @@ class Config:
     # A head is idle after this many seconds of sustained No-Load.
     idle_min_seconds: int = 300
 
+    def __post_init__(self):
+        if self.torque_min >= self.torque_max:
+            raise ConfigError(
+                f"torque_min ({self.torque_min}) must be < torque_max ({self.torque_max}); "
+                "this band would exclude all data"
+            )
+        if self.idle_min_seconds <= 0:
+            raise ConfigError(f"idle_min_seconds must be > 0, got {self.idle_min_seconds}")
+
 
 def load_config(path):
     """Load config from a JSON file. `path=None` yields the defaults."""
     if path is None:
         return Config()
-    with open(path) as fh:
-        raw = json.load(fh)
+    try:
+        with open(path) as fh:
+            raw = json.load(fh)
+    except FileNotFoundError as exc:
+        raise ConfigError(f"config file not found: {path}") from exc
+    except json.JSONDecodeError as exc:
+        raise ConfigError(f"config file is not valid JSON: {path}") from exc
 
     known = {f.name for f in fields(Config)}
     for key in raw:
         if key not in known:
             raise ConfigError(f"unknown config key {key!r}; known keys: {sorted(known)}")
 
-    cfg = Config(**raw)
-    if cfg.torque_min >= cfg.torque_max:
-        raise ConfigError(
-            f"torque_min ({cfg.torque_min}) must be < torque_max ({cfg.torque_max}); "
-            "this band would exclude all data"
-        )
-    if cfg.idle_min_seconds <= 0:
-        raise ConfigError(f"idle_min_seconds must be > 0, got {cfg.idle_min_seconds}")
-    return cfg
+    return Config(**raw)
