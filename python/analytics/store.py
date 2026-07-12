@@ -11,10 +11,11 @@ def connect(cfg):
     return duckdb.connect(cfg.store_path, read_only=True)
 
 
-def discover_heads(con):
-    """The heads actually present in the data. Never range(1, 37)."""
+def discover_heads(con, cfg):
+    """The heads actually present for this machine. Never range(1, 37)."""
     rows = con.execute(
-        "SELECT DISTINCT head_id FROM cap_events ORDER BY head_id"
+        "SELECT DISTINCT head_id FROM cap_events WHERE machine_id = ? ORDER BY head_id",
+        [cfg.machine_id],
     ).fetchall()
     return [int(r[0]) for r in rows]
 
@@ -43,3 +44,13 @@ def period_clause(period):
     else:
         start, end = _month_bounds(period.strip())
     return "ts >= ? AND ts < ?", [start, end]
+
+
+def scope_clause(cfg, period):
+    """The WHERE fragment every tool starts from: this machine, this period.
+
+    Machine and period scoping live here, in one place, rather than being
+    re-derived (and eventually forgotten) by each of the eight tools.
+    """
+    where, params = period_clause(period)
+    return f"machine_id = ? AND {where}", [cfg.machine_id] + params

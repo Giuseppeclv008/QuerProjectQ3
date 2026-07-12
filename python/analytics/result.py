@@ -34,15 +34,17 @@ class ToolResult:
         )
 
     @staticmethod
-    def insufficient(tool, message, *, period=None, rows_scanned=0):
+    def insufficient(tool, message, *, period=None, rows_scanned=0, filters=None, assumptions=None):
         return ToolResult(
             tool=tool, status="insufficient_data", values={},
-            provenance=Provenance(period, rows_scanned), message=message,
+            provenance=Provenance(period, rows_scanned, filters or [], assumptions or []),
+            message=message,
         )
 
     @staticmethod
-    def error(tool, message, *, period=None):
+    def error(tool, message, *, period=None, rows_scanned=0, filters=None, assumptions=None):
         return ToolResult(
             tool=tool, status="error", values={},
-            provenance=Provenance(period), message=message,
+            provenance=Provenance(period, rows_scanned, filters or [], assumptions or []),
+            message=message,
         )
