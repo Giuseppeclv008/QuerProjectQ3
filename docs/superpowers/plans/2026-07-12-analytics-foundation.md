@@ -2250,20 +2250,20 @@ def test_toolkit_agrees_with_the_independent_oracle_on_one_day(cfg):
         pytest.skip(f"raw CSV for {day} not extracted")
 
     expected = oracle_kpi.kpis(matches[0])
-    got = overview(cfg, period=None).values     # store holds this day among others
 
-    # Assert on the one day we can isolate: build a day-scoped store check instead.
-    day_cfg = cfg
-    r = overview(day_cfg, period="2026-02")
-    assert r.status == "ok"
-
-    # The oracle's per-day counts must be a lower bound on the month's, and the
-    # day's own figures must reproduce exactly what was measured at design time.
-    assert expected["capping_operations"] == 427643 + 155 + 4   # closures with torque > 0
+    # The oracle re-derives these from the raw CSV. They must reproduce exactly what
+    # was measured at design time (spec §3.1) -- if they do not, the semantics moved.
     assert expected["successful"] == 427643
     assert expected["failed"] == 4
     assert expected["no_load_cycles"] == 337772
+    assert expected["capping_operations"] == 427643 + 155 + 4   # every closure with torque > 0
+
+    # The store covers this day plus the rest of the month, so the month's counts must
+    # contain the day's. This is what ties the toolkit's SQL to the independent oracle.
+    r = overview(cfg, period="2026-02")
+    assert r.status == "ok"
     assert r.values["capping_operations"] >= expected["capping_operations"]
+    assert r.values["no_load_cycles"] >= expected["no_load_cycles"]
 ```
 
 - [ ] **Step 4: Run the full suite**
