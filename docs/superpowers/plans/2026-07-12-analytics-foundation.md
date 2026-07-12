@@ -28,6 +28,25 @@
 - **Commits:** conventional style, each ending with:
   `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`
 - **DuckDB is opened READ_ONLY** by all analytics code. The toolkit never writes to the event store.
+- **Every tool scopes to the machine AND the period via `scope_clause(cfg, period)`** (see the amendment below). Do not call `period_clause` directly from a tool — it does not filter by machine.
+
+## Amendment after the Task 3 review (binding on Tasks 4-11)
+
+The Task 3 review found that `Config.machine_id` was never used while the store's key is
+`UNIQUE(machine_id, head_id, cap_seq)` — so two machines sharing head IDs would silently merge.
+Rather than making eight tools each remember a machine filter, the scoping now lives in one place:
+
+```python
+scope_clause(cfg, period) -> (sql_fragment, params)   # "machine_id = ? AND ts >= ? AND ts < ?"
+discover_heads(con, cfg)  -> list[int]                # machine-scoped
+```
+
+`period_clause(period)` still exists and is unchanged — `scope_clause` is built on top of it — but
+**tools must call `scope_clause`**. The Task 4-11 code blocks below already reflect this.
+
+`ToolResult.insufficient()` and `.error()` also gained the full provenance arguments
+(`period`, `rows_scanned`, `filters`, `assumptions`), matching `.ok()`: the paths that explain why
+there is *no* answer are exactly the ones that need to record which filters produced the emptiness.
 
 ## Deviation from spec §5.4 (deliberate, approved)
 
@@ -681,7 +700,7 @@ counter advances, no cap is applied) are counted separately and never inflate a
 success denominator (spec §3.2).
 """
 from analytics.result import ToolResult
-from analytics.store import connect, discover_heads, period_clause
+from analytics.store import connect, discover_heads, scope_clause
 
 ASSUMPTION = (
     "a capping operation is a closure with torque > 0; no-load cycles "
@@ -691,7 +710,7 @@ ASSUMPTION = (
 
 def overview(cfg, period=None):
     con = connect(cfg)
-    where, params = period_clause(period)
+    where, params = scope_clause(cfg, period)
 
     row = con.execute(f"""
         SELECT
@@ -849,7 +868,7 @@ It is omitted rather than reported at 0%: a fabricated zero would read as a
 catastrophically failing head when in truth nothing was ever capped.
 """
 from analytics.result import ToolResult
-from analytics.store import connect, period_clause
+from analytics.store import connect, scope_clause
 from analytics.tools.overview import ASSUMPTION
 
 _GROUPS = {"head": "head_id", "day": "CAST(ts AS DATE)", "overall": None}
@@ -862,7 +881,7 @@ def success_rates(cfg, period=None, by="head"):
         )
 
     con = connect(cfg)
-    where, params = period_clause(period)
+    where, params = scope_clause(cfg, period)
     sem = [cfg.success_status, cfg.fault_status]
 
     # Only closures WITH load are capping operations (spec §3.2).
@@ -1018,7 +1037,7 @@ cycles a day carry torque 0.0, and including them would drag every mean toward
 zero and invent a bimodal distribution that does not exist.
 """
 from analytics.result import ToolResult
-from analytics.store import connect, period_clause
+from analytics.store import connect, scope_clause
 from analytics.tools.overview import ASSUMPTION
 
 _OUTCOMES = ("successful", "failed", "all")
@@ -1035,7 +1054,7 @@ def torque_stats(cfg, period=None, outcome="successful", by=None):
                                 period=period)
 
     con = connect(cfg)
-    where, params = period_clause(period)
+    where, params = scope_clause(cfg, period)
 
     cond, sem = "app_torque > 0", []
     if outcome == "successful":
@@ -1171,7 +1190,7 @@ caps per unit time -- and needs no schema column, no migration, and no
 reprocessing of the 89 day-files. Only closures WITH load produce a piece.
 """
 from analytics.result import ToolResult
-from analytics.store import connect, period_clause
+from analytics.store import connect, scope_clause
 from analytics.tools.overview import ASSUMPTION
 
 _BUCKETS = {"hour": ("HOUR", 1.0), "day": ("DAY", 24.0)}
@@ -1186,7 +1205,7 @@ def capping_speed(cfg, period=None, bucket="hour"):
     unit, hours_per_bucket = _BUCKETS[bucket]
 
     con = connect(cfg)
-    where, params = period_clause(period)
+    where, params = scope_clause(cfg, period)
 
     rows = con.execute(f"""
         SELECT DATE_TRUNC('{unit}', ts) AS bucket_start, COUNT(*) AS caps
@@ -1335,13 +1354,13 @@ Runs are found with the classic gaps-and-islands trick: number the rows per head
 number the no-load rows per head, and the difference is constant within a run.
 """
 from analytics.result import ToolResult
-from analytics.store import connect, period_clause
+from analytics.store import connect, scope_clause
 
 
 def idle_periods(cfg, period=None, min_seconds=None):
     threshold = cfg.idle_min_seconds if min_seconds is None else min_seconds
     con = connect(cfg)
-    where, params = period_clause(period)
+    where, params = scope_clause(cfg, period)
 
     rows = con.execute(f"""
         WITH marked AS (
@@ -1523,7 +1542,7 @@ outside the *machine's* spec band; deviation catches a head drifting away from
 *its own* normal, even while still inside the band.
 """
 from analytics.result import ToolResult
-from analytics.store import connect, period_clause
+from analytics.store import connect, scope_clause
 
 _METHODS = ("threshold", "deviation", "both")
 
@@ -1536,7 +1555,7 @@ def anomalies(cfg, period=None, method="both"):
         )
 
     con = connect(cfg)
-    where, params = period_clause(period)
+    where, params = scope_clause(cfg, period)
 
     faults = [
         {"head_id": int(r[0]), "ts": r[1], "app_torque": r[2], "reason": "fault status"}
@@ -1752,7 +1771,7 @@ Gaussian, and is deterministic. tau = +1 means every day rose on the previous;
 import pandas as pd
 
 from analytics.result import ToolResult
-from analytics.store import connect, period_clause
+from analytics.store import connect, scope_clause
 
 _SIGNALS = ("torque", "success_rate")
 _BUCKETS = {"day": "DAY", "hour": "HOUR"}
@@ -1783,7 +1802,7 @@ def trend(cfg, period=None, signal="torque", by="day", window=7):
                                          f"got {by!r}", period=period)
 
     con = connect(cfg)
-    where, params = period_clause(period)
+    where, params = scope_clause(cfg, period)
     unit = _BUCKETS[by]
 
     expr = ("AVG(app_torque)" if signal == "torque"
@@ -1967,7 +1986,7 @@ produce a correlation, so that is insufficient_data rather than a NaN.
 import pandas as pd
 
 from analytics.result import ToolResult
-from analytics.store import connect, discover_heads, period_clause
+from analytics.store import connect, discover_heads, scope_clause
 
 _BUCKETS = {"day": "DAY", "hour": "HOUR"}
 
@@ -1977,11 +1996,11 @@ def head_correlation(cfg, period=None, heads=None, by="day"):
         return ToolResult.error("head_correlation", f"by must be one of {sorted(_BUCKETS)}, "
                                                     f"got {by!r}", period=period)
     con = connect(cfg)
-    where, params = period_clause(period)
+    where, params = scope_clause(cfg, period)
     unit = _BUCKETS[by]
 
     if heads is None:
-        heads = discover_heads(con)          # never assumes 36
+        heads = discover_heads(con, cfg)          # never assumes 36
     if len(heads) < 2:
         return ToolResult.insufficient(
             "head_correlation", f"need at least 2 heads, got {len(heads)}", period=period
