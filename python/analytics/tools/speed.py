@@ -4,6 +4,11 @@ The brief describes this as an "incremental average" computed during ingestion.
 We compute it in SQL over the persisted events instead: it is the same number --
 caps per unit time -- and needs no schema column, no migration, and no
 reprocessing of the 89 day-files. Only closures WITH load produce a piece.
+
+`mean_pieces_per_hour` is the mean over ACTIVE buckets only: the GROUP BY never
+emits a bucket with zero capping operations, so an idle hour or day does not pull
+the mean down. It is a typical active-bucket rate, not total pieces over elapsed
+time -- the returned `assumptions` say so, and a multi-bucket test pins it.
 """
 from analytics.result import ToolResult
 from analytics.store import connect, scope_clause
@@ -48,5 +53,9 @@ def capping_speed(cfg, period=None, bucket="hour"):
         },
         period=period, rows_scanned=total,
         filters=[f"bucket={bucket}", "app_torque > 0 (only real caps produce pieces)"],
-        assumptions=[ASSUMPTION],
+        assumptions=[
+            ASSUMPTION,
+            "mean_pieces_per_hour is the mean over active buckets only; buckets with "
+            "zero capping operations are not emitted, so idle hours/days do not lower it",
+        ],
     )
