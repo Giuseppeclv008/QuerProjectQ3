@@ -36,6 +36,7 @@ def test_threshold_flags_torque_outside_the_configured_band(anomaly_store):
     assert len(hits) == 1
     assert hits[0]["app_torque"] == pytest.approx(2.9)
     assert "outside band" in hits[0]["reason"]
+    assert r.values["deviation_hits"] == []      # method="threshold" must not compute deviation
 
 
 def test_deviation_flags_the_outlier_against_its_own_heads_band(anomaly_store):
@@ -45,6 +46,7 @@ def test_deviation_flags_the_outlier_against_its_own_heads_band(anomaly_store):
     # 2.9 is far outside head 1's median +/- 3*MAD, even though it is inside the
     # wide-open threshold band — this is what makes the two methods complementary.
     assert [h["app_torque"] for h in hits] == pytest.approx([2.9])
+    assert r.values["threshold_hits"] == []      # method="deviation" must not compute threshold
 
 
 def test_faults_are_always_reported(anomaly_store):
@@ -63,3 +65,12 @@ def test_healthy_data_yields_zero_hits_not_an_error(tiny_cfg):
 def test_rejects_unknown_method(tiny_cfg):
     r = anomalies(tiny_cfg, period="2026-02", method="vibes")
     assert r.status == "error"
+
+
+def test_rows_scanned_counts_examined_rows_not_hits(anomaly_store):
+    cfg = Config(store_path=anomaly_store, torque_min=1.5, torque_max=2.5)
+    r = anomalies(cfg, period="2026-02", method="both")
+    # 20 tight caps + one 2.9 cap + one fault = 22 closures examined in scope, not the
+    # 3 hits (1 fault + 1 threshold + 1 deviation). Provenance must let a consumer tell
+    # "0 anomalies out of 22 examined" apart from "nothing was scanned".
+    assert r.provenance.rows_scanned == 22

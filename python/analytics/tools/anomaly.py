@@ -29,11 +29,17 @@ def anomalies(cfg, period=None, method="both"):
     con = connect(cfg)
     where, params = scope_clause(cfg, period)
 
+    # rows_scanned is the provenance denominator: how many closures this tool
+    # examined in scope, so "0 anomalies" is distinguishable from "no data".
+    scanned = con.execute(
+        f"SELECT COUNT(*) FROM cap_events WHERE {where}", params
+    ).fetchone()[0]
+
     faults = [
         {"head_id": int(r[0]), "ts": r[1], "app_torque": r[2], "reason": "fault status"}
         for r in con.execute(
             f"""SELECT head_id, ts, app_torque FROM cap_events
-                WHERE status = ? AND {where} ORDER BY ts""",
+                WHERE status = ? AND {where} ORDER BY ts, cap_seq""",
             [cfg.fault_status] + params,
         ).fetchall()
     ]
@@ -47,7 +53,7 @@ def anomalies(cfg, period=None, method="both"):
                 f"""SELECT head_id, ts, app_torque FROM cap_events
                     WHERE app_torque > 0 AND (app_torque < ? OR app_torque > ?)
                       AND {where}
-                    ORDER BY ts""",
+                    ORDER BY ts, cap_seq""",
                 [cfg.torque_min, cfg.torque_max] + params,
             ).fetchall()
         ]
@@ -61,7 +67,7 @@ def anomalies(cfg, period=None, method="both"):
             for r in con.execute(
                 f"""
                 WITH caps AS (
-                    SELECT head_id, ts, app_torque FROM cap_events
+                    SELECT head_id, ts, app_torque, cap_seq FROM cap_events
                     WHERE app_torque > 0 AND {where}
                 ),
                 med AS (
@@ -77,7 +83,7 @@ def anomalies(cfg, period=None, method="both"):
                 FROM caps c JOIN mad USING (head_id)
                 WHERE mad.mad > 0
                   AND ABS(c.app_torque - mad.m) > ? * mad.mad
-                ORDER BY c.ts
+                ORDER BY c.ts, c.cap_seq
                 """,
                 params + [cfg.mad_k],
             ).fetchall()
@@ -96,7 +102,7 @@ def anomalies(cfg, period=None, method="both"):
             },
         },
         period=period,
-        rows_scanned=len(faults) + len(threshold_hits) + len(deviation_hits),
+        rows_scanned=scanned,
         filters=[f"method={method}", f"band=[{cfg.torque_min}, {cfg.torque_max}]",
                  f"mad_k={cfg.mad_k}"],
         assumptions=["deviation uses median +/- k*MAD (robust); mean/sigma would let "
