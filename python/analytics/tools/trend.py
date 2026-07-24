@@ -50,9 +50,15 @@ def trend(cfg, period=None, signal="torque", by="day", window=7):
     where, params = scope_clause(cfg, period)
     unit = _BUCKETS[by]
 
+    # success_rate = successful / (successful + failed), the locked spec §3.2
+    # denominator that success_rates() uses -- caps whose status is neither success
+    # nor fault are not a verdict and must not dilute the rate. NULLIF(..., 0) makes a
+    # bucket with no verdicts undefined (NULL -> None), never a division error.
     expr = ("AVG(app_torque)" if signal == "torque"
-            else "COUNT(*) FILTER (WHERE status = ?) * 1.0 / COUNT(*)")
-    sem = [] if signal == "torque" else [cfg.success_status]
+            else "COUNT(*) FILTER (WHERE status = ?) * 1.0 "
+                 "/ NULLIF(COUNT(*) FILTER (WHERE status IN (?, ?)), 0)")
+    sem = ([] if signal == "torque"
+           else [cfg.success_status, cfg.success_status, cfg.fault_status])
 
     rows = con.execute(f"""
         SELECT head_id, DATE_TRUNC('{unit}', ts) AS bucket, {expr} AS value
@@ -78,7 +84,9 @@ def trend(cfg, period=None, signal="torque", by="day", window=7):
 
     drift = []
     for head, grp in df.groupby("head_id"):
-        tau = mann_kendall_tau(list(grp["value"]))
+        # A verdictless success_rate bucket is NaN (None); drop it before ranking so
+        # it neither concords nor discords. Torque values are never NaN.
+        tau = mann_kendall_tau([v for v in grp["value"] if pd.notna(v)])
         drift.append({
             "head_id": int(head),
             "tau": tau,
@@ -88,7 +96,8 @@ def trend(cfg, period=None, signal="torque", by="day", window=7):
     drift.sort(key=lambda d: -abs(d["tau"]))
 
     series = [
-        {"head_id": int(r.head_id), "bucket": r.bucket, "value": r.value,
+        {"head_id": int(r.head_id), "bucket": r.bucket,
+         "value": None if pd.isna(r.value) else float(r.value),
          "rolling_mean": None if pd.isna(r.rolling_mean) else float(r.rolling_mean),
          "rolling_std": None if pd.isna(r.rolling_std) else float(r.rolling_std)}
         for r in df.itertuples()

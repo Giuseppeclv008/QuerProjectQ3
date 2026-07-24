@@ -93,3 +93,41 @@ def test_rows_scanned_counts_caps_not_series_points(tiny_cfg):
     # operations were examined. rows_scanned must be the examined count, not len(series).
     assert len(r.values["series"]) == 2
     assert r.provenance.rows_scanned == 5
+
+
+@pytest.fixture
+def odd_status_trend_store(tmp_path):
+    """One head, one day: 3 successes (status 0) + 1 fault (status 65) + 2 odd-status
+    (status 9) caps. The success_rate signal must read 3/(3+1)=0.75, not 3/6=0.5 --
+    odd-status caps are not a verdict (locked spec §3.2), same as success_rates()."""
+    path = tmp_path / "odd_trend.duckdb"
+    con = duckdb.connect(str(path))
+    con.execute("""
+        CREATE TABLE cap_events (
+            machine_id VARCHAR NOT NULL, head_id SMALLINT NOT NULL, ts TIMESTAMP,
+            cap_seq BIGINT NOT NULL, app_torque REAL, status REAL, delta INTEGER,
+            is_fault BOOLEAN, aggregated BOOLEAN, is_reset BOOLEAN,
+            UNIQUE (machine_id, head_id, cap_seq))
+    """)
+    rows = [
+        ("MCC", 1, "2026-02-01 00:00:00", 1, 2.0, 0.0),
+        ("MCC", 1, "2026-02-01 00:00:01", 2, 2.0, 0.0),
+        ("MCC", 1, "2026-02-01 00:00:02", 3, 2.0, 0.0),    # 3 successes
+        ("MCC", 1, "2026-02-01 00:00:03", 4, 2.0, 65.0),   # 1 fault
+        ("MCC", 1, "2026-02-01 00:00:04", 5, 2.0, 9.0),    # odd status, torque > 0
+        ("MCC", 1, "2026-02-01 00:00:05", 6, 2.0, 9.0),    # odd status
+    ]
+    for m, h, ts, seq, tq, st in rows:
+        con.execute("INSERT INTO cap_events VALUES (?,?,?,?,?,?,1,false,false,false)",
+                    [m, h, ts, seq, tq, st])
+    con.close()
+    return str(path)
+
+
+def test_success_rate_signal_excludes_odd_status_caps(odd_status_trend_store):
+    cfg = Config(store_path=odd_status_trend_store, machine_id="MCC")
+    r = trend(cfg, period="2026-02", signal="success_rate", by="day")
+    assert r.status == "ok"
+    # 6 caps in the day, but only 3 successes + 1 fault are verdicts -> 3/(3+1)=0.75,
+    # NOT 3/6=0.5. tiny_store can't catch this (it has no odd-status caps).
+    assert [s["value"] for s in r.values["series"]] == pytest.approx([0.75])

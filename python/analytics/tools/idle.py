@@ -55,12 +55,17 @@ def idle_periods(cfg, period=None, min_seconds=None):
          "cycles": r[3], "duration_seconds": int(r[4])}
         for r in rows
     ]
+    # rows_scanned is the provenance denominator: every closure the run-detection
+    # examined in scope, not just the no-load cycles inside qualifying periods.
+    scanned = con.execute(
+        f"SELECT COUNT(*) FROM cap_events WHERE {where}", params
+    ).fetchone()[0]
     return ToolResult.ok(
         "idle_periods",
         {"periods": periods,
          "total_idle_seconds": sum(p["duration_seconds"] for p in periods)},
         period=period,
-        rows_scanned=sum(p["cycles"] for p in periods),
+        rows_scanned=scanned,
         filters=[f"min_seconds={threshold}"],
         assumptions=[
             "an idle period is a sustained run of no-load cycles "
