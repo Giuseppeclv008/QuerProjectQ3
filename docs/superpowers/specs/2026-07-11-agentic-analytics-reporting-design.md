@@ -216,11 +216,15 @@ The brief calls for exactly this, and requires WP2 to be deterministic.
 
 ### 5.4 WP1 gaps to close
 
-Two brief requirements never built, both belonging in the cleaning core:
+Two brief requirements, both closed in Plan 6 — computed in the toolkit rather than the
+cleaning core, so no schema column, no migration, and no reprocessing of the 89 day-files:
 
-- **capping speed (pieces/hour)** via incremental average — the inter-cap timing already
-  exists in the extractor
-- **validation checks** — missing values, timestamp consistency
+- **capping speed (pieces/hour)** — computed in SQL by `capping_speed()`
+  (`analytics/tools/speed.py`) over the persisted events, NOT via an incremental average in the
+  extractor. Same number (caps per time bucket); the C++ extractor is unchanged. (Plan 6
+  deviation, approved.)
+- **validation checks** — missing/invalid torque, counter resets — surfaced by `overview()`
+  (`analytics/tools/overview.py`) from the persisted store, not the reader.
 
 ## 6. WP3 — Report agent
 
@@ -339,10 +343,20 @@ to be clean before the agent depends on it.
    blocking: the definition is config-driven, and the brief's own "meta queries" ask what
    assumptions were made during cleaning — so stating this assumption explicitly is itself a
    deliverable.
-2. **Reprocessing.** Capping speed (§5.4) is computed in the extractor, so the three months
-   must be reprocessed to populate it. Cheap (Plan 5 measured ~87 s/month single-threaded),
-   but it is a step.
+2. **Reprocessing. — RESOLVED (Plan 6).** ~~Capping speed (§5.4) is computed in the extractor,
+   so the three months must be reprocessed to populate it.~~ Capping speed is derived in SQL
+   from events already persisted (`capping_speed()`), so no reprocessing and no schema change
+   were needed.
 3. **48-head portability (§3.5).** The C++ cleaning tier cannot ingest the brief's example
    48-head layout without a `NUM_HEADS` refactor. Deferred — no such data exists to test
    against — but it is a genuine gap against "designed to work on datasets that may include"
    that layout. Roadmap item, not a Plan 6/7 task.
+4. **Statuses beyond {0, 2, 65} in real data (found in Plan 6 validation).** The three-month
+   store carries a small tail of capping operations (torque > 0) whose status is none of
+   success (0), fault (65), or no-load (2 with zero torque): ~2,926/month at status **2 with
+   torque > 0** (which contradicts the no-load reading in §3.2), plus a handful at status **9**
+   and **4** — together ~0.04% of caps. Per the locked §3.2, `success_rates()` treats them as
+   neither success nor fault, so they are excluded from the `successful / (successful + failed)`
+   denominator. What these statuses mean is unknown — like OQ#1, worth confirming with the
+   course/AROL. Not blocking: the KPI is well-defined without them and the semantics are
+   config-driven.

@@ -65,3 +65,44 @@
 
 - `cmake --build build -j 8` clean; `./build/unit_tests` → **68/68 PASS** (65 at plan-writing time + 3 registration-gate tests added by 054cc3b); `python -m pytest` (project venv) → **4 passed** (oracle + 3 bench_plots).
 - Spec cross-refs: §5 matrix/metrics/oracle, §6 plots/table/caveats, §7 correctness gate, §9 success criteria 1-3.
+
+## 2026-07-24 — Plan 6: Analytics foundation, WP2 toolkit on the real three months (real data)
+
+- HEAD at run: 654c491 (branch `feat/agentic-analytics`). Store: `scripts/build_store.sh events_3mo.duckdb` over all three month zips → `monolith: 89 files, 55132433 events, clean 76.154 s, merge 133.593 s, total 209.746 s, store holds 20347822 rows` (369 MB). The 55.1M→20.3M gap is the counter-reset dedup the Plan 5 entry above characterised (UNIQUE(machine_id, head_id, cap_seq) collapses replays identically for every architecture).
+- Python suite (project venv): **85 passed** — 80 fixture tests + 5 real-data tests (`python/tests/test_real_data.py`, skipped when the store is absent). C++ suite unchanged this plan (Task 1 semantics fix landed with its own tests earlier on the branch).
+
+### Independent oracle cross-check (spec §10): toolkit SQL == raw-CSV re-derivation — PASS
+
+- `python/oracle_kpi.py` recomputes the headline counts straight from the raw CSV — no DuckDB, no toolkit SQL, no shared code — the same discipline that caught the Plan 5 distribution defect. On `2026-02-01.csv` it reproduces the design-time figures **exactly**: `successful=427643, failed=4, no_load_cycles=337772, capping_operations=427802 (=427643+155+4)`. The month's toolkit counts contain the day's (`overview` caps/no-load ≥ the oracle day), tying the SQL to the independent oracle. The Task-1 status-semantics fix is therefore correct on real data, not just on fixtures.
+
+### Headline KPIs, `overview()` / `success_rates()` / `torque_stats()` / `capping_speed()`
+
+| metric | 2026-02 | 2026-02..2026-04 |
+|---|---|---|
+| capping operations (torque>0) | 6,672,649 | 11,908,148 |
+| successful (status 0) | 6,669,339 | 11,902,090 |
+| failed (status 65) | 371 | 585 |
+| no-load cycles (status 2, τ=0) | 3,774,599 | 8,433,525 |
+| heads discovered | 1–36 (n=36) | 1–36 (n=36) |
+| overall success rate | **0.999944** | **0.999951** |
+| mean successful torque (Nm) | 1.9986 | 2.0104 |
+| median / min / max τ (Nm) | 1.998 / 1.282 / 2.556 | 1.998 / 1.282 / 2.556 |
+| stddev successful τ (Nm) | 0.0158 | 0.0606 |
+| capping speed (pieces/hour, mean of day-buckets) | 11,121 | 8,409 |
+| validation: counter_resets / null_τ / invalid_τ | 36 / 0 / 68 | 36 / 0 / 129 |
+| ts range | 02-01 08:43:30 → 02-28 15:59:59 | 02-01 08:43:30 → 04-30 16:59:59 |
+
+- **success_rate is `successful / (successful + failed)`, per the locked spec §3.2** — 0.9999, healthy, as the brief predicted (~99.999%). **Finding (data), fixed on-branch (654c491):** the shipped `success_rates()` originally divided by *total* capping operations, which agrees with the spec formula only when every cap is status 0 or 65 — true for the `tiny_store` fixture, so Task 5's tests never saw the gap. Real data carries ~2,939 caps/month whose status is neither (see next); dividing by total read 0.9995. Now spec-compliant; the load-bearing regression test still holds: if no-load cycles ever re-entered the denominator, success collapses to ~56%.
+- **Finding (data): capping operations with unanticipated statuses.** Among torque>0 caps in 2026-02: status 0 → 6,669,339; **status 2 with τ>0 → 2,926** (contradicts the no-load reading, which is status 2 *with zero torque*); status 65 → 371; status 9 → 12; status 4 → 1. Together the non-{0,65} tail is ~0.04% of caps. Excluded from the success denominator (neither success nor fault); logged as spec Open Question #4 to confirm with the course/AROL — same footing as OQ#1 (status-encoding is inferred, not documented by AROL).
+
+### `anomalies()`, `trend()`, `idle_periods()`
+
+- **anomalies** (band [1.5, 2.5], k=3): 2026-02 `{faults: 371, threshold_hits: 68, deviation_hits: 678325}`; 3-month `{faults: 585, threshold_hits: 129, deviation_hits: 1734460}`. Faults == the status-65 count (consistent). Threshold hits == `invalid_torque` (both are the out-of-band caps). **Caveat:** robust MAD deviation flags ~10% of caps (678k/6.67M) — the successful-torque spread is extremely tight (σ≈0.016 Nm), so median±3·MAD is a narrow band and normal process jitter clears it. This is the detector behaving as specified on a very-low-variance signal, not a defect; a real deployment would widen `mad_k` or gate deviation on a minimum absolute delta. Noted for Plan 7 report-agent tuning.
+- **trend / drift** (Mann-Kendall, |τ|≥0.5, daily torque): **0 heads drift** over 2026-02 and over all three months. Expected for a machine holding 2.0 Nm to ±0.016: day-to-day mean torque is essentially flat, so no monotone walk. The tool ran clean across the 3-month range (`status ok`, 36 drift entries), which is the assertion the real-data test pins.
+- **idle_periods** (min 300 s): 2026-02 → 12,276 periods, 26,949,710 s total; 3-month → 21,802 periods, 137,465,461 s total. Sustained no-load runs are common, consistent with 337k no-load cycles/day.
+
+### Validation-process notes (two plan-code fixes needed to run real data)
+
+- `scripts/build_store.sh` assumed every month zip extracts into a `telemetry_.../` subfolder; the Mar/Apr zips drop day-files flat into the cwd, so the first run silently built February only (28 files). Fixed to collect day-files whether flat or in a subdir (verified: 89 files across 02/03/04).
+- `python/tests/test_real_data.py` looked for the store at `events_3mo.duckdb` (i.e. under `python/`), but `build_store.sh` and the plan's own record-numbers script put it in the repo root; the tests silently skipped. Fixed to `../events_3mo.duckdb`.
+- Spec reconciled (§5.4, §12 OQ#2 RESOLVED): capping speed is SQL in `capping_speed()`, extractor unchanged, no schema column, no reprocessing.
