@@ -22,9 +22,9 @@ def idle_periods(cfg, period=None, min_seconds=None):
         WITH marked AS (
             SELECT head_id, ts,
                    (status = ? AND app_torque = 0) AS no_load,
-                   ROW_NUMBER() OVER (PARTITION BY head_id ORDER BY ts) AS rn_all,
+                   ROW_NUMBER() OVER (PARTITION BY head_id ORDER BY ts, cap_seq) AS rn_all,
                    ROW_NUMBER() OVER (
-                       PARTITION BY head_id, (status = ? AND app_torque = 0) ORDER BY ts
+                       PARTITION BY head_id, (status = ? AND app_torque = 0) ORDER BY ts, cap_seq
                    ) AS rn_grp
             FROM cap_events
             WHERE {where}
@@ -62,5 +62,8 @@ def idle_periods(cfg, period=None, min_seconds=None):
         period=period,
         rows_scanned=sum(p["cycles"] for p in periods),
         filters=[f"min_seconds={threshold}"],
-        assumptions=["an idle period is a sustained run of no-load cycles (status 2, torque 0)"],
+        assumptions=[
+            "an idle period is a sustained run of no-load cycles "
+            f"(status {cfg.no_load_status}, torque 0)"
+        ],
     )
