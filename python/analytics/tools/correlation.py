@@ -44,13 +44,21 @@ def head_correlation(cfg, period=None, heads=None, by="day"):
             "head_correlation", f"no capping operations in period {period!r}", period=period
         )
 
+    # rows_scanned is the provenance denominator: capping operations examined in
+    # scope, not the count of (head, bucket) aggregate points.
+    scanned = con.execute(
+        f"SELECT COUNT(*) FROM cap_events "
+        f"WHERE app_torque > 0 AND head_id IN ({placeholders}) AND {where}",
+        list(heads) + params,
+    ).fetchone()[0]
+
     df = pd.DataFrame(rows, columns=["head_id", "bucket", "value"])
     wide = df.pivot(index="bucket", columns="head_id", values="value")
     if len(wide) < 2:
         return ToolResult.insufficient(
             "head_correlation",
             f"need at least 2 {by} buckets to correlate, got {len(wide)}",
-            period=period, rows_scanned=len(rows),
+            period=period, rows_scanned=scanned,
         )
 
     corr = wide.corr()
@@ -69,8 +77,10 @@ def head_correlation(cfg, period=None, heads=None, by="day"):
 
     return ToolResult.ok(
         "head_correlation", {"matrix": matrix, "outliers": outliers},
-        period=period, rows_scanned=len(rows),
+        period=period, rows_scanned=scanned,
         filters=[f"heads={sorted(heads)}", f"by={by}"],
         assumptions=["heads correlate on their bucketed mean torque series; the head "
-                     "with the lowest mean correlation to its peers is the one out of step"],
+                     "with the lowest mean correlation to its peers is the one out of step",
+                     "a head with no defined correlation to any peer (e.g. constant torque, "
+                     "zero variance) is omitted from outliers and shown as None in the matrix"],
     )
