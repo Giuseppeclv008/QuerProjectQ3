@@ -1,4 +1,6 @@
+import duckdb
 import pytest
+from analytics.config import Config
 from analytics.tools.success import success_rates
 
 
@@ -62,3 +64,62 @@ def test_rejects_unknown_grouping(tiny_cfg):
     r = success_rates(tiny_cfg, period="2026-02", by="wombat")
     assert r.status == "error"
     assert "by must be" in r.message
+
+
+@pytest.fixture
+def odd_status_store(tmp_path):
+    """Real data carries capping operations whose status is neither success (0) nor
+    fault (65): status 2 with torque, status 9, status 4. They are capping
+    operations (torque > 0) but not a pass/fail verdict.
+       Head 1: 3 successes + 1 fault + 2 odd-status (status 9) caps.
+       Head 5: only odd-status caps -> no verdict at all."""
+    path = tmp_path / "odd.duckdb"
+    con = duckdb.connect(str(path))
+    con.execute("""
+        CREATE TABLE cap_events (
+            machine_id VARCHAR NOT NULL, head_id SMALLINT NOT NULL, ts TIMESTAMP,
+            cap_seq BIGINT NOT NULL, app_torque REAL, status REAL, delta INTEGER,
+            is_fault BOOLEAN, aggregated BOOLEAN, is_reset BOOLEAN,
+            UNIQUE (machine_id, head_id, cap_seq))
+    """)
+    rows = [
+        ("MCC", 1, "2026-02-01 00:00:00", 1, 2.0, 0.0),
+        ("MCC", 1, "2026-02-01 00:00:01", 2, 2.0, 0.0),
+        ("MCC", 1, "2026-02-01 00:00:02", 3, 2.0, 0.0),    # 3 successes
+        ("MCC", 1, "2026-02-01 00:00:03", 4, 2.0, 65.0),   # 1 fault
+        ("MCC", 1, "2026-02-01 00:00:04", 5, 2.0, 9.0),    # odd status, torque > 0
+        ("MCC", 1, "2026-02-01 00:00:05", 6, 2.0, 9.0),    # odd status
+        ("MCC", 5, "2026-02-01 00:00:00", 1, 2.0, 9.0),    # head 5: only odd status
+        ("MCC", 5, "2026-02-01 00:00:01", 2, 2.0, 9.0),
+    ]
+    for m, h, ts, seq, tq, st in rows:
+        con.execute("INSERT INTO cap_events VALUES (?,?,?,?,?,?,1,false,false,false)",
+                    [m, h, ts, seq, tq, st])
+    con.close()
+    return str(path)
+
+
+def test_odd_status_caps_are_excluded_from_the_denominator(odd_status_store):
+    cfg = Config(store_path=odd_status_store, machine_id="MCC")
+    by_head = {v["head_id"]: v for v in success_rates(cfg, period="2026-02", by="head").values}
+    # Head 1 has 6 capping operations, but only 3 successes + 1 fault are verdicts:
+    # the rate is 3/(3+1) = 0.75 per spec §3.2, NOT 3/6 = 0.5.
+    assert by_head[1]["total"] == 6
+    assert by_head[1]["successful"] == 3
+    assert by_head[1]["failed"] == 1
+    assert by_head[1]["success_rate"] == pytest.approx(0.75)
+    # Head 5 has capping operations but no pass/fail verdict at all: undefined (None),
+    # never a 0/0 ZeroDivisionError.
+    assert by_head[5]["total"] == 2
+    assert by_head[5]["success_rate"] is None
+
+
+def test_overall_rate_and_lowest_head_skip_verdictless_caps(odd_status_store):
+    cfg = Config(store_path=odd_status_store, machine_id="MCC")
+    v = success_rates(cfg, period="2026-02", by="overall").values
+    # overall: 3 successes, 1 fault, 4 verdictless caps -> 3/(3+1) = 0.75.
+    assert v["successful"] == 3
+    assert v["failed"] == 1
+    assert v["success_rate"] == pytest.approx(0.75)
+    # lowest_head must skip head 5 (no verdict) and name head 1.
+    assert v["lowest_head"] == 1

@@ -11,6 +11,16 @@ from analytics.tools.overview import ASSUMPTION
 _GROUPS = {"head": "head_id", "day": "CAST(ts AS DATE)", "overall": None}
 
 
+def _success_rate(successful, failed):
+    """Spec §3.2: successful / (successful + failed). A capping operation whose
+    status is neither success nor fault (real data carries a few: status 2 with
+    torque, status 9, status 4) is not a pass/fail verdict, so it is excluded from
+    the denominator. A group with no verdicts at all is undefined -> None, never a
+    ZeroDivisionError (spec §8: a tool returns a value, it does not raise)."""
+    denom = successful + failed
+    return successful / denom if denom else None
+
+
 def success_rates(cfg, period=None, by="head"):
     if by not in _GROUPS:
         return ToolResult.error(
@@ -40,12 +50,13 @@ def success_rates(cfg, period=None, by="head"):
                 HAVING COUNT(*) > 0 ORDER BY 4 DESC, head_id""",
             sem + params,
         ).fetchall()
-        lowest = min(per_head, key=lambda h: (h[2] / h[1], h[0]))[0] if per_head else None
+        ranked = [h for h in per_head if (h[2] + h[3]) > 0]
+        lowest = min(ranked, key=lambda h: (h[2] / (h[2] + h[3]), h[0]))[0] if ranked else None
         values = {
             "total": row[0],
             "successful": row[1],
             "failed": row[2],
-            "success_rate": row[1] / row[0],
+            "success_rate": _success_rate(row[1], row[2]),
             "lowest_head": int(lowest) if lowest is not None else None,
         }
     else:
@@ -66,7 +77,7 @@ def success_rates(cfg, period=None, by="head"):
                 "total": r[1],
                 "successful": r[2],
                 "failed": r[3],
-                "success_rate": r[2] / r[1],
+                "success_rate": _success_rate(r[2], r[3]),
             }
             for r in rows
         ]
