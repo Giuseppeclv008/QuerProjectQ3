@@ -42,6 +42,9 @@ def trend(cfg, period=None, signal="torque", by="day", window=7):
     if by not in _BUCKETS:
         return ToolResult.error("trend", f"by must be one of {sorted(_BUCKETS)}, "
                                          f"got {by!r}", period=period)
+    if window < 1:
+        return ToolResult.error("trend", f"window must be >= 1, got {window!r}",
+                                period=period)
 
     con = connect(cfg)
     where, params = scope_clause(cfg, period)
@@ -91,9 +94,14 @@ def trend(cfg, period=None, signal="torque", by="day", window=7):
         for r in df.itertuples()
     ]
 
+    # rows_scanned is the provenance denominator: capping operations examined in
+    # scope, not the number of aggregated series points.
+    scanned = con.execute(
+        f"SELECT COUNT(*) FROM cap_events WHERE app_torque > 0 AND {where}", params
+    ).fetchone()[0]
     return ToolResult.ok(
         "trend", {"series": series, "drift": drift},
-        period=period, rows_scanned=len(series),
+        period=period, rows_scanned=scanned,
         filters=[f"signal={signal}", f"by={by}", f"window={window}"],
         assumptions=[f"drift is Mann-Kendall |tau| >= {DRIFT_TAU} over the per-head "
                      f"{by} series (non-parametric: assumes neither linearity nor "

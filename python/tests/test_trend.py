@@ -70,3 +70,26 @@ def test_empty_period_is_insufficient(tiny_cfg):
 def test_rejects_unknown_signal(tiny_cfg):
     r = trend(tiny_cfg, period="2026-02", signal="vibes")
     assert r.status == "error"
+
+
+def test_rejects_nonpositive_window(tiny_cfg):
+    # window <= 0 must be a value, not a raw pandas ValueError (errors-as-values).
+    r = trend(tiny_cfg, period="2026-02", window=0)
+    assert r.status == "error"
+    assert "window" in r.message
+
+
+def test_success_rate_signal_computes_per_head_rate(tiny_cfg):
+    r = trend(tiny_cfg, period="2026-02", signal="success_rate", by="day")
+    assert r.status == "ok"
+    by_head = {s["head_id"]: s["value"] for s in r.values["series"]}
+    assert by_head[1] == pytest.approx(1.0)   # head 1: 3/3 successful caps
+    assert by_head[2] == pytest.approx(0.5)   # head 2: 1 successful + 1 fault
+
+
+def test_rows_scanned_counts_caps_not_series_points(tiny_cfg):
+    r = trend(tiny_cfg, period="2026-02", by="day")
+    # 3 caps on head 1 + 2 on head 2 fall in one day -> 2 series points, but 5 capping
+    # operations were examined. rows_scanned must be the examined count, not len(series).
+    assert len(r.values["series"]) == 2
+    assert r.provenance.rows_scanned == 5
