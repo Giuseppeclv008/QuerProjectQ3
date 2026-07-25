@@ -26,6 +26,7 @@ def test_drift_plan_is_pinned():
     ]
     assert plan.steps[0].args["signal"] == "torque"
     assert plan.steps[1].args["signal"] == "success_rate"
+    assert all(s.args["period"] == "2026-02..2026-04" for s in plan.steps)
 
 
 def test_anomaly_plan_is_pinned():
