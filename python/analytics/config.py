@@ -18,10 +18,13 @@ class Config:
     store_path: str = "events.duckdb"
     machine_id: str = "MCC"
 
-    # Status semantics, measured at closure (spec §3.1).
+    # Status semantics. A clean closure is status 0; a No-Load cycle is status 2
+    # with zero torque. A *failure* is not a single code -- it is any status whose
+    # reject bit is set (analytics.status.REJECT_SQL), per the brief's slide-6
+    # bitmask. `fault_status` was removed in Plan 7: `status == 65` named only one
+    # of the six documented reject codes.
     success_status: float = 0.0    # + torque > 0  -> a real cap
     no_load_status: float = 2.0    # + torque == 0 -> No-Load cycle
-    fault_status: float = 65.0
 
     # Expected torque operating band (Nm). Measured range: 1.885 - 2.317.
     torque_min: float = 1.5

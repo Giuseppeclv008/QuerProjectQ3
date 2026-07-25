@@ -14,6 +14,7 @@ outside the *machine's* spec band; deviation catches a head drifting away from
 *its own* normal, even while still inside the band.
 """
 from analytics.result import ToolResult
+from analytics.status import REJECT_SQL, decode
 from analytics.store import connect, scope_clause
 
 _METHODS = ("threshold", "deviation", "both")
@@ -36,11 +37,12 @@ def anomalies(cfg, period=None, method="both"):
     ).fetchone()[0]
 
     faults = [
-        {"head_id": int(r[0]), "ts": r[1], "app_torque": r[2], "reason": "fault status"}
+        {"head_id": int(r[0]), "ts": r[1], "app_torque": r[2],
+         "reason": "reject: " + ", ".join(decode(r[3])["conditions"] or ["unspecified"])}
         for r in con.execute(
-            f"""SELECT head_id, ts, app_torque FROM cap_events
-                WHERE status = ? AND {where} ORDER BY ts, cap_seq""",
-            [cfg.fault_status] + params,
+            f"""SELECT head_id, ts, app_torque, status FROM cap_events
+                WHERE {REJECT_SQL} AND {where} ORDER BY ts, cap_seq""",
+            params,
         ).fetchall()
     ]
 

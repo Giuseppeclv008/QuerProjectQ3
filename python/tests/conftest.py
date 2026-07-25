@@ -2,7 +2,7 @@
 
 4 heads (NOT 36 -- head count must be discovered, spec §3.5).
 Head 1: 3 successful caps (status 0, torque > 0)
-Head 2: 1 successful, 1 fault (status 65)
+Head 2: 1 successful, 2 rejects (status 65 Bad Closure, status 9 No InTorque)
 Head 3: 2 no-load cycles (status 2, torque 0) -- never a capping operation
 Head 4: nothing at all -- a head that never fires
 """
@@ -18,6 +18,7 @@ ROWS = [
     ("MCC", 1, "2026-02-01 00:00:20", 3, 1.90, 0.0),
     ("MCC", 2, "2026-02-01 00:00:00", 1, 2.00, 0.0),
     ("MCC", 2, "2026-02-01 00:00:30", 2, 1.99, 65.0),   # fault
+    ("MCC", 2, "2026-02-01 00:00:40", 3, 1.95, 9.0),    # reject: No InTorque
     ("MCC", 3, "2026-02-01 00:00:00", 1, 0.00, 2.0),    # no-load
     ("MCC", 3, "2026-02-01 00:00:01", 2, 0.00, 2.0),    # no-load
 ]
@@ -45,7 +46,7 @@ def tiny_store(tmp_path):
     for m, h, ts, seq, tq, st in ROWS:
         con.execute(
             "INSERT INTO cap_events VALUES (?,?,?,?,?,?,1,?,false,false)",
-            [m, h, ts, seq, tq, st, st == 65.0],
+            [m, h, ts, seq, tq, st, int(st) % 2 == 1],
         )
     # head 4 exists as a machine head but emitted nothing -- it is absent from the table
     con.close()

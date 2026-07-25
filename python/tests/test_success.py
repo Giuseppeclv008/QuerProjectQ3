@@ -13,10 +13,10 @@ def test_success_rate_per_head_excludes_no_load(tiny_cfg):
     assert by_head[1]["total"] == 3
     assert by_head[1]["success_rate"] == pytest.approx(1.0)
 
-    # Head 2: 1 successful, 1 fault -> 50%
-    assert by_head[2]["total"] == 2
-    assert by_head[2]["failed"] == 1
-    assert by_head[2]["success_rate"] == pytest.approx(0.5)
+    # Head 2: 1 successful, 2 rejects (status 65, status 9) -> 1/3
+    assert by_head[2]["total"] == 3
+    assert by_head[2]["failed"] == 2
+    assert by_head[2]["success_rate"] == pytest.approx(1 / 3)
 
     # Head 3 did only no-load cycles: it performed ZERO capping operations, so it
     # must NOT appear with a fabricated 0% success rate.
@@ -26,9 +26,9 @@ def test_success_rate_per_head_excludes_no_load(tiny_cfg):
 def test_overall_identifies_the_lowest_head(tiny_cfg):
     r = success_rates(tiny_cfg, period="2026-02", by="overall")
     v = r.values
-    assert v["total"] == 5
+    assert v["total"] == 6
     assert v["successful"] == 4
-    assert v["success_rate"] == pytest.approx(0.8)
+    assert v["success_rate"] == pytest.approx(4 / 6)
     assert v["lowest_head"] == 2
 
 
@@ -39,9 +39,9 @@ def test_by_day(tiny_cfg):
     assert str(day["day"]) == "2026-02-01"
     assert day["successful"] == 4
     # Pin the no-load exclusion on the day axis too, not just the head axis:
-    # 5 capping operations, not the 7 closures in the store.
-    assert day["total"] == 5
-    assert day["success_rate"] == pytest.approx(0.8)
+    # 6 capping operations, not the 8 closures in the store.
+    assert day["total"] == 6
+    assert day["success_rate"] == pytest.approx(4 / 6)
 
 
 def test_empty_period_is_insufficient(tiny_cfg):
@@ -68,11 +68,12 @@ def test_rejects_unknown_grouping(tiny_cfg):
 
 @pytest.fixture
 def odd_status_store(tmp_path):
-    """Real data carries capping operations whose status is neither success (0) nor
-    fault (65): status 2 with torque, status 9, status 4. They are capping
-    operations (torque > 0) but not a pass/fail verdict.
-       Head 1: 3 successes + 1 fault + 2 odd-status (status 9) caps.
-       Head 5: only odd-status caps -> no verdict at all."""
+    """Status 9 (No InTorque) has the reject bit set, same as status 65 (Bad
+    Closure) -- per the brief's slide-6 bitmask both are verdicts, not the
+    "unknown" status spec 12 (OQ4) once called them.
+       Head 1: 3 successes + 1 status-65 reject + 2 status-9 rejects.
+       Head 5: only status-9 rejects -> a verdict on every cap, and every
+       verdict a reject."""
     path = tmp_path / "odd.duckdb"
     con = duckdb.connect(str(path))
     con.execute("""
@@ -99,27 +100,31 @@ def odd_status_store(tmp_path):
     return str(path)
 
 
-def test_odd_status_caps_are_excluded_from_the_denominator(odd_status_store):
+def test_reject_bit_status_counts_toward_the_denominator(odd_status_store):
     cfg = Config(store_path=odd_status_store, machine_id="MCC")
     by_head = {v["head_id"]: v for v in success_rates(cfg, period="2026-02", by="head").values}
-    # Head 1 has 6 capping operations, but only 3 successes + 1 fault are verdicts:
-    # the rate is 3/(3+1) = 0.75 per spec §3.2, NOT 3/6 = 0.5.
+    # Head 1 has 6 capping operations: 3 successes, 1 status-65 reject, 2 status-9
+    # rejects. All 3 rejects count (brief slide 6): the rate is 3/(3+3) = 0.5, NOT
+    # the 3/(3+1) = 0.75 that treating status 9 as unknown would give.
     assert by_head[1]["total"] == 6
     assert by_head[1]["successful"] == 3
-    assert by_head[1]["failed"] == 1
-    assert by_head[1]["success_rate"] == pytest.approx(0.75)
-    # Head 5 has capping operations but no pass/fail verdict at all: undefined (None),
-    # never a 0/0 ZeroDivisionError.
+    assert by_head[1]["failed"] == 3
+    assert by_head[1]["success_rate"] == pytest.approx(0.5)
+    # Head 5's caps are all status 9: every one is a reject, so unlike a true
+    # verdictless head (e.g. all status 4) it gets a real 0.0 rate, not None.
     assert by_head[5]["total"] == 2
-    assert by_head[5]["success_rate"] is None
+    assert by_head[5]["failed"] == 2
+    assert by_head[5]["success_rate"] == pytest.approx(0.0)
 
 
-def test_overall_rate_and_lowest_head_skip_verdictless_caps(odd_status_store):
+def test_overall_rate_counts_reject_bit_caps_from_every_head(odd_status_store):
     cfg = Config(store_path=odd_status_store, machine_id="MCC")
     v = success_rates(cfg, period="2026-02", by="overall").values
-    # overall: 3 successes, 1 fault, 4 verdictless caps -> 3/(3+1) = 0.75.
+    # overall: head 1 (3 successes, 3 rejects) + head 5 (0 successes, 2 rejects) ->
+    # 3 successes, 5 rejects -> 3/(3+5) = 3/8.
     assert v["successful"] == 3
-    assert v["failed"] == 1
-    assert v["success_rate"] == pytest.approx(0.75)
-    # lowest_head must skip head 5 (no verdict) and name head 1.
-    assert v["lowest_head"] == 1
+    assert v["failed"] == 5
+    assert v["success_rate"] == pytest.approx(3 / 8)
+    # head 5 now has a verdict on every cap (all status-9 rejects), and its 0.0
+    # rate is worse than head 1's 0.5, so head 5 -- not head 1 -- is lowest.
+    assert v["lowest_head"] == 5

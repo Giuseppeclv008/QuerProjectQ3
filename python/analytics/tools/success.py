@@ -5,6 +5,7 @@ It is omitted rather than reported at 0%: a fabricated zero would read as a
 catastrophically failing head when in truth nothing was ever capped.
 """
 from analytics.result import ToolResult
+from analytics.status import REJECT_SQL
 from analytics.store import connect, scope_clause
 from analytics.tools.overview import ASSUMPTION
 
@@ -13,9 +14,9 @@ _GROUPS = {"head": "head_id", "day": "CAST(ts AS DATE)", "overall": None}
 
 def _success_rate(successful, failed):
     """Spec §3.2: successful / (successful + failed). A capping operation whose
-    status is neither success nor fault (real data carries a few: status 2 with
-    torque, status 9, status 4) is not a pass/fail verdict, so it is excluded from
-    the denominator. A group with no verdicts at all is undefined -> None, never a
+    status is neither 0 nor a reject (real data carries status 2 with torque, and
+    status 4) is not a pass/fail verdict, so it is excluded from the denominator.
+    A group with no verdicts at all is undefined -> None, never a
     ZeroDivisionError (spec §8: a tool returns a value, it does not raise)."""
     denom = successful + failed
     return successful / denom if denom else None
@@ -29,13 +30,14 @@ def success_rates(cfg, period=None, by="head"):
 
     con = connect(cfg)
     where, params = scope_clause(cfg, period)
-    sem = [cfg.success_status, cfg.fault_status]
+    sem = [cfg.success_status]
 
-    # Only closures WITH load are capping operations (spec §3.2).
-    select = """
+    # Only closures WITH load are capping operations (spec §3.2). A failure is any
+    # closure whose reject bit is set (brief slide 6), not just status 65.
+    select = f"""
         COUNT(*)                                  AS total,
         COUNT(*) FILTER (WHERE status = ?)        AS successful,
-        COUNT(*) FILTER (WHERE status = ?)        AS failed
+        COUNT(*) FILTER (WHERE {REJECT_SQL})      AS failed
     """
     base = f"FROM cap_events WHERE app_torque > 0 AND {where}"
 

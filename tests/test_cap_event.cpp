@@ -18,7 +18,7 @@ TEST(CapEventSemantics, StatusTwoWithZeroTorqueIsNoLoad) {
 }
 
 TEST(CapEventSemantics, FaultIsNeitherSuccessfulNorNoLoad) {
-    EXPECT_TRUE(mas::is_fault_status(65.0));
+    EXPECT_TRUE(mas::is_reject(65.0));
     EXPECT_FALSE(mas::is_successful_cap(65.0, 1.997));
     EXPECT_FALSE(mas::is_no_load(65.0, 1.997));
 }
@@ -30,4 +30,15 @@ TEST(CapEventSemantics, TransitionArtifactsAreNeither) {
     EXPECT_FALSE(mas::is_no_load(0.0, 0.0));
     EXPECT_FALSE(mas::is_successful_cap(2.0, 1.998));
     EXPECT_FALSE(mas::is_no_load(2.0, 1.998));
+}
+
+TEST(CapEvent, RejectBitIsBitZeroNotStatus65) {
+    // Every "Reject Signal = YES" row of the brief's table has an odd status.
+    for (double s : {3.0, 5.0, 9.0, 17.0, 33.0, 65.0}) {
+        EXPECT_TRUE(mas::is_reject(s)) << "status " << s;
+    }
+    // Every "NO" row is even.
+    for (double s : {0.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0}) {
+        EXPECT_FALSE(mas::is_reject(s)) << "status " << s;
+    }
 }

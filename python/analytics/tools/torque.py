@@ -5,6 +5,7 @@ cycles a day carry torque 0.0, and including them would drag every mean toward
 zero and invent a bimodal distribution that does not exist.
 """
 from analytics.result import ToolResult
+from analytics.status import REJECT_SQL
 from analytics.store import connect, scope_clause
 from analytics.tools.overview import ASSUMPTION
 
@@ -28,7 +29,7 @@ def torque_stats(cfg, period=None, outcome="successful", by=None):
     if outcome == "successful":
         cond, sem = "app_torque > 0 AND status = ?", [cfg.success_status]
     elif outcome == "failed":
-        cond, sem = "status = ?", [cfg.fault_status]
+        cond, sem = REJECT_SQL, []
 
     agg = """
         COUNT(*)          AS n,

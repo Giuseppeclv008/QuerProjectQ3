@@ -13,6 +13,7 @@ Gaussian, and is deterministic. tau = +1 means every day rose on the previous;
 import pandas as pd
 
 from analytics.result import ToolResult
+from analytics.status import REJECT_SQL
 from analytics.store import connect, scope_clause
 
 _SIGNALS = ("torque", "success_rate")
@@ -56,9 +57,9 @@ def trend(cfg, period=None, signal="torque", by="day", window=7):
     # bucket with no verdicts undefined (NULL -> None), never a division error.
     expr = ("AVG(app_torque)" if signal == "torque"
             else "COUNT(*) FILTER (WHERE status = ?) * 1.0 "
-                 "/ NULLIF(COUNT(*) FILTER (WHERE status IN (?, ?)), 0)")
+                 f"/ NULLIF(COUNT(*) FILTER (WHERE status = ? OR {REJECT_SQL}), 0)")
     sem = ([] if signal == "torque"
-           else [cfg.success_status, cfg.success_status, cfg.fault_status])
+           else [cfg.success_status, cfg.success_status])
 
     rows = con.execute(f"""
         SELECT head_id, DATE_TRUNC('{unit}', ts) AS bucket, {expr} AS value

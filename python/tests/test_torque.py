@@ -17,7 +17,7 @@ def test_zero_torque_never_dilutes_the_mean(tiny_cfg):
     """The whole point of the semantics fix: 337k no-load zeros would drag the
     mean toward zero if they were treated as capping operations."""
     r = torque_stats(tiny_cfg, period="2026-02", outcome="all")
-    assert r.values["n"] == 5          # 5 closures with load, NOT 7
+    assert r.values["n"] == 6          # 6 closures with load, NOT 8
     assert r.values["mean"] > 1.9      # nowhere near 0
 
 
@@ -47,14 +47,14 @@ def test_rejects_unknown_outcome(tiny_cfg):
 
 def test_stats_over_failed_closures(tiny_cfg):
     """outcome='failed' is never exercised above; without this test the
-    `elif outcome == "failed": cond, sem = "status = ?", [cfg.fault_status]`
-    branch -- and its parameter binding -- runs uninspected in production."""
+    `elif outcome == "failed": cond, sem = REJECT_SQL, []`
+    branch runs uninspected in production."""
     r = torque_stats(tiny_cfg, period="2026-02", outcome="failed")
-    # Only head 2's fault row (status 65, torque 1.99) matches.
+    # Head 2's two rejects match: status 65 (torque 1.99) and status 9 (torque 1.95).
     assert r.status == "ok"
-    assert r.values["n"] == 1
-    assert r.values["mean"] == pytest.approx(1.99)
-    assert r.values["min"] == pytest.approx(1.99)
+    assert r.values["n"] == 2
+    assert r.values["mean"] == pytest.approx((1.99 + 1.95) / 2)
+    assert r.values["min"] == pytest.approx(1.95)
     assert r.values["max"] == pytest.approx(1.99)
 
 

@@ -7,6 +7,7 @@ counter advances, no cap is applied) are counted separately and never inflate a
 success denominator (spec §3.2).
 """
 from analytics.result import ToolResult
+from analytics.status import REJECT_SQL
 from analytics.store import connect, discover_heads, scope_clause
 
 ASSUMPTION = (
@@ -24,7 +25,7 @@ def overview(cfg, period=None):
             COUNT(*)                                                    AS closures,
             COUNT(*) FILTER (WHERE app_torque > 0)                      AS capping_operations,
             COUNT(*) FILTER (WHERE status = ? AND app_torque > 0)       AS successful,
-            COUNT(*) FILTER (WHERE status = ?)                          AS failed,
+            COUNT(*) FILTER (WHERE {REJECT_SQL})                        AS failed,
             COUNT(*) FILTER (WHERE status = ? AND app_torque = 0)       AS no_load,
             MIN(ts)                                                     AS ts_min,
             MAX(ts)                                                     AS ts_max,
@@ -34,7 +35,7 @@ def overview(cfg, period=None):
             COUNT(*) FILTER (WHERE is_reset)                            AS counter_resets
         FROM cap_events
         WHERE {where}
-    """, [cfg.success_status, cfg.fault_status, cfg.no_load_status,
+    """, [cfg.success_status, cfg.no_load_status,
           cfg.torque_min, cfg.torque_max] + params).fetchone()
 
     closures = row[0]

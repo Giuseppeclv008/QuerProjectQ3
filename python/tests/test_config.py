@@ -7,7 +7,6 @@ def test_defaults_are_the_measured_semantics():
     cfg = load_config(None)
     assert cfg.success_status == 0.0
     assert cfg.no_load_status == 2.0
-    assert cfg.fault_status == 65.0
 
 
 def test_load_from_file_overrides_defaults(tmp_path):

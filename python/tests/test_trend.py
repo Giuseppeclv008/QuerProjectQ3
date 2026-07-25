@@ -83,23 +83,24 @@ def test_success_rate_signal_computes_per_head_rate(tiny_cfg):
     r = trend(tiny_cfg, period="2026-02", signal="success_rate", by="day")
     assert r.status == "ok"
     by_head = {s["head_id"]: s["value"] for s in r.values["series"]}
-    assert by_head[1] == pytest.approx(1.0)   # head 1: 3/3 successful caps
-    assert by_head[2] == pytest.approx(0.5)   # head 2: 1 successful + 1 fault
+    assert by_head[1] == pytest.approx(1.0)    # head 1: 3/3 successful caps
+    assert by_head[2] == pytest.approx(1 / 3)  # head 2: 1 successful + 2 rejects
 
 
 def test_rows_scanned_counts_caps_not_series_points(tiny_cfg):
     r = trend(tiny_cfg, period="2026-02", by="day")
-    # 3 caps on head 1 + 2 on head 2 fall in one day -> 2 series points, but 5 capping
+    # 3 caps on head 1 + 3 on head 2 fall in one day -> 2 series points, but 6 capping
     # operations were examined. rows_scanned must be the examined count, not len(series).
     assert len(r.values["series"]) == 2
-    assert r.provenance.rows_scanned == 5
+    assert r.provenance.rows_scanned == 6
 
 
 @pytest.fixture
 def odd_status_trend_store(tmp_path):
-    """One head, one day: 3 successes (status 0) + 1 fault (status 65) + 2 odd-status
-    (status 9) caps. The success_rate signal must read 3/(3+1)=0.75, not 3/6=0.5 --
-    odd-status caps are not a verdict (locked spec §3.2), same as success_rates()."""
+    """One head, one day: 3 successes (status 0) + 1 status-65 reject + 2 status-9
+    rejects. Status 9 (No InTorque) has the reject bit set (brief slide 6), so the
+    success_rate signal must read 3/(3+3)=0.5, not the 3/(3+1)=0.75 that treating
+    status 9 as unknown would give -- same as success_rates()."""
     path = tmp_path / "odd_trend.duckdb"
     con = duckdb.connect(str(path))
     con.execute("""
@@ -124,10 +125,11 @@ def odd_status_trend_store(tmp_path):
     return str(path)
 
 
-def test_success_rate_signal_excludes_odd_status_caps(odd_status_trend_store):
+def test_success_rate_signal_counts_every_reject_code(odd_status_trend_store):
     cfg = Config(store_path=odd_status_trend_store, machine_id="MCC")
     r = trend(cfg, period="2026-02", signal="success_rate", by="day")
     assert r.status == "ok"
-    # 6 caps in the day, but only 3 successes + 1 fault are verdicts -> 3/(3+1)=0.75,
-    # NOT 3/6=0.5. tiny_store can't catch this (it has no odd-status caps).
-    assert [s["value"] for s in r.values["series"]] == pytest.approx([0.75])
+    # 6 caps in the day: 3 successes + 1 status-65 reject + 2 status-9 rejects, and
+    # all 3 rejects count -> 3/(3+3)=0.5, NOT 3/(3+1)=0.75. tiny_store can't catch
+    # this (it only ever carries one reject code per head).
+    assert [s["value"] for s in r.values["series"]] == pytest.approx([0.5])
