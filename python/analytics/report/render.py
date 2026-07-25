@@ -268,9 +268,9 @@ Every call this report is built from, in order. The full record is in
         for t in execution.trace
     ) + "\n"
 
-    with open(out_dir + "/report.md", "w") as fh:
+    with open(out_dir + "/report.md", "w", encoding="utf-8") as fh:
         fh.write(text)
-    with open(out_dir + "/trace.json", "w") as fh:
+    with open(out_dir + "/trace.json", "w", encoding="utf-8") as fh:
         json.dump(execution.trace, fh, indent=2, default=str)
     log.info("wrote %s/report.md (%d figures)", out_dir, len(figures))
     return text

@@ -11,6 +11,7 @@ portable artifact; PDF is a convenience when the toolchain happens to be there.
 import base64
 import logging
 import os
+import re
 
 from markdown_it import MarkdownIt
 
@@ -37,12 +38,15 @@ def _inline_images(html, report_dir):
         with open(os.path.join(report_dir, name), "rb") as fh:
             data = base64.b64encode(fh.read()).decode("ascii")
         html = html.replace(f'src="{name}"', f'src="data:image/png;base64,{data}"')
+    # Warn about any unresolved PNG references that were not inlined
+    for match in re.finditer(r'src="([^"]+\.png)"', html):
+        log.warning("unresolved PNG reference: %s", match.group(1))
     return html
 
 
 def to_html(report_dir):
     report_dir = str(report_dir)
-    with open(os.path.join(report_dir, "report.md")) as fh:
+    with open(os.path.join(report_dir, "report.md"), encoding="utf-8") as fh:
         markdown = fh.read()
     body = MarkdownIt("commonmark", {"html": False}).enable("table").render(markdown)
     body = _inline_images(body, report_dir)
@@ -50,7 +54,7 @@ def to_html(report_dir):
             f"<title>AROL capping report</title><style>{_CSS}</style></head>"
             f"<body>{body}</body></html>")
     path = os.path.join(report_dir, "report.html")
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
         fh.write(page)
     log.info("wrote %s", path)
     return path
@@ -77,6 +81,10 @@ def to_pdf(report_dir):
         return None
     html_path = to_html(report_dir)
     pdf_path = os.path.join(str(report_dir), "report.pdf")
-    wp.HTML(filename=html_path).write_pdf(pdf_path)
-    log.info("wrote %s", pdf_path)
-    return pdf_path
+    try:
+        wp.HTML(filename=html_path).write_pdf(pdf_path)
+        log.info("wrote %s", pdf_path)
+        return pdf_path
+    except Exception as e:  # noqa: BLE001 -- rendering/system failures
+        log.warning("PDF generation failed: %s", e)
+        return None

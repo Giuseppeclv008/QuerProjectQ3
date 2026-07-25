@@ -42,3 +42,17 @@ def test_pdf_returns_none_rather_than_raising_when_weasyprint_is_absent(
         tiny_cfg, tmp_path, monkeypatch):
     monkeypatch.setattr(export, "_weasyprint", lambda: None)
     assert export.to_pdf(_report_dir(tiny_cfg, tmp_path)) is None
+
+
+def test_html_contains_table_markup_for_analyses_section(tiny_cfg, tmp_path):
+    html = Path(export.to_html(_report_dir(tiny_cfg, tmp_path))).read_text(encoding="utf-8")
+    assert "<table" in html, "table markup not found in HTML"
+    assert "<td>" in html or "<th>" in html, "table cells not found in HTML"
+
+
+def test_html_utf8_roundtrip_with_non_ascii(tiny_cfg, tmp_path):
+    d = _report_dir(tiny_cfg, tmp_path)
+    export.to_html(d)
+    html = Path(d / "report.html").read_text(encoding="utf-8")
+    # The report header and data-used section contain em dash (—) and en dash (–)
+    assert "—" in html, "em dash not found in HTML (UTF-8 decode failed)"
