@@ -15,7 +15,7 @@ from analytics.agent.executor import execute
 from analytics.agent.router import canned_plan
 from analytics.config import Config
 from analytics.report import render
-from tests.conftest import ROWS
+from tests.conftest import ROWS, CAP_EVENTS_DDL
 
 GOLDEN = pathlib.Path(__file__).parent / "fixtures" / "golden_kpi_report.md"
 FIXED_TIME = "2026-07-24T12:00:00Z"
@@ -23,13 +23,7 @@ FIXED_TIME = "2026-07-24T12:00:00Z"
 
 def _build_store(path):
     con = duckdb.connect(path)
-    con.execute("""
-        CREATE TABLE cap_events (
-            machine_id VARCHAR NOT NULL, head_id SMALLINT NOT NULL,
-            ts TIMESTAMP, cap_seq BIGINT NOT NULL, app_torque REAL, status REAL,
-            delta INTEGER, is_fault BOOLEAN, aggregated BOOLEAN, is_reset BOOLEAN,
-            UNIQUE (machine_id, head_id, cap_seq))
-    """)
+    con.execute(CAP_EVENTS_DDL)
     for m, h, ts, seq, tq, st in ROWS:
         con.execute("INSERT INTO cap_events VALUES (?,?,?,?,?,?,1,?,false,false)",
                     [m, h, ts, seq, tq, st, int(st) % 2 == 1])

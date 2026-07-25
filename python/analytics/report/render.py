@@ -97,9 +97,11 @@ def summarise(execution):
                 checks.append(f"Inspect {label.replace('_id', '')} {worst[label]} "
                               f"mechanically before the next changeover.")
         elif result.tool == "capping_speed":
+            bucket_count = len(v['buckets'])
+            bucket_noun = "bucket" if bucket_count == 1 else "buckets"
             lines.append(
-                f"- **Throughput.** {v['mean_pieces_per_hour']:,.0f} pieces/hour, "
-                f"averaged over {len(v['buckets'])} active buckets."
+                f"- **Throughput.** {_fmt(v['mean_pieces_per_hour'])} pieces/hour, "
+                f"averaged over {bucket_count} active {bucket_noun}."
             )
         elif result.tool == "idle_periods":
             hours = v["total_idle_seconds"] / 3600

@@ -11,6 +11,22 @@ import pytest
 
 from analytics.config import Config
 
+CAP_EVENTS_DDL = """
+    CREATE TABLE cap_events (
+        machine_id VARCHAR NOT NULL,
+        head_id    SMALLINT NOT NULL,
+        ts         TIMESTAMP,
+        cap_seq    BIGINT NOT NULL,
+        app_torque REAL,
+        status     REAL,
+        delta      INTEGER,
+        is_fault   BOOLEAN,
+        aggregated BOOLEAN,
+        is_reset   BOOLEAN,
+        UNIQUE (machine_id, head_id, cap_seq)
+    )
+"""
+
 ROWS = [
     # machine_id, head_id, ts,                     cap_seq, torque, status
     ("MCC", 1, "2026-02-01 00:00:00", 1, 2.00, 0.0),
@@ -28,21 +44,7 @@ ROWS = [
 def tiny_store(tmp_path):
     path = tmp_path / "tiny.duckdb"
     con = duckdb.connect(str(path))
-    con.execute("""
-        CREATE TABLE cap_events (
-            machine_id VARCHAR NOT NULL,
-            head_id    SMALLINT NOT NULL,
-            ts         TIMESTAMP,
-            cap_seq    BIGINT NOT NULL,
-            app_torque REAL,
-            status     REAL,
-            delta      INTEGER,
-            is_fault   BOOLEAN,
-            aggregated BOOLEAN,
-            is_reset   BOOLEAN,
-            UNIQUE (machine_id, head_id, cap_seq)
-        )
-    """)
+    con.execute(CAP_EVENTS_DDL)
     for m, h, ts, seq, tq, st in ROWS:
         con.execute(
             "INSERT INTO cap_events VALUES (?,?,?,?,?,?,1,?,false,false)",
