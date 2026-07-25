@@ -8,7 +8,7 @@ Capping KPI report for 2026-02.
 
 ## Data used
 
-- Store: `/var/folders/gz/0p1q129n0gz73dzh50vkttj80000gn/T/tmpfo0n9ukl/tiny.duckdb`, machine `MCC`
+- Store: `tiny.duckdb`, machine `MCC`
 - Torque band: 1.5–2.5 Nm; robust band k = 3.0; idle threshold 300s
 - Rows scanned across all steps: 26
 

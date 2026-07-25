@@ -12,6 +12,7 @@ machine-readable record of every call and argument, which is both the rubric's
 """
 import json
 import logging
+import os
 from dataclasses import dataclass
 
 from analytics.report import plots
@@ -211,7 +212,7 @@ def render(execution, cfg, out_dir, narrative, generated_at):
         for t in execution.trace
     )
     data_used = "\n".join([
-        f"- Store: `{cfg.store_path}`, machine `{cfg.machine_id}`",
+        f"- Store: `{os.path.basename(cfg.store_path)}`, machine `{cfg.machine_id}`",
         f"- Torque band: {cfg.torque_min}–{cfg.torque_max} Nm; "
         f"robust band k = {cfg.mad_k}; idle threshold {cfg.idle_min_seconds}s",
         f"- Rows scanned across all steps: "
