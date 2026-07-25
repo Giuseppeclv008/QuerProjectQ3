@@ -510,6 +510,30 @@ def test_plan_json_schema_lists_every_tool_in_its_enum():
     schema = registry.plan_json_schema()
     enum = schema["properties"]["steps"]["items"]["properties"]["tool"]["enum"]
     assert set(enum) == set(registry.TOOLS)
+
+
+def test_plan_schema_unions_enums_that_clash_across_tools():
+    # `by` means head|day|overall to success_rates, head to torque_stats, and
+    # day|hour to trend/head_correlation. If the flat schema let one tool win,
+    # the model could never legally emit the KPI report's success_rates(by="head").
+    args = (registry.plan_json_schema()["properties"]["steps"]["items"]
+            ["properties"]["args"]["properties"])
+    assert set(args["by"]["enum"]) == {"head", "day", "overall", "hour", None}
+
+
+def test_plan_schema_requires_every_argument_key():
+    # Structured outputs need a closed object: every property must be required,
+    # which is why the model emits explicit nulls and the executor drops them.
+    items = registry.plan_json_schema()["properties"]["steps"]["items"]
+    args = items["properties"]["args"]
+    assert set(args["required"]) == set(args["properties"])
+    assert args["additionalProperties"] is False
+
+
+def test_strict_validation_still_rejects_a_value_the_union_allows():
+    # The permissive schema is not the gate -- validate_step is.
+    step = PlanStep(tool="success_rates", args={"by": "hour"}, rationale="")
+    assert registry.validate_step(step) is not None
 ```
 
 - [ ] **Step 2: Run it to confirm it fails**
@@ -679,12 +703,40 @@ TOOLS = {
     ]
 }
 
-# Every argument any tool accepts, unioned. The plan schema is flat because
-# structured outputs require a closed object -- the executor drops nulls and the
-# registry rejects arguments the named tool does not take.
-_ALL_ARGS = {}
-for _spec in TOOLS.values():
-    _ALL_ARGS.update(_spec.params)
+def _merge_params(specs):
+    """Union every tool's arguments into one flat schema for the plan.
+
+    Structured outputs need a single closed object, but several tools share an
+    argument NAME with a different set of legal values -- `by` is
+    head|day|overall for success_rates, head for torque_stats, and day|hour for
+    trend and head_correlation. A plain dict update would let the last tool win
+    and make `by="head"` structurally unemittable, so the enums are UNIONED here.
+
+    That makes the schema deliberately permissive: it constrains shape, not
+    per-tool legality. `validate_step()` is the strict gate -- it checks each
+    argument against the enum of the tool actually named, so a model that plans
+    success_rates(by="hour") is rejected there and the request falls back to the
+    router. Schema permissive, validation strict; never the other way round.
+    """
+    merged = {}
+    for spec in specs:
+        for name, schema in spec.params.items():
+            if name not in merged:
+                merged[name] = dict(schema)
+                continue
+            known, incoming = merged[name].get("enum"), schema.get("enum")
+            if known and incoming:
+                # Preserve order, drop duplicates, keep None last.
+                values = [v for v in known if v is not None]
+                values += [v for v in incoming if v is not None and v not in values]
+                merged[name]["enum"] = values + [None]
+                merged[name]["description"] = "varies by tool; see the tool list"
+    return merged
+
+
+# Every argument any tool accepts, unioned. The executor drops nulls; the
+# registry rejects arguments and values the named tool does not accept.
+_ALL_ARGS = _merge_params(TOOLS.values())
 
 
 def tool_schemas():
