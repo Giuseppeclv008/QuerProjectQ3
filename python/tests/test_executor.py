@@ -81,6 +81,32 @@ def test_the_trace_records_every_call_with_its_arguments(tiny_cfg):
     assert ex.trace[1]["tool"] == "summon_daemon"
 
 
+def test_a_tool_raising_non_valueerror_becomes_error(tiny_cfg, monkeypatch):
+    """A tool raising RuntimeError is caught and converted to ToolResult.error."""
+    from analytics.agent.registry import TOOLS
+    from dataclasses import replace
+    def raise_runtime_error(cfg, **args):
+        raise RuntimeError("boom")
+    monkeypatch.setitem(TOOLS, "overview", replace(TOOLS["overview"], fn=raise_runtime_error))
+    ex = execute(tiny_cfg, _plan(PlanStep("overview", {"period": "2026-02"}, "test")))
+    assert ex.results[0].status == "error"
+    assert "boom" in ex.results[0].message
+    assert "RuntimeError" in ex.results[0].message
+
+
+def test_a_tool_returning_non_toolresult_becomes_error(tiny_cfg, monkeypatch):
+    """A tool returning a plain dict instead of ToolResult is caught and converted to error."""
+    from analytics.agent.registry import TOOLS
+    from dataclasses import replace
+    def return_dict(cfg, **args):
+        return {"not": "toolresult"}
+    monkeypatch.setitem(TOOLS, "overview", replace(TOOLS["overview"], fn=return_dict))
+    ex = execute(tiny_cfg, _plan(PlanStep("overview", {"period": "2026-02"}, "test")))
+    assert ex.results[0].status == "error"
+    assert "dict" in ex.results[0].message
+    assert "ToolResult" in ex.results[0].message
+
+
 def test_the_trace_is_json_serialisable(tiny_cfg):
     import json
     ex = execute(tiny_cfg, _plan(PlanStep("overview", {"period": "2026-02"}, "scope")))

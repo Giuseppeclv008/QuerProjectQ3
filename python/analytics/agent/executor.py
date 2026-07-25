@@ -36,12 +36,16 @@ def execute(cfg, plan):
         reason = validate_step(replace(step, args=args))
         if reason is not None:
             log.warning("step %d rejected: %s", index, reason)
-            result = ToolResult.error(step.tool, reason, filters=[f"args={args}"])
+            result = ToolResult.error(step.tool, reason, period=args.get("period"), filters=[f"args={args}"])
         else:
             log.info("step %d: %s(%s)", index, step.tool,
                      ", ".join(f"{k}={v!r}" for k, v in sorted(args.items())))
             try:
                 result = TOOLS[step.tool].fn(cfg, **args)
+                if not isinstance(result, ToolResult):
+                    raise TypeError(
+                        f"{step.tool} returned {type(result).__name__}, not ToolResult"
+                    )
             except Exception as exc:                      # noqa: BLE001 -- deliberate
                 # A tool that raises is a tool that cannot report its own gap. The
                 # agent must still be able to read the failure and route around it.
