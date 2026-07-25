@@ -74,3 +74,43 @@ def test_rows_scanned_counts_examined_rows_not_hits(anomaly_store):
     # 3 hits (1 fault + 1 threshold + 1 deviation). Provenance must let a consumer tell
     # "0 anomalies out of 22 examined" apart from "nothing was scanned".
     assert r.provenance.rows_scanned == 22
+
+
+@pytest.fixture
+def multi_reject_store(tmp_path):
+    """Two rejects with different condition codes: status 65 (Bad Closure) and
+    status 9 (No InTorque). Both have app_torque in the default band [1.5, 2.5]
+    so the threshold detector does not also fire."""
+    path = tmp_path / "multi_reject.duckdb"
+    con = duckdb.connect(str(path))
+    con.execute("""
+        CREATE TABLE cap_events (
+            machine_id VARCHAR NOT NULL, head_id SMALLINT NOT NULL, ts TIMESTAMP,
+            cap_seq BIGINT NOT NULL, app_torque REAL, status REAL, delta INTEGER,
+            is_fault BOOLEAN, aggregated BOOLEAN, is_reset BOOLEAN,
+            UNIQUE (machine_id, head_id, cap_seq))
+    """)
+    # Head 1: status 65 (Bad Closure, reject bit set) with torque 2.0 Nm
+    con.execute("INSERT INTO cap_events VALUES ('MCC',1,'2026-02-01 00:00:00',1,2.0,65.0,1,true,false,false)")
+    # Head 2: status 9 (No InTorque, reject bit set) with torque 2.2 Nm
+    con.execute("INSERT INTO cap_events VALUES ('MCC',2,'2026-02-01 00:00:01',1,2.2,9.0,1,true,false,false)")
+    con.close()
+    return str(path)
+
+
+def test_anomalies_detects_multiple_reject_codes(multi_reject_store):
+    """Task 1 broadened failed from status == 65 to the reject bit, so anomalies()
+    now selects REJECT_SQL, not just status 65. Both status 65 (Bad Closure) and
+    status 9 (No InTorque) are rejects. The reason field decodes the condition,
+    so both reasons must name their distinct codes."""
+    cfg = Config(store_path=multi_reject_store)
+    r = anomalies(cfg, period="2026-02", method="both")
+    faults = r.values["faults"]
+    assert r.values["counts"]["faults"] == 2
+
+    # Extract reason strings and verify both appear with correct conditions
+    reasons = [f["reason"] for f in faults]
+    assert "Bad Closure" in reasons[0] or "Bad Closure" in reasons[1]
+    assert "No InTorque" in reasons[0] or "No InTorque" in reasons[1]
+    # Verify they are distinct
+    assert reasons[0] != reasons[1]

@@ -128,3 +128,64 @@ def test_overall_rate_counts_reject_bit_caps_from_every_head(odd_status_store):
     # head 5 now has a verdict on every cap (all status-9 rejects), and its 0.0
     # rate is worse than head 1's 0.5, so head 5 -- not head 1 -- is lowest.
     assert v["lowest_head"] == 5
+
+
+@pytest.fixture
+def verdictless_store(tmp_path):
+    """Status 4 (No Closure) has no reject bit, so caps with this status are
+    verdictless: neither successes nor failures. Head 3 performs only such caps.
+       Head 2: 2 successful + 1 status-65 reject, so there is at least one head with
+       a real verdict (required to avoid a degenerate store).
+       Head 3: 3 status-4 caps with app_torque > 0, so all 3 are capping operations
+       with no pass/fail verdict. Its success_rate must be None, not 0.0."""
+    path = tmp_path / "verdictless.duckdb"
+    con = duckdb.connect(str(path))
+    con.execute("""
+        CREATE TABLE cap_events (
+            machine_id VARCHAR NOT NULL, head_id SMALLINT NOT NULL, ts TIMESTAMP,
+            cap_seq BIGINT NOT NULL, app_torque REAL, status REAL, delta INTEGER,
+            is_fault BOOLEAN, aggregated BOOLEAN, is_reset BOOLEAN,
+            UNIQUE (machine_id, head_id, cap_seq))
+    """)
+    rows = [
+        ("MCC", 2, "2026-02-01 00:00:00", 1, 2.0, 0.0),
+        ("MCC", 2, "2026-02-01 00:00:01", 2, 2.0, 0.0),   # 2 successes
+        ("MCC", 2, "2026-02-01 00:00:02", 3, 2.0, 65.0),  # 1 reject
+        ("MCC", 3, "2026-02-01 00:00:00", 1, 2.0, 4.0),   # verdictless
+        ("MCC", 3, "2026-02-01 00:00:01", 2, 2.0, 4.0),   # verdictless
+        ("MCC", 3, "2026-02-01 00:00:02", 3, 2.0, 4.0),   # verdictless
+    ]
+    for m, h, ts, seq, tq, st in rows:
+        con.execute("INSERT INTO cap_events VALUES (?,?,?,?,?,?,1,false,false,false)",
+                    [m, h, ts, seq, tq, st])
+    con.close()
+    return str(path)
+
+
+def test_verdictless_caps_yield_none_success_rate(verdictless_store):
+    """Status 4 (No Closure, no reject bit) caps are verdictless. A head with only
+    such caps must appear in by="head" with a real total and successful/failed both
+    zero, but success_rate None (not 0.0)."""
+    cfg = Config(store_path=verdictless_store, machine_id="MCC")
+
+    # by="head": head 3 has 3 verdictless caps, all status 4
+    by_head = {v["head_id"]: v for v in success_rates(cfg, period="2026-02", by="head").values}
+    assert by_head[3]["total"] == 3
+    assert by_head[3]["successful"] == 0
+    assert by_head[3]["failed"] == 0
+    assert by_head[3]["success_rate"] is None
+
+
+def test_verdictless_head_never_becomes_lowest(verdictless_store):
+    """A head with no verdict (all status 4) must not be named as lowest_head in
+    by="overall", since a head with no pass/fail verdict cannot be ranked or
+    compared to heads that have verdicts."""
+    cfg = Config(store_path=verdictless_store, machine_id="MCC")
+
+    # by="overall": head 2 (2 successes, 1 reject) is the only head with a verdict,
+    # so it must be lowest. Head 3 (no verdict) must NOT appear in the ranking.
+    v = success_rates(cfg, period="2026-02", by="overall").values
+    assert v["successful"] == 2
+    assert v["failed"] == 1
+    assert v["success_rate"] == pytest.approx(2 / 3)
+    assert v["lowest_head"] == 2
