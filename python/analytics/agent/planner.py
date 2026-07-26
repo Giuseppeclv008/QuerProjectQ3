@@ -20,8 +20,10 @@ from dataclasses import replace
 from analytics.agent import llm
 from analytics.agent.llm import client as _client
 from analytics.agent.plan import Plan, PlanStep, effective_args
-from analytics.agent.registry import plan_json_schema, tool_schemas, validate_step
-from analytics.agent.router import route
+from analytics.agent.registry import (
+    TOOLS, plan_json_schema, tool_schemas, validate_step,
+)
+from analytics.agent.router import REPORT_TYPES, canned_plan, route
 
 log = logging.getLogger(__name__)
 
@@ -49,13 +51,88 @@ def _fallback(question, period, note):
                 note=f"{note}; {routed.note}")
 
 
-def plan(cfg, question, period, client=None):
-    """A Plan for `question`. Never raises; degrades to the router."""
-    client = client or _client(cfg)
-    if client is None:
-        return _fallback(question, period,
-                         "no Anthropic client (missing SDK or ANTHROPIC_API_KEY)")
+CLASSIFY_SYSTEM = """Pick the report that best answers the user's question.
 
+- kpi: how much, how many, how fast, success rates, idle time, throughput.
+- drift: change over time, a head behaving differently from the others, \
+correlation between heads, torque walking.
+- anomalies: values out of range, rejected caps, outliers, faults."""
+
+SELECT_SYSTEM = """Choose which analyses to run to answer the user's question.
+
+You do not compute anything: the system runs the tools you name and produces
+every number. Use only the tools listed. Prefer the fewest that fully answer the
+question; two to four is typical."""
+
+
+def _schema_style(cfg):
+    """Anthropic structured outputs require every property in `required`, which
+    forces the flat union. Anywhere else, the per-tool shape is better."""
+    return "flat" if cfg.provider == "anthropic" else "per_tool"
+
+
+def _classify(cfg, client, question, period):
+    """Tier 1: the model picks a report type; the canned plan does the rest.
+
+    One word of output against a prompt of a few dozen tokens. A model far too
+    small to compose a plan can still route reliably, and this beats the keyword
+    router on any phrasing the keywords do not literally contain.
+    """
+    schema = {"type": "object",
+              "properties": {"report": {"type": "string",
+                                        "enum": list(REPORT_TYPES)}},
+              "required": ["report"],
+              "additionalProperties": False}
+    payload, reason = llm.json_call(cfg, client, CLASSIFY_SYSTEM, question, schema)
+    if payload is None:
+        return _fallback(question, period, f"planning failed: {reason}")
+    choice = payload.get("report")
+    if choice not in REPORT_TYPES:
+        return _fallback(question, period,
+                         f"the model chose {choice!r}, which is not a report type")
+    routed = canned_plan(choice, period)
+    log.info("model classified the question as %r", choice)
+    return Plan(goal=routed.goal, steps=routed.steps, source="llm",
+                note=f"the model chose the {choice} report; its fixed plan was run")
+
+
+def _select(cfg, client, question, period):
+    """Tier 2: the model picks the tools; their own defaults supply the arguments.
+
+    Keeps real composition -- which analyses, in what order -- without asking a
+    small model to fill an arguments object it will get wrong.
+    """
+    catalogue = "\n".join(f"- {name}: {spec.description}"
+                          for name, spec in sorted(TOOLS.items()))
+    schema = {"type": "object",
+              "properties": {"goal": {"type": "string"},
+                             "tools": {"type": "array",
+                                       "items": {"type": "string",
+                                                 "enum": sorted(TOOLS)}}},
+              "required": ["goal", "tools"],
+              "additionalProperties": False}
+    prompt = f"Available tools:\n{catalogue}\n\nUser question: {question}"
+    payload, reason = llm.json_call(cfg, client, SELECT_SYSTEM, prompt, schema)
+    if payload is None:
+        return _fallback(question, period, f"planning failed: {reason}")
+
+    names = payload.get("tools") or []
+    unknown = [n for n in names if n not in TOOLS]
+    if unknown:
+        return _fallback(question, period, f"the model named unknown tools: {unknown}")
+    if not names:
+        return _fallback(question, period, "the model selected no tools")
+
+    steps = [PlanStep(tool=n, args={"period": period},
+                      rationale="selected by the model; arguments left at their defaults")
+             for n in names]
+    log.info("model selected %d tool(s): %s", len(steps), names)
+    return Plan(goal=payload.get("goal") or question, steps=steps, source="llm",
+                note="the model chose the tools; their arguments are the defaults")
+
+
+def _plan(cfg, client, question, period):
+    """Tier 3: the model composes the whole sequence, arguments included."""
     tools = json.dumps(tool_schemas(), indent=2)
     prompt = (
         f"Available tools:\n{tools}\n\n"
@@ -63,7 +140,8 @@ def plan(cfg, question, period, client=None):
         f"(pass this as the `period` argument).\n\n"
         f"User question: {question}"
     )
-    payload, reason = llm.json_call(cfg, client, SYSTEM, prompt, plan_json_schema())
+    schema = plan_json_schema(_schema_style(cfg))
+    payload, reason = llm.json_call(cfg, client, SYSTEM, prompt, schema)
     if payload is None:
         return _fallback(question, period, f"planning failed: {reason}")
 
@@ -79,10 +157,23 @@ def plan(cfg, question, period, client=None):
         return _fallback(question, period, "the model returned an empty plan")
     for step in steps:
         # Validate what the executor will actually call, not the null-padded
-        # shape the schema forces the model to emit.
+        # shape the flat schema forces the model to emit.
         reason = validate_step(replace(step, args=effective_args(step)))
         if reason is not None:
             return _fallback(question, period, f"the model's plan was invalid: {reason}")
 
     log.info("model planned %d step(s): %s", len(steps), [s.tool for s in steps])
     return Plan(goal=payload.get("goal") or question, steps=steps, source="llm")
+
+
+_TIERS = {"classify": _classify, "select": _select, "plan": _plan}
+
+
+def plan(cfg, question, period, client=None):
+    """A Plan for `question`. Never raises; degrades to the router."""
+    client = client or _client(cfg)
+    if client is None:
+        return _fallback(question, period,
+                         f"no {cfg.provider} client (unreachable, or missing SDK "
+                         f"or credentials)")
+    return _TIERS[cfg.planning](cfg, client, question, period)

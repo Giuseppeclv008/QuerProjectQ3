@@ -269,3 +269,127 @@ three-month per-head rejects. The query above is the evidence.
 ### Test suite
 
 207 passed (Python), output pristine. C++ 73/73.
+
+## 2026-07-26 — Local model support: qwen2.5:7b via Ollama, measured
+
+**Hardware:** Apple M3, 8 CPU / 10 GPU cores, 16 GB unified memory.
+**Model:** `qwen2.5:7b` (Q4, 4.7 GB) on Ollama 0.12.3, `num_ctx=8192`,
+`temperature=0`.
+
+This closes, against a local model, the gap the Plan 7 log recorded as open: the
+agentic path had never been exercised against a live model of any kind. It is
+*not* a substitute for the hosted-API run, which remains unexercised — the
+request shapes differ.
+
+### Prompt sizes that drive the design
+
+| | chars | ~tokens |
+|---|---:|---:|
+| tier 3, full tool schema | 7,390 | 1,847 |
+| plan JSON schema (flat) | 1,976 | 494 |
+| planner system prompt | 875 | 218 |
+| **tier 3 floor, before the question** | **10,241** | **2,560** |
+| tier 2, one line per tool | 1,632 | 408 |
+| tier 1, classify | 65 | 16 |
+
+Ollama's default `num_ctx` is **2048** and it truncates silently rather than
+erroring, so the default would clip the planner's schema and present as a stupid
+model. `Config` now rejects `num_ctx < 4096` when `provider == "ollama"`.
+
+### Tier 1 — classify. 5/6 correct; the keyword router got 0/6
+
+Six naturally-phrased questions, none containing a router keyword:
+
+| question | router | qwen2.5:7b | correct? |
+|---|---|---|---|
+| which head is worst? | DEFAULT(kpi) | drift | debatable |
+| is head 12 getting worse? | DEFAULT(kpi) | drift | ✓ |
+| any anomalies in February? | DEFAULT(kpi) | anomalies | ✓ |
+| should I schedule maintenance on any head? | DEFAULT(kpi) | anomalies | ✓ |
+| sta peggiorando qualche testa? | DEFAULT(kpi) | drift | ✓ |
+| how fast are we producing? | DEFAULT(kpi) | kpi | ✓ |
+
+The router matched **no** keyword in any of the six and defaulted to KPI every
+time. Including the Italian question. ~2 s per call after a 36 s model load.
+
+**A 0.5B is not enough.** `qwen2.5:0.5b` returned a structurally valid report
+type all six times but got roughly one right, and on *"any anomalies in
+February?"* it answered `drift` — worse than the router, which matches that
+literal keyword. Structured outputs guarantee the shape, not the sense.
+
+### Tier 3 — full plan. The flat schema costs 3 of 6 plans
+
+| schema | accepted by `validate_step` | time per plan |
+|---|---:|---:|
+| flat union (Anthropic's requirement) | **3/6** | 25–55 s |
+| per-tool (`anyOf`, one branch per tool) | **6/6** | 10–27 s |
+
+All three flat-schema failures were the same error:
+
+    REJECTED: tool 'trend' takes no argument 'outcome';
+              it accepts ['by', 'period', 'signal', 'window']
+
+The flat object shows all nine arguments on every step, so nothing stops the
+model attaching one tool's argument to another. Per-tool branches make that
+ungrammatical. It is also faster, having no nulls to emit. Anthropic keeps the
+flat shape because its structured outputs require every property in `required`;
+every other provider gets `per_tool`.
+
+### End to end on the real store
+
+    scripts/arol ask "which capping head behaves differently from the others,
+                      and is it drifting?" \
+      --period 2026-02..2026-04 --provider ollama --model qwen2.5:7b
+
+| tier | plan the model produced | steps ok | wall clock |
+|---|---|---|---:|
+| `plan` | `head_correlation`, `trend` | 2/2 | 3 m 17 s |
+| `classify` | chose `drift` → its 4-step canned plan | 4/4 | 2 m 57 s |
+| `select` | `head_correlation`, `trend` | 2/2 | 2 m 56 s |
+
+All three planned sensibly. Wall clock is dominated by narration, not planning
+(classify plans in ~2 s).
+
+### Narration is the weak spot, and it is now caught
+
+Three runs out of three, the 7B returned an announcement of findings instead of
+findings:
+
+> "The analysis of the success rate for heads 1 through 36 during February to
+> April 2026 reveals several key insights and potential issues. Here's a summary
+> of the findings from both the correlation matrix and drift analysis tools:"
+
+No bullet, and the promised list never arrives. **The check is the bullet, not
+the number** — that reply contains digits ("36", "2026"), so a digit check would
+have passed it, while a good one-line finding may legitimately carry none.
+
+Rejected narration falls back to `render.summarise()`, and the report says so:
+
+> - **Narration.** the model's findings carried no bullet; it announced findings
+>   rather than stating them.
+
+The fallback output is strictly better than what was rejected:
+
+> - **Head agreement.** All 36 heads track each other closely (mean correlation
+>   0.9999-1.0000); none is out of step.
+> - **Drift (torque).** No head exceeds the Mann-Kendall drift threshold in this
+>   period.
+
+Both reports carried `narrative source: template, plan source: llm` — the model
+was used where it was good and rejected where it was not, without a human
+noticing.
+
+### Isolated check on hallucinated numbers
+
+Given a single `success_rates` result and asked to narrate it, the 7B produced
+four accurate bullets and **invented no numbers**. It did misread `lowest_head:
+29` as *"the lowest head count recorded during a failure was 29"* — the number is
+right, the meaning is not. A grounding check catches fabricated figures but not
+misread ones; clearer field naming in the payload would do more here than any
+verifier.
+
+### Test suite
+
+228 passed (Python), output pristine. C++ 73/73. 18 new tests, all against
+injected fake clients — the suite still makes no network call and needs no
+daemon.

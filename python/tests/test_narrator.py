@@ -153,3 +153,36 @@ def test_the_reason_the_model_did_not_narrate_reaches_the_report(tiny_cfg, tmp_p
     text = render.render(ex, tiny_cfg, tmp_path, n, generated_at="fixed")
     assert "**Narration.**" in text
     assert "429 rate limit" in text
+
+
+def test_findings_that_state_no_number_fall_back_to_the_template(tiny_cfg):
+    """Verbatim from a local 7B on real results: an announcement of findings
+    rather than findings. Structured outputs guarantee a string arrives, not
+    that it says anything."""
+    empty = {"findings": "The analysis reveals several key insights and potential "
+                         "issues. Here's a summary of the findings from both the "
+                         "correlation matrix and drift analysis tools:",
+             "next_checks": "- Review the above."}
+    ex = _execution(tiny_cfg)
+    n = narrator.narrate(tiny_cfg, ex, client=_Client(empty))
+
+    assert n.source == "template"
+    assert "no bullet" in n.note
+    assert n.findings == render.summarise(ex).findings
+
+
+def test_a_blank_findings_section_falls_back_too(tiny_cfg):
+    ex = _execution(tiny_cfg)
+    n = narrator.narrate(tiny_cfg, ex,
+                         client=_Client({"findings": "   ", "next_checks": "- x"}))
+    assert n.source == "template"
+    assert "empty findings" in n.note
+
+
+def test_real_findings_with_numbers_are_kept(tiny_cfg):
+    """The guard must not eat a genuine narrative."""
+    good = {"findings": "- Head 2 rejected 2 of 3 caps (66.67% success).",
+            "next_checks": "- Inspect head 2."}
+    n = narrator.narrate(tiny_cfg, _execution(tiny_cfg), client=_Client(good))
+    assert n.source == "llm"
+    assert "Head 2" in n.findings
