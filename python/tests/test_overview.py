@@ -116,3 +116,16 @@ def test_the_band_comes_from_config_not_from_the_code(dirty_cfg):
     assert wide == 2                 # 9.50 and 0.50
     assert narrow == 3               # ...plus 2.05, now outside the tighter band
     assert narrow > wide
+
+
+def test_a_reject_without_load_is_not_a_capping_failure(reject_without_load_store):
+    """`failed` must apply the torque guard as well as the reject bit, or it
+    disagrees with success_rates on the same store and breaks the invariant
+    successful + failed <= capping_operations."""
+    from analytics.tools.success import success_rates
+
+    cfg = Config(store_path=reject_without_load_store, machine_id="MCC")
+    v = overview(cfg).values
+    assert v["failed"] == 1, "the zero-torque reject was counted as a capping failure"
+    assert v["successful"] + v["failed"] <= v["capping_operations"]
+    assert v["failed"] == success_rates(cfg, by="overall").values["failed"]

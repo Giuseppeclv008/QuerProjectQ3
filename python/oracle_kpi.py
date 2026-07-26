@@ -4,11 +4,17 @@
 Shares no code with analytics/ -- no DuckDB, no toolkit SQL. If the toolkit's
 SQL and this disagree, one of them is wrong, and the disagreement is the point.
 
-Semantics under test (spec §3.2):
+Semantics under test (spec §3.2, amended by §3.2.1):
     real cap     := counter advanced AND torque > 0
     successful   := real cap AND status == 0
-    failed       := status == 65
+    failed       := real cap AND the reject bit is set, i.e. status is odd
     no-load      := counter advanced AND status == 2 AND torque == 0
+
+The reject rule is written out longhand here rather than imported, because an
+oracle that shares the toolkit's definition of failure cannot detect an error in
+it. `status` is a bitmask: bit 0 is the reject signal, so 65 (Bad Closure +
+reject) and 9 (No InTorque + reject) are both failures and 4 (No Closure, not
+rejected) is not.
 """
 import csv
 import sys
@@ -37,8 +43,8 @@ def kpis(path):
                         counts["capping_operations"] += 1
                         if status == 0.0:
                             counts["successful"] += 1
-                    if status == 65.0:
-                        counts["failed"] += 1
+                        elif int(status) % 2 == 1:
+                            counts["failed"] += 1
                     if status == 2.0 and torque == 0:
                         counts["no_load_cycles"] += 1
             prev = cur

@@ -153,3 +153,33 @@ def test_no_api_key_falls_back_without_a_network_call(tiny_cfg, monkeypatch):
     plan = planner.plan(tiny_cfg, "which head is worst?", "2026-02")
     assert plan.source == "router"
     assert "no anthropic client" in plan.note.lower()
+
+
+def test_the_system_prompts_tool_advice_matches_what_the_router_would_do():
+    """planner.SYSTEM restates, in prose, the routing rules router.route()
+    implements in code. Nothing links them, so they can drift apart silently and
+    the model would be steered somewhere the fallback would not go. This pins the
+    signals the prompt names against the router's own keyword table."""
+    from analytics.agent import planner as p
+    from analytics.agent.router import _KEYWORDS
+
+    advice = p.SYSTEM.lower()
+    for phrase, report_type in (("changed over time", "drift"),
+                                ("head is unusual", "drift"),
+                                ("out of range", "anomalies"),
+                                ("how much or how", "kpi")):
+        assert phrase in advice, f"SYSTEM no longer advises on {phrase!r}"
+
+    # Each tool the prompt names must exist, and must be the tool the matching
+    # canned plan actually runs.
+    from analytics.agent.registry import TOOLS
+    from analytics.agent.router import canned_plan
+    for tool, report_type in (("trend", "drift"), ("head_correlation", "drift"),
+                              ("anomalies", "anomalies"), ("overview", "kpi"),
+                              ("success_rates", "kpi")):
+        assert tool in TOOLS, f"SYSTEM names {tool!r}, which is not a tool"
+        planned = {s.tool for s in canned_plan(report_type, None).steps}
+        assert tool in planned, (
+            f"SYSTEM steers {tool!r} at questions the router sends to the "
+            f"{report_type!r} plan, which runs {sorted(planned)}")
+    assert set(_KEYWORDS) == {"drift", "anomalies", "kpi"}

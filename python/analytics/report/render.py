@@ -34,6 +34,7 @@ class Narrative:
     findings: str
     next_checks: str
     source: str = "template"   # "template" | "llm"
+    note: str = ""             # why the template was used, if the model was tried
 
 
 def _fmt(value):
@@ -117,7 +118,7 @@ def summarise(execution):
         elif result.tool == "idle_periods":
             hours = v["total_idle_seconds"] / 3600
             lines.append(
-                f"- **Idle time.** {len(v['periods'])} sustained no-load periods, "
+                f"- **Idle time.** {_fmt(len(v['periods']))} sustained no-load periods, "
                 f"{hours:,.1f} head-hours in total."
             )
         elif result.tool == "trend":
@@ -218,10 +219,12 @@ def _figures(execution, out_dir):
     return figures
 
 
-def _limits(execution):
+def _limits(execution, narrative=None):
     lines = []
     if execution.plan.note:
         lines.append(f"- **Planning.** {execution.plan.note}.")
+    if narrative is not None and narrative.note:
+        lines.append(f"- **Narration.** {narrative.note}.")
     if execution.plan.source == "router":
         lines.append("- **No model was used to plan this report.** The tool calls "
                      "below are a fixed plan; the numbers would be identical either way.")
@@ -285,7 +288,7 @@ def render(execution, cfg, out_dir, narrative, generated_at):
 
 ## Confidence and limits
 
-{_limits(execution)}
+{_limits(execution, narrative)}
 
 ## Next checks
 

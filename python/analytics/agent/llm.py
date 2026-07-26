@@ -43,9 +43,11 @@ def json_call(cfg, client, system, prompt, schema):
 
     if getattr(response, "stop_reason", None) == "refusal":
         return None, "the model refused the request"
+    text = next((b.text for b in response.content
+                 if getattr(b, "type", "") == "text"), None)
+    if text is None:
+        return None, "the reply carried no text block"
     try:
-        text = next(b.text for b in response.content
-                    if getattr(b, "type", "") == "text")
         return json.loads(text), None
     except Exception as exc:                       # noqa: BLE001
         return None, f"the reply was not valid JSON ({exc})"

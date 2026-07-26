@@ -1,6 +1,6 @@
 # Anomaly report for 2026-02.
 
-*Generated 2026-07-26T09:52:36Z — narrative source: template, plan source: router.*
+*Generated 2026-07-26T10:21:10Z — narrative source: template, plan source: router.*
 
 ## Goal
 

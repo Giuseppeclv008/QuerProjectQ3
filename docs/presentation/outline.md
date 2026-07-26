@@ -145,8 +145,8 @@ measured on `events_3mo.duckdb` (20,347,822 rows, machine `MCC`, 36 heads,
       arol ask "which head behaves differently, and why?"
 
 - **The three `report` verbs have no model in them.** Same store, same period,
-  byte-identical report — that is what makes the demo reproducible and gives the
-  offline path.
+  the same report every time, bar the generation timestamp — that is what makes
+  the demo reproducible and gives the offline path.
 - Each run writes a self-contained directory: `report.md`, `report.html` (plots
   inlined as data URIs, no external requests), `trace.json`, PNGs.
 - Failure policy is deliberate: a **config** problem exits 2 before any work; an

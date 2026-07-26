@@ -1,6 +1,6 @@
 # Torque drift report for 2026-02..2026-04.
 
-*Generated 2026-07-26T09:52:35Z — narrative source: template, plan source: router.*
+*Generated 2026-07-26T10:21:09Z — narrative source: template, plan source: router.*
 
 ## Goal
 

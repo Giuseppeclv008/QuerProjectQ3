@@ -22,7 +22,7 @@ def configure(verbose=False):
     tool calls -v exists to show. Third-party loggers therefore stay at WARNING.
     """
     logging.basicConfig(
-        level=logging.WARNING if verbose else logging.INFO,
+        level=logging.WARNING,
         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
         datefmt="%H:%M:%S",
         stream=sys.stderr,

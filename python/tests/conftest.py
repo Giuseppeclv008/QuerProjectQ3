@@ -58,3 +58,31 @@ def tiny_store(tmp_path):
 @pytest.fixture
 def tiny_cfg(tiny_store):
     return Config(store_path=tiny_store, machine_id="MCC")
+
+
+@pytest.fixture
+def reject_without_load_store(tmp_path):
+    """A store where a rejected closure carries no load.
+
+    The reject bit and the torque guard are independent, and every tool that
+    reports on failures must apply both: a status can be odd on a cycle that
+    applied no torque, and counting it as a capping failure both inflates the
+    failure count and drags torque statistics toward zero. The tiny store cannot
+    show this -- all its rejects carry torque.
+    """
+    path = tmp_path / "reject_noload.duckdb"
+    con = duckdb.connect(str(path))
+    con.execute(CAP_EVENTS_DDL)
+    rows = [
+        ("MCC", 1, "2026-02-01 00:00:00", 1, 2.00, 0.0),    # clean cap
+        ("MCC", 1, "2026-02-01 00:00:10", 2, 1.98, 65.0),   # rejected cap, WITH load
+        ("MCC", 1, "2026-02-01 00:00:20", 3, 0.00, 3.0),    # reject bit, NO load
+        ("MCC", 1, "2026-02-01 00:00:30", 4, 0.00, 2.0),    # no-load cycle
+    ]
+    for m, h, ts, seq, tq, st in rows:
+        con.execute(
+            "INSERT INTO cap_events VALUES (?,?,?,?,?,?,1,?,false,false)",
+            [m, h, ts, seq, tq, st, int(st) % 2 == 1],
+        )
+    con.close()
+    return str(path)

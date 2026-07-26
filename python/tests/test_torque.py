@@ -1,4 +1,5 @@
 import pytest
+from analytics.config import Config
 from analytics.tools.torque import torque_stats
 
 
@@ -87,3 +88,14 @@ def test_single_observation_head_stddev_is_never_none(tiny_cfg):
     assert by_head[2]["n"] == 1
     assert by_head[2]["stddev"] == 0.0
     assert by_head[2]["stddev"] is not None
+
+
+def test_failed_stats_exclude_rejects_that_carried_no_load(reject_without_load_store):
+    """outcome="failed" declares 'app_torque > 0 (no-load excluded)' in its
+    provenance. Without the guard the zero-torque reject is included, the mean
+    is dragged toward zero, and the declared filter is a false statement."""
+    cfg = Config(store_path=reject_without_load_store, machine_id="MCC")
+    r = torque_stats(cfg, by=None, outcome="failed")
+    assert "app_torque > 0 (no-load excluded)" in " ".join(r.provenance.filters)
+    assert r.values["n"] == 1, "a zero-torque reject was included in failed stats"
+    assert r.values["mean"] == pytest.approx(1.98)

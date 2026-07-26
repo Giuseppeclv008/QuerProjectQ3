@@ -96,3 +96,60 @@ def test_the_numbers_in_the_report_come_from_the_tools_whatever_the_model_says(
                    if r.tool == "success_rates" and isinstance(r.values, dict))
     assert overall.values["success_rate"] is not None
     assert (tmp_path / "success_rate_per_head.png").exists()
+
+
+def test_a_huge_result_list_does_not_become_a_huge_prompt(tiny_cfg):
+    """On the real store `anomalies` returns 678,325 deviation hits. Serialising
+    them in full builds a multi-megabyte prompt no request can carry, so `ask`
+    would fail on every question about real data -- silently, via the template
+    fallback."""
+    from analytics.agent.executor import Execution
+    from analytics.agent.plan import Plan, PlanStep
+    from analytics.result import ToolResult
+
+    hits = [{"ts": "2026-02-01 00:00:00", "head_id": h % 36, "app_torque": 2.0}
+            for h in range(200_000)]
+    ex = Execution(
+        plan=Plan(goal="g", steps=[PlanStep("anomalies", {})]),
+        results=[ToolResult.ok("anomalies",
+                               {"deviation_hits": hits, "threshold_hits": [],
+                                "counts": {"deviation_hits": len(hits)}})])
+    client = _Client(_GOOD)
+    narrator.narrate(tiny_cfg, ex, client=client)
+    prompt = client.calls[0]["messages"][0]["content"]
+
+    assert len(prompt) < 100_000, f"prompt is {len(prompt):,} chars"
+    # The count survives -- it is what the narrator actually needs.
+    assert "200000" in prompt
+    assert "truncated" in prompt
+
+
+def test_a_normal_per_head_breakdown_is_not_truncated(tiny_cfg):
+    """The bound must not clip an analytic grouping: 36 heads (48 on the brief's
+    example machine) or the days in a period must reach the model whole."""
+    from analytics.agent.executor import Execution
+    from analytics.agent.plan import Plan, PlanStep
+    from analytics.result import ToolResult
+
+    per_head = [{"head_id": h, "success_rate": 0.99} for h in range(1, 49)]
+    ex = Execution(plan=Plan(goal="g", steps=[PlanStep("success_rates", {"by": "head"})]),
+                   results=[ToolResult.ok("success_rates", per_head)])
+    client = _Client(_GOOD)
+    narrator.narrate(tiny_cfg, ex, client=client)
+    prompt = client.calls[0]["messages"][0]["content"]
+
+    assert "truncated" not in prompt
+    assert '"head_id": 48' in prompt
+
+
+def test_the_reason_the_model_did_not_narrate_reaches_the_report(tiny_cfg, tmp_path):
+    """Without this the report shows `plan source: llm, narrative source:
+    template` and never says why -- the planner discloses its fallback reason and
+    the narrator did not."""
+    ex = _execution(tiny_cfg)
+    n = narrator.narrate(tiny_cfg, ex, client=_Client(raises=RuntimeError("429 rate limit")))
+    assert "429 rate limit" in n.note
+
+    text = render.render(ex, tiny_cfg, tmp_path, n, generated_at="fixed")
+    assert "**Narration.**" in text
+    assert "429 rate limit" in text

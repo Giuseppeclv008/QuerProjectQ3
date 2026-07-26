@@ -237,6 +237,35 @@ surface as a 400. To close it:
 Expect `plan (llm): [...]` in the log and `narrative source: llm` in the report,
 then confirm every number in Findings also appears in `trace.json`.
 
+### Per-head reject concentration (the presentation's headline finding)
+
+The three-month per-head figures quoted on slide 10 of
+`docs/presentation/outline.md`, and the query that produced them:
+
+    .venv/bin/python -c "
+    import duckdb
+    con = duckdb.connect('events_3mo.duckdb', read_only=True)
+    q = '''SELECT head_id, COUNT(*) AS ops,
+                  COUNT(*) FILTER (WHERE CAST(status AS BIGINT) % 2 = 1) AS rejects
+           FROM cap_events WHERE machine_id = 'MCC' AND app_torque > 0
+           GROUP BY head_id ORDER BY rejects DESC LIMIT 4'''
+    print(con.execute(q).fetchall())"
+
+| head | capping ops | rejects | success rate |
+|---:|---:|---:|---:|
+| **29** | 330,809 | **75** | 99.9773% |
+| 32 | 330,709 | 37 | 99.9888% |
+| 36 | 330,732 | 37 | 99.9888% |
+| 35 | 330,804 | 37 | 99.9888% |
+
+600 rejects spread over 36 heads is a mean of **16.7 per head**. Head 29 carries
+**75** — 4.5x the mean, and twice the next-worst head — on an ops count within
+0.03% of its peers. The machine-level rate of 99.9943% hides this completely.
+
+This is the one finding in the deck that is not visible in a committed report:
+the KPI report names head 29 for February only, and no committed report carries
+three-month per-head rejects. The query above is the evidence.
+
 ### Test suite
 
-201 passed (Python), output pristine. C++ 73/73 unchanged.
+207 passed (Python), output pristine. C++ 73/73.

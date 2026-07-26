@@ -1,9 +1,9 @@
 """Configuration. No path, band, or threshold is hard-coded anywhere else.
 
 WP5 requires configuration-driven datasets. This is also where the status
-semantics live (spec §3.2): they were inferred from the measured joint
-(status, torque) distribution, so if AROL confirms a different encoding it is a
-change here and nowhere else.
+semantics live (spec §3.2): the status bitmask is confirmed by the brief's own
+slide-6 table and by the measured (status, torque) distribution, so if AROL
+confirms a different encoding it is a change here and nowhere else.
 """
 import json
 from dataclasses import dataclass, fields

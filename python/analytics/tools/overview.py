@@ -25,7 +25,7 @@ def overview(cfg, period=None):
             COUNT(*)                                                    AS closures,
             COUNT(*) FILTER (WHERE app_torque > 0)                      AS capping_operations,
             COUNT(*) FILTER (WHERE status = ? AND app_torque > 0)       AS successful,
-            COUNT(*) FILTER (WHERE {REJECT_SQL})                        AS failed,
+            COUNT(*) FILTER (WHERE {REJECT_SQL} AND app_torque > 0)     AS failed,
             COUNT(*) FILTER (WHERE status = ? AND app_torque = 0)       AS no_load,
             MIN(ts)                                                     AS ts_min,
             MAX(ts)                                                     AS ts_max,

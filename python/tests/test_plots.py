@@ -139,8 +139,6 @@ def test_success_rate_zoom_fallback_to_unzoomed_when_lowest_rate_is_zero(tmp_pat
 
 def test_torque_rolling_mean_highlights_drifting_head(tmp_path, monkeypatch):
     """B. A drifting head is highlighted with a bold red line and legend entry."""
-    from analytics.tools.trend import DRIFT_TAU
-
     captured_axes = []
     original_save = plots._save
 
@@ -278,9 +276,11 @@ def test_anomalies_over_time_plots_all_three_groups(tmp_path, monkeypatch):
     handles, labels = ax.get_legend_handles_labels()
     assert len(labels) == 3, f"Expected 3 legend entries, got {len(labels)}: {labels}"
 
-    # Each label should mention the count in parentheses
-    label_str = " ".join(labels)
-    assert "(2)" in label_str, f"Expected faults count (2) in labels, got {labels}"
-    assert "(1)" in label_str, f"Expected threshold_hits count (1) in labels, got {labels}"
-    # deviation_hits has 2 entries
-    assert label_str.count("(2)") >= 1, f"Expected deviation_hits count (2) in labels, got {labels}"
+    # Each label mentions its own count. Checking the joined string would let the
+    # faults "(2)" satisfy the deviation_hits assertion, so match per label.
+    def count_for(kind):
+        [label] = [l for l in labels if kind in l.lower()]
+        return label
+    assert "(2)" in count_for("rejected"), labels
+    assert "(1)" in count_for("torque band"), labels
+    assert "(2)" in count_for("robust deviation"), labels

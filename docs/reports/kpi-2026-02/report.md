@@ -1,6 +1,6 @@
 # Capping KPI report for 2026-02.
 
-*Generated 2026-07-26T09:52:33Z — narrative source: template, plan source: router.*
+*Generated 2026-07-26T10:21:07Z — narrative source: template, plan source: router.*
 
 ## Goal
 
@@ -28,7 +28,7 @@ Capping KPI report for 2026-02.
 - **Success rate.** 99.9943% (6,669,339 successful, 383 rejected). Lowest head: 29. A further 2,927 closures carry no pass/fail verdict and are outside the rate.
 - **Weakest head.** 29 at 99.9660% over 185,349 capping operations.
 - **Throughput.** 11,121.0817 pieces/hour, averaged over 25 active buckets.
-- **Idle time.** 12276 sustained no-load periods, 7,486.0 head-hours in total.
+- **Idle time.** 12,276 sustained no-load periods, 7,486.0 head-hours in total.
 
 ### Success Rate Per Head
 

@@ -29,7 +29,11 @@ def torque_stats(cfg, period=None, outcome="successful", by=None):
     if outcome == "successful":
         cond, sem = "app_torque > 0 AND status = ?", [cfg.success_status]
     elif outcome == "failed":
-        cond, sem = REJECT_SQL, []
+        # The torque guard is load-bearing, not decoration: no-load cycles carry
+        # torque 0.0, so dropping it drags every statistic toward zero -- and
+        # this tool's provenance declares "app_torque > 0 (no-load excluded)"
+        # unconditionally, so omitting it also makes the report lie.
+        cond, sem = f"app_torque > 0 AND {REJECT_SQL}", []
 
     agg = """
         COUNT(*)          AS n,

@@ -670,7 +670,8 @@ Each writes a self-contained directory: `report.md` (source of truth),
 call with its arguments and row counts), and PNGs.
 
 These three verbs run **fixed plans with no model in the loop** — the same store
-and period gives the same report, every time. Committed examples are under
+and period gives the same report every time, apart from the generation timestamp
+in the header. Committed examples are under
 [`docs/reports/`](docs/reports/), and every number in them is reconciled against
 a direct DuckDB query in the [validation log](docs/validation-log.md).
 
@@ -728,10 +729,17 @@ it, `--pdf` logs how to install it and writes Markdown and HTML as normal.
 
 ## Testing
 
-The project has **68 unit tests** (12 suites) across 10 Google Test files:
+The project has **73 C++ unit tests** across 11 Google Test files, plus **206
+Python tests** for the analytics tier.
+
+```bash
+cd build && ctest --output-on-failure     # 73 C++ tests
+cd python && ../.venv/bin/python -m pytest -q   # 206 Python tests
+```
 
 | Test File | What It Tests |
 |-----------|---------------|
+| `test_cap_event.cpp` | The status bitmask: a closure is rejected iff its status is odd (bit 0), across every condition in the brief's slide-6 table |
 | `test_cap_event_extractor.cpp` | Increment, aggregated, reset, held-dedup, first-observation seeding |
 | `test_csv_raw_reader.cpp` | Happy path, truncated rows, malformed numerics, missing file |
 | `test_pipeline.cpp` | End-to-end CSV→events flow, batch boundary, error codes |
@@ -746,6 +754,15 @@ The project has **68 unit tests** (12 suites) across 10 Google Test files:
 Test doubles: [`FakeTransport.hpp`](tests/fakes/FakeTransport.hpp) provides
 `FakeSource`, `FakeSink`, and `FakeTickSource` (supports interleaved nullopt
 ticks to model recv timeouts).
+
+On the Python side, the analytics tools are tested against purpose-built DuckDB
+fixtures — including degenerate ones (a head with no pass/fail verdicts, a head
+with constant torque, a reject that carried no load) — and the agent's
+orchestration is tested against an **injected fake API client**, so the suite
+makes no network call and needs no API key. A golden-report test renders a fixed
+plan over a fixed store and diffs the Markdown byte-for-byte, so a change in any
+tool's SQL surfaces as a diff in a committed file rather than a silent shift in
+a number.
 
 ---
 

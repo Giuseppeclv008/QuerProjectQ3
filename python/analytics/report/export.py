@@ -65,7 +65,11 @@ def _weasyprint():
     try:
         import weasyprint
         return weasyprint
-    except Exception:                              # noqa: BLE001 -- native deps
+    except Exception as exc:                       # noqa: BLE001 -- native deps
+        # An absent package and an installed one whose native libraries fail to
+        # load are different problems with different fixes; discarding the
+        # exception makes the second undiagnosable even from the logs.
+        log.debug("WeasyPrint unavailable: %s: %s", type(exc).__name__, exc)
         return None
 
 
@@ -74,7 +78,8 @@ def to_pdf(report_dir):
     wp = _weasyprint()
     if wp is None:
         log.warning(
-            "PDF export skipped: WeasyPrint is not installed. Markdown and HTML "
+            "PDF export skipped: WeasyPrint is not installed, or is installed but "
+            "failed to load (run with -v for the import error). Markdown and HTML "
             "were written. To enable PDF: pip install weasyprint (needs Cairo and "
             "Pango; on macOS: brew install cairo pango gdk-pixbuf libffi)."
         )

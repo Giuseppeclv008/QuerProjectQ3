@@ -41,12 +41,12 @@ working report rather than an error.
 
 `report kpi`, `report drift` and `report anomalies` run fixed plans defined in
 `agent/router.py`. No API call is made, no key is needed, and the same store and
-period give byte-identical output every time.
+period give identical output every time, apart from the generation timestamp.
 
 That matters for three reasons. It is the **reproducible demo path** — a marker
-runs `scripts/demo.sh` and gets exactly the reports committed under
-`docs/reports/`. It is the **offline fallback** — the tool is useful with no
-credentials and no network. And it is the **reference** the agentic path is
+runs `scripts/demo.sh` and gets the reports committed under `docs/reports/`,
+identical apart from the generation timestamp in the header. It is the
+**offline fallback** — the tool is useful with no credentials and no network. And it is the **reference** the agentic path is
 checked against: the same tools, the same SQL, the same numbers, so any
 difference between an `ask` report and a `report` report is a difference in
 *which analyses were chosen*, never in what they computed.
