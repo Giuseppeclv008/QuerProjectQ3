@@ -73,9 +73,18 @@ closures), says otherwise:
 | `2.0` | > 0 | 155 | transition artifact |
 
 `0` cannot mean "idle/held" while carrying ~2.0 Nm on 427k closures; `2` cannot mean "OK cap"
-while carrying zero torque on 337k. The `is_fault_status(status) == 65.0` predicate is
-correct and unchanged. This reading also reconciles with the brief's own example table, where
-status `0` is the normal closure (torque 2.54) and the fault code sits on the low-torque row.
+while carrying zero torque on 337k. This reading also reconciles with the brief's own example
+table, where status `0` is the normal closure (torque 2.54) and the fault code sits on the
+low-torque row.
+
+> **Superseded in part by §3.2.1 (Plan 7).** This section originally concluded that "the
+> `is_fault_status(status) == 65.0` predicate is correct and unchanged". It is not: `status`
+> is a bitmask, and `65` is only one of the values carrying the reject bit. The predicate is
+> now `status % 2 == 1` and the C++ function is `CapEvent::is_reject`. The two rows this
+> table calls **transition artifacts** are also decoded rather than dismissed — `2.0` with
+> torque is No Load (§12 OQ#4), and `0.0` with zero torque is a clean closure that applied no
+> load. The `(status, torque)` measurements above stand; only the conclusions drawn from them
+> were incomplete.
 
 **The store schema does not change.** `status` and `app_torque` are already persisted
 faithfully, so no data was lost. Only the interpretation was wrong.
@@ -86,19 +95,47 @@ faithfully, so no data was lost. Only the interpretation was wrong.
   **excluded from the denominator** of every success metric and reported separately as
   idle/no-load activity.
 - **Successful cap** := `status == 0 AND torque > 0`
-- **Failed cap** := `status == 65`
+- **Failed cap** := **the reject bit is set, i.e. `status` is odd** — per the brief's
+  slide-6 bitmask. *(Amended in Plan 7; was `status == 65`.)*
 - **Success rate** := successful / (successful + failed)
 - **No-Load cycle** := `status == 2 AND torque == 0`
 - **Idle period** := a sustained run of No-Load cycles for a head, longer than a configured
   minimum duration
+
+### 3.2.1 The status bitmask (Plan 7)
+
+`status` is **not an enumeration**. Bit 0 is the reject signal; bits 1–6 are the conditions
+that caused it. The brief's slide 6 lists 14 rows = 7 conditions × {reject, no reject}.
+
+| bit | value | condition |
+|---|---|---|
+| 0 | 1 | **reject signal** |
+| 1 | 2 | No Load |
+| 2 | 4 | No Closure |
+| 3 | 8 | No InTorque |
+| 4 | 16 | No CapTurns |
+| 5 | 32 | Following Error |
+| 6 | 64 | Bad Closure |
+
+So `status = 65` is `64 + 1` (Bad Closure + reject) and `status = 9` is `8 + 1` (No InTorque
++ reject). The single predicate is `CAST(status AS BIGINT) % 2 = 1`, implemented once in
+`analytics/status.py:REJECT_SQL` and once in `CapEvent::is_reject`.
+
+**This changed measured numbers.** Over the three-month store the reject bit finds **600**
+rejected closures (585 at status 65 + 15 at status 9) where `status == 65` found 585; for
+February alone, **383** against 371. The old rule undercounted every reject that was not a
+Bad Closure.
 
 These predicates are **config-driven** (§7), so if AROL or the course confirms a different
 encoding, it is a config change, not a code change.
 
 ### 3.3 The honest headline: the machine is healthy
 
-Success rate against real closures is **~99.999%** (4 faults against 427,643 caps/day). The
-brief's illustrative "92.4%" does not hold on this machine. Two consequences:
+Success rate against real closures is **~99.99%**. The brief's illustrative "92.4%" does not
+hold on this machine. *(Plan 7, measured over the full three months rather than one day:
+**99.9943%** for February — 6,669,339 successful against 383 rejected. The reject-bit
+correction of §3.2.1 moved February's rejects from 371 to 383 and the rate from 0.999944 to
+0.999943; the conclusion below is unchanged.)* Two consequences:
 
 1. A fault-classification anomaly detector is near-degenerate here. Failure *counting* is not
    where the value is.
@@ -302,6 +339,13 @@ by-products.
 Markdown is the source of truth; HTML and PDF are exports. Plots are matplotlib PNGs written
 alongside and referenced from the Markdown, so a report is a **self-contained directory**.
 
+**PDF deviation (Plan 7).** Markdown and HTML ship unconditionally; HTML is genuinely
+self-contained, with every PNG inlined as a `data:` URI and no external requests. **PDF is
+best-effort**: it requires WeasyPrint plus native Cairo/Pango, which cannot be assumed on a
+marker's machine. When they are absent — or present but failing to load — `--pdf` logs how to
+install them and the run still succeeds with Markdown and HTML. A missing PDF never fails a
+report.
+
 This satisfies the brief's demo requirement: one end-to-end run producing **at least two
 different report types**.
 
@@ -337,12 +381,14 @@ to be clean before the agent depends on it.
 
 ## 12. Open questions
 
-1. **Status encoding confirmation.** §3.2 is inferred from the joint `(status, torque)`
-   distribution and is consistent with the brief's example table, but it is an *inference*
-   about machine/firmware semantics. Worth confirming with the course/AROL. Parked, not
-   blocking: the definition is config-driven, and the brief's own "meta queries" ask what
-   assumptions were made during cleaning — so stating this assumption explicitly is itself a
-   deliverable.
+1. **Status encoding confirmation. — RESOLVED (Plan 7).** ~~§3.2 is inferred from the joint
+   `(status, torque)` distribution and is consistent with the brief's example table, but it is
+   an *inference* about machine/firmware semantics.~~ The brief's **slide 6** documents the
+   encoding directly: 14 rows = 7 conditions × {reject, no reject}, i.e. a bitmask with the
+   reject signal in bit 0. This is no longer an inference — it is **confirmed by the brief's
+   own table**, and independently by the data (585 at status 65 + 15 at status 9 = the 600 the
+   odd-status rule returns). See §3.2.1. Remaining assumption — the meaning of a *non-rejected*
+   condition flag — is covered by OQ#4.
 2. **Reprocessing. — RESOLVED (Plan 6).** ~~Capping speed (§5.4) is computed in the extractor,
    so the three months must be reprocessed to populate it.~~ Capping speed is derived in SQL
    from events already persisted (`capping_speed()`), so no reprocessing and no schema change
@@ -350,13 +396,76 @@ to be clean before the agent depends on it.
 3. **48-head portability (§3.5).** The C++ cleaning tier cannot ingest the brief's example
    48-head layout without a `NUM_HEADS` refactor. Deferred — no such data exists to test
    against — but it is a genuine gap against "designed to work on datasets that may include"
-   that layout. Roadmap item, not a Plan 6/7 task.
-4. **Statuses beyond {0, 2, 65} in real data (found in Plan 6 validation).** The three-month
-   store carries a small tail of capping operations (torque > 0) whose status is none of
-   success (0), fault (65), or no-load (2 with zero torque): ~2,926/month at status **2 with
-   torque > 0** (which contradicts the no-load reading in §3.2), plus a handful at status **9**
-   and **4** — together ~0.04% of caps. Per the locked §3.2, `success_rates()` treats them as
-   neither success nor fault, so they are excluded from the `successful / (successful + failed)`
-   denominator. What these statuses mean is unknown — like OQ#1, worth confirming with the
-   course/AROL. Not blocking: the KPI is well-defined without them and the semantics are
-   config-driven.
+   that layout. Roadmap item, not a Plan 6/7 task. **Plan 7 does not touch this**; it remains
+   the only genuinely open question in this section.
+4. **Statuses beyond {0, 2, 65} in real data. — RESOLVED (Plan 7).** ~~What these statuses mean
+   is unknown.~~ The slide-6 bitmask (§3.2.1) decodes all of them, and none is a contradiction:
+
+   - **status 2 with torque > 0** (5,452 rows over three months) is **No Load**, which means the
+     *first* torque threshold was not reached. Sub-threshold torque is therefore exactly what
+     this status predicts — it does **not** contradict §3.2. The earlier reading treated "No
+     Load" as "zero torque", which was the error.
+   - **status 9** = `8 + 1` = **No InTorque with the reject bit** (15 rows). It is a rejection,
+     and since Plan 7 it is counted as one.
+   - **status 4** = **No Closure without the reject bit** (7 rows). Not a rejection.
+
+   `success_rates()` still excludes the non-rejected condition flags from the
+   `successful / (successful + failed)` denominator — they carry no pass/fail verdict — but
+   Plan 7 makes the report **state the exclusion** rather than leave the counts silently not
+   adding up. What remains genuinely unconfirmed is only *why the line produced* a
+   non-rejected condition flag, which is a process question for AROL, not a decoding one.
+
+---
+
+## 13. What Plan 7 shipped
+
+**WP3 — report agent**
+
+- `agent/registry.py` — the eight tools as data, generating both the LLM tool schemas and the
+  plan JSON schema from one table, so the model can never be offered a tool that does not
+  exist.
+- `agent/planner.py` — Claude turns a question into a validated plan. Three constraints
+  (structured output, registry validation, router fallback); never raises.
+- `agent/narrator.py` — Claude writes Findings and Next checks around numbers it cannot alter;
+  falls back to the deterministic summary.
+- `agent/llm.py` — the single place the project calls the API, so the parameters this model
+  rejects cannot be reintroduced at a second call site.
+- `agent/router.py` — the keyword router and the three canned plans.
+- `agent/executor.py` — runs a plan inside a total error boundary; every failure becomes a
+  `ToolResult`, never an exception.
+- `report/render.py`, `report/plots.py`, `report/export.py` — the six mandated sections, five
+  matplotlib figures driven only by `ToolResult`s, and a genuinely self-contained HTML export.
+
+**WP4 — BOT interface**
+
+- `analytics/cli.py` and `scripts/arol` — `report kpi|drift|anomalies` and `ask`. A config
+  problem exits 2 before any work; an analysis gap produces a report that names it.
+
+**Three report templates** — KPI, drift, anomaly — rendered from fixed plans with no model in
+the loop, so the same store and period give byte-identical output.
+
+**Committed sample reports** — `docs/reports/{kpi-2026-02, drift-2026-02_2026-04,
+anomalies-2026-02}`, generated from the real three-month store. Every number in them was
+reconciled by hand against an independently written DuckDB query; the queries and the
+comparison table are in `docs/validation-log.md`.
+
+**Demo script** — `scripts/demo.sh` reproduces all three in one command: 20.3 M rows, 12/12
+tool steps `ok`, ~8 s.
+
+**Documentation** — `docs/analytics-methods.md` (one section per tool: definition, SQL shape,
+degenerate cases, assumptions) and `docs/agent-decision-flow.md` (the flowchart and why each
+fallback exists).
+
+### Amendments this plan made to the spec
+
+- §3.2 / §3.2.1 — failed cap is the reject bit, not `status == 65`. Changed measured numbers.
+- §9 — PDF is best-effort behind WeasyPrint; Markdown and HTML always ship.
+- §12 OQ#1 and OQ#4 — resolved by the brief's slide-6 table and the measured distribution.
+- §12 OQ#3 — untouched and still open.
+
+### Known gap
+
+The **live-API `ask` path has not been exercised against the real API**. Every planner and
+narrator test injects a fake client by design, and no `ANTHROPIC_API_KEY` was available in the
+validation environment. The router-fallback path is verified end-to-end on real data. See the
+Plan 7 section of `docs/validation-log.md` for the command that closes this.
