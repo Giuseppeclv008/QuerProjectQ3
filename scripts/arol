@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# The brief's WP4 command line, verbatim: `arol report kpi --period 2026-02`.
+# Resolves the repo's venv so the tool works from any directory.
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PYTHONPATH="$here/python${PYTHONPATH:+:$PYTHONPATH}" \
+  exec "$here/.venv/bin/python" -m analytics.cli "$@"
