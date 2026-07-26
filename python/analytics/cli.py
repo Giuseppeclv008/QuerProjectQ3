@@ -19,11 +19,12 @@ import argparse
 import logging
 import os
 import sys
+from dataclasses import replace
 from datetime import datetime, timezone
 
 from analytics.agent import narrator, planner, router
 from analytics.agent.executor import execute
-from analytics.config import ConfigError, load_config
+from analytics.config import Config, ConfigError, load_config
 from analytics.log import configure
 from analytics.report import export, render
 
@@ -44,6 +45,16 @@ def _build_parser():
                         help="'YYYY-MM' or 'YYYY-MM..YYYY-MM'; omit for the whole store")
     common.add_argument("--pdf", action="store_true", help="also export PDF if possible")
     common.add_argument("-v", "--verbose", action="store_true")
+
+    # Overrides, so switching between a hosted and a local model does not mean
+    # editing a config file. Only `ask` consults them; `report` runs no model.
+    common.add_argument("--provider", choices=list(Config.PROVIDERS), default=None,
+                        help="where the model runs (default: from config)")
+    common.add_argument("--model", default=None,
+                        help="model name, e.g. claude-opus-5 or qwen2.5:7b")
+    common.add_argument("--planning", choices=list(Config.PLANNING), default=None,
+                        help="how much of the planning the model does "
+                             "(plan=compose it, select=pick tools, classify=pick a report)")
 
     parser = argparse.ArgumentParser(
         prog="arol",
@@ -72,6 +83,14 @@ def main(argv=None):
 
     try:
         cfg = load_config(args.config)
+        # A CLI override beats the file. Re-running __post_init__ through
+        # replace() means an invalid override is rejected the same way an
+        # invalid config file is, rather than failing later at call time.
+        overrides = {k: v for k, v in
+                     (("provider", args.provider), ("model", args.model),
+                      ("planning", args.planning)) if v is not None}
+        if overrides:
+            cfg = replace(cfg, **overrides)
     except ConfigError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

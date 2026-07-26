@@ -37,10 +37,37 @@ class Config:
     idle_min_seconds: int = 300
 
     # WP3: the model that plans and narrates. It never computes a number.
+    #
+    # `provider` is the only field that has to change to move between a hosted
+    # model and one running on the machine. Everything downstream -- the tools,
+    # the executor, the renderer -- is untouched by the choice, because the model
+    # only ever decides which analyses to run and how to word them.
+    provider: str = "anthropic"     # anthropic | ollama
     model: str = "claude-opus-5"
-    effort: str = "high"            # low | medium | high | xhigh | max
     max_tokens: int = 16000
     api_timeout_s: float = 120.0
+
+    # anthropic only. Rejected by Ollama, so it is not sent there.
+    effort: str = "high"            # low | medium | high | xhigh | max
+
+    # ollama only.
+    ollama_host: str = "http://localhost:11434"
+    num_ctx: int = 8192             # Ollama defaults to 2048; the planner needs ~2.6k
+
+    # How much the model is asked to do. A smaller local model can route
+    # reliably long before it can compose a whole plan, so the hard part is
+    # optional. Every tier produces the same Plan type and the same numbers.
+    #   plan     -- compose the full sequence of tool calls, with arguments
+    #   select   -- choose which tools run; arguments come from their defaults
+    #   classify -- choose one of the three report types; use its canned plan
+    planning: str = "plan"
+
+    # Ceiling on how many items of a list-valued result reach the narrator. Sized
+    # for a large context; drop it to ~20 for a local model.
+    narrator_max_items: int = 120
+
+    PROVIDERS = ("anthropic", "ollama")
+    PLANNING = ("plan", "select", "classify")
 
     def __post_init__(self):
         if self.torque_min >= self.torque_max:
@@ -56,6 +83,25 @@ class Config:
             )
         if self.max_tokens < 1024:
             raise ConfigError(f"max_tokens must be >= 1024, got {self.max_tokens}")
+        if self.provider not in self.PROVIDERS:
+            raise ConfigError(
+                f"provider must be one of {list(self.PROVIDERS)}, got {self.provider!r}"
+            )
+        if self.planning not in self.PLANNING:
+            raise ConfigError(
+                f"planning must be one of {list(self.PLANNING)}, got {self.planning!r}"
+            )
+        if self.narrator_max_items < 1:
+            raise ConfigError(
+                f"narrator_max_items must be >= 1, got {self.narrator_max_items}"
+            )
+        # The planner's prompt is ~2,600 tokens of tool schema before the question
+        # is added, and Ollama silently truncates rather than erroring.
+        if self.provider == "ollama" and self.num_ctx < 4096:
+            raise ConfigError(
+                f"num_ctx must be >= 4096 for ollama (the planner prompt alone is "
+                f"~2,600 tokens and is truncated silently), got {self.num_ctx}"
+            )
 
 
 def load_config(path):
