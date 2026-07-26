@@ -126,6 +126,65 @@ The report footer always discloses both choices:
 
     narrative source: template, plan source: router
 
+## Where the model runs, and how much it is asked to do
+
+Two independent knobs, neither of which touches a number.
+
+**`provider`** — `anthropic` or `ollama`. `agent/llm.py` is the only file that
+knows the difference: Ollama never receives `thinking` or `output_config`, which
+are Anthropic's, and Anthropic never receives `num_ctx`. Both return the same
+`(payload, reason)` pair, so the planner and the narrator cannot tell which one
+answered.
+
+One consequence is worth naming. The flat args union — every step carrying every
+tool's parameters, most of them null — exists *only* because Anthropic structured
+outputs require every property in `required`. Where a provider has no such rule
+the schema can have one branch per tool, and attaching `outcome` to `trend`
+becomes ungrammatical rather than merely invalid. Measured on qwen2.5:7b over six
+questions: 3 plans rejected with the flat schema, **0** with the per-tool one, and
+faster, having no nulls to emit.
+
+**`planning`** — how much of the job the model is given:
+
+| tier | the model produces | prompt |
+|---|---|---:|
+| `plan` | the whole sequence, arguments included | ~1,850 tok |
+| `select` | which tools run; their defaults supply the arguments | ~410 tok |
+| `classify` | one of the three report types; its canned plan runs | ~16 tok |
+
+Every tier ends in an ordinary `Plan` of registry-validated steps, so the tier
+changes what the model is trusted with and never what the numbers are. `classify`
+still earns its place over the keyword router: on six naturally-phrased questions
+the router matched a keyword in **none** of them and defaulted to KPI, while the
+7B routed five correctly, including one asked in Italian.
+
+## Two ways the narrator is rejected
+
+Structured outputs guarantee a string arrives in the `findings` field. They
+guarantee nothing about it saying anything, and a small model exploits that gap
+in a specific way. Handed real three-month results, qwen2.5:7b returned:
+
+> "The analysis of the success rate for heads 1 through 36 during February to
+> April 2026 reveals several key insights and potential issues. Here's a summary
+> of the findings from both the correlation matrix and drift analysis tools:"
+
+An announcement of findings, ending on a colon, with the promised list never
+arriving — three times out of three. So the narrative is checked before it is
+used, and the check is **the bullet, not the number**: that reply does contain
+digits ("36", "2026"), so a digit check would have waved it through, while a good
+one-line finding may legitimately carry none. What it lacks is the Markdown
+bullet the prompt asks for.
+
+Rejected narration falls back to `render.summarise()` and the limits section
+carries the reason, exactly as a rejected plan does:
+
+> - **Narration.** the model's findings carried no bullet; it announced findings
+>   rather than stating them.
+
+This is the whole design in miniature. The model was genuinely useful at picking
+the analyses and useless at describing them, and the report reflects both without
+a human having to notice.
+
 ## What lands on disk
 
 | file | what it is |

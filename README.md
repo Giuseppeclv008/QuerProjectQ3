@@ -67,6 +67,7 @@ Chaos E2E resilience testing · Benchmark sweep harness
   - [Build the analytics environment](#build-the-analytics-environment)
   - [Generate a report](#generate-a-report)
   - [Ask a question](#ask-a-question)
+  - [Running the model locally](#running-the-model-locally)
   - [Configuration (WP5)](#configuration-wp5)
   - [Reproduce the demo](#reproduce-the-demo)
 - [Testing](#testing)
@@ -798,6 +799,48 @@ With no API key, no network, a refusal, or a malformed plan, `ask` falls back to
 a keyword router and the report's *Confidence and limits* section names the
 reason. A model failure costs readability, never correctness.
 
+### Running the model locally
+
+`ask` works against a hosted model or one running on your machine. The only
+field that changes is `provider`:
+
+```bash
+ollama serve && ollama pull qwen2.5:7b
+
+scripts/arol ask "which head behaves differently?" --period 2026-02 \
+  --provider ollama --model qwen2.5:7b
+```
+
+Nothing below the planner knows the difference: both paths return the same plan
+type, the same executor runs it, and every number still comes from the same SQL.
+
+**How much of the planning the model does** is a separate choice, because a model
+can route reliably long before it can compose a plan:
+
+| `--planning` | the model produces | prompt | works on |
+|---|---|---:|---|
+| `plan` (default) | the whole sequence, arguments included | ~1,850 tok | a capable model |
+| `select` | which tools to run; their defaults supply the arguments | ~410 tok | a mid-size local model |
+| `classify` | one of the three report types; its fixed plan runs | ~16 tok | almost anything |
+
+All three produce registry-validated steps, so the tier is a cost choice, not a
+correctness one.
+
+**Measured on qwen2.5:7b** (Apple M3, 16 GB) — see the
+[validation log](docs/validation-log.md):
+
+- `classify` routed 5 of 6 natural questions correctly, including one in Italian.
+  The keyword router got **0 of 6** — it only fires on literal keywords.
+- `plan` produced registry-valid plans on 6 of 6 with the per-tool schema, and
+  only 3 of 6 with the flat one Anthropic requires.
+- Narration is the weak spot: the 7B returned *"Here's a summary of the findings
+  from both tools:"* and stopped, three times out of three. That is now detected
+  and replaced by the deterministic summary, with the reason printed in the
+  report's limits section.
+
+A local model is slower: expect ~2 s to classify but ~3 min for a full `ask` on
+the three-month store, most of it narration.
+
 ### Configuration (WP5)
 
 No path, band, or threshold is hard-coded. `arol.json`:
@@ -810,10 +853,29 @@ No path, band, or threshold is hard-coded. `arol.json`:
   "torque_max": 2.5,
   "mad_k": 3.0,
   "idle_min_seconds": 300,
+  "provider": "anthropic",
   "model": "claude-opus-5",
-  "effort": "high"
+  "effort": "high",
+  "planning": "plan"
 }
 ```
+
+For a local model, three fields change and the rest stay:
+
+```json
+{
+  "provider": "ollama",
+  "model": "qwen2.5:7b",
+  "ollama_host": "http://localhost:11434",
+  "num_ctx": 8192,
+  "narrator_max_items": 20,
+  "planning": "classify"
+}
+```
+
+`num_ctx` must be at least 4096 and is rejected below it: the planner prompt
+alone is ~2,600 tokens, Ollama defaults to 2048, and it **truncates silently**
+rather than erroring — which looks exactly like a stupid model.
 
 A configuration problem (unreadable config, unknown report type) exits 2 before
 any work starts. An analysis gap — an empty period, a period the tools cannot
