@@ -51,6 +51,12 @@ Benchmark sweep harness
   - [Validation Against Python Oracle](#validation-against-python-oracle)
   - [Chaos E2E Test](#chaos-e2e-test)
   - [Performance Benchmark](#performance-benchmark)
+- [Analytics CLI and Reports](#analytics-cli-and-reports)
+  - [Build the analytics environment](#build-the-analytics-environment)
+  - [Generate a report](#generate-a-report)
+  - [Ask a question](#ask-a-question)
+  - [Configuration (WP5)](#configuration-wp5)
+  - [Reproduce the demo](#reproduce-the-demo)
 - [Testing](#testing)
 - [Design Decisions](#design-decisions)
 - [Roadmap](#roadmap)
@@ -639,6 +645,87 @@ bench/run_bench.sh --quick
 
 ---
 
+## Analytics CLI and Reports
+
+WP2–WP5. The C++ MAS above refines raw telemetry into a DuckDB store; this layer
+answers questions about it and writes reports a human can hand over.
+
+### Build the analytics environment
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r python/requirements.txt
+```
+
+### Generate a report
+
+```bash
+scripts/arol report kpi       --period 2026-02          --config arol.json
+scripts/arol report drift     --period 2026-02..2026-04 --config arol.json
+scripts/arol report anomalies --period 2026-02          --config arol.json
+```
+
+Each writes a self-contained directory: `report.md` (source of truth),
+`report.html` (portable, plots inlined as data URIs), `trace.json` (every tool
+call with its arguments and row counts), and PNGs.
+
+These three verbs run **fixed plans with no model in the loop** — the same store
+and period gives the same report, every time. Committed examples are under
+[`docs/reports/`](docs/reports/), and every number in them is reconciled against
+a direct DuckDB query in the [validation log](docs/validation-log.md).
+
+### Ask a question
+
+```bash
+export ANTHROPIC_API_KEY=...
+scripts/arol ask "which head behaves differently, and why?" --period 2026-02
+```
+
+Claude chooses which tools to run and writes the narrative. **It never computes a
+number**: every figure comes from the same deterministic SQL the `report` verbs
+use, and the figures, the tool-call trace and the limits section are rendered
+from the tool results regardless of what the model says.
+
+With no API key, no network, a refusal, or a malformed plan, `ask` falls back to
+a keyword router and the report's *Confidence and limits* section names the
+reason. A model failure costs readability, never correctness.
+
+### Configuration (WP5)
+
+No path, band, or threshold is hard-coded. `arol.json`:
+
+```json
+{
+  "store_path": "events_3mo.duckdb",
+  "machine_id": "MCC",
+  "torque_min": 1.5,
+  "torque_max": 2.5,
+  "mad_k": 3.0,
+  "idle_min_seconds": 300,
+  "model": "claude-opus-5",
+  "effort": "high"
+}
+```
+
+A configuration problem (unreadable config, unknown report type) exits 2 before
+any work starts. An analysis gap — an empty period, a period the tools cannot
+parse — is not an error: it produces a report whose limits section names the gap,
+because a report generated unattended must still land on disk.
+
+### Reproduce the demo
+
+```bash
+scripts/demo.sh
+```
+
+Loads the three-month store and generates all three report types into
+`docs/reports/` — 20.3 M rows, three reports, ~8 s.
+
+PDF export needs WeasyPrint (`pip install weasyprint`, plus Cairo/Pango); without
+it, `--pdf` logs how to install it and writes Markdown and HTML as normal.
+
+---
+
 ## Testing
 
 The project has **68 unit tests** (12 suites) across 10 Google Test files:
@@ -683,7 +770,7 @@ ticks to model recv timeouts).
 
 ## Roadmap
 
-- [ ] **Python analytics agents** — extend the MAS with analysis agents (trend detection, anomaly flagging)
+- [x] **Python analytics agents** — eight deterministic analysis tools, an LLM planner and narrator that cannot alter a number, and the `arol` CLI. See [Analytics CLI and Reports](#analytics-cli-and-reports).
 - [ ] **Attack the merge bottleneck** — the benchmark's headline finding: partitioned Parquet output or a concurrent-writer store would remove the 35–54 s unification cost that currently caps end-to-end speedup at ~1.15×
 - [ ] **PUB/SUB fan-out and REQ/REP registration** — the two ZeroMQ patterns from the spec that the current 3-endpoint PUSH/PULL fabric does not yet use
 - [ ] **TRY_CAST + quarantine** — gracefully handle malformed timestamps (currently strict-CAST aborts the day-file)

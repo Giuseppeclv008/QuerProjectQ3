@@ -106,3 +106,137 @@
 - `scripts/build_store.sh` assumed every month zip extracts into a `telemetry_.../` subfolder; the Mar/Apr zips drop day-files flat into the cwd, so the first run silently built February only (28 files). Fixed to collect day-files whether flat or in a subdir (verified: 89 files across 02/03/04).
 - `python/tests/test_real_data.py` looked for the store at `events_3mo.duckdb` (i.e. under `python/`), but `build_store.sh` and the plan's own record-numbers script put it in the repo root; the tests silently skipped. Fixed to `../events_3mo.duckdb`.
 - Spec reconciled (§5.4, §12 OQ#2 RESOLVED): capping speed is SQL in `capping_speed()`, extractor unchanged, no schema column, no reprocessing.
+
+## 2026-07-26 — Plan 7: WP3 report agent and WP4 CLI, end-to-end on the real three months
+
+**Store:** `events_3mo.duckdb` — 20,347,822 rows, machine `MCC`, 36 heads,
+2026-02-01 08:43:30 → 2026-04-30 16:59:59.
+
+**Command (one command reproduces all three reports):**
+
+    scripts/demo.sh
+
+Runtime 8.4 s for all three reports over 20.3 M rows. 12/12 tool steps returned
+`ok`. Output committed under `docs/reports/`:
+
+| directory | verb | period |
+|---|---|---|
+| `kpi-2026-02` | `report kpi` | 2026-02 |
+| `drift-2026-02_2026-04` | `report drift` | 2026-02..2026-04 |
+| `anomalies-2026-02` | `report anomalies` | 2026-02 |
+
+### Every number in the KPI report, reconciled by hand
+
+Each figure below was re-derived with a direct DuckDB query written independently
+of the toolkit, then compared against the committed `report.md`.
+
+    .venv/bin/python -c "
+    import duckdb
+    con = duckdb.connect('events_3mo.duckdb', read_only=True)
+    FEB = ['MCC', '2026-02-01', '2026-03-01']
+    print(con.execute('''
+      SELECT COUNT(*) FILTER (WHERE status = 0)                    AS successful,
+             COUNT(*) FILTER (WHERE CAST(status AS BIGINT) %% 2 = 1) AS rejected_newbit,
+             COUNT(*) FILTER (WHERE status = 65)                   AS rejected_old,
+             COUNT(*)                                              AS capping_ops
+      FROM cap_events
+      WHERE machine_id = ? AND ts >= ? AND ts < ? AND app_torque > 0
+    ''', FEB).fetchone())"
+
+| figure | report | hand query | ✓ |
+|---|---|---|---|
+| capping operations | 6,672,649 | 6,672,649 | ✓ |
+| heads | 1–36 | 1–36 | ✓ |
+| time range | 02-01 08:43:30 → 02-28 15:59:59 | same | ✓ |
+| no-load cycles (`status=2 AND app_torque=0`) | 3,774,599 | 3,774,599 | ✓ |
+| torque outside 1.5–2.5 band | 68 | 68 | ✓ |
+| successful (`status = 0`) | 6,669,339 | 6,669,339 | ✓ |
+| **rejected (reject bit, Task 1)** | **383** | **383** | ✓ |
+| rejected under the OLD `status == 65` rule | — | 371 | — |
+| success rate | 99.9943% | 6,669,339 / (6,669,339+383) = 99.99426% | ✓ |
+| weakest head | 29 @ 99.9660% over 185,349 | 29, 185349, 99.96601% | ✓ |
+| throughput | 11,121.0817 pieces/h over 25 buckets | 6,672,649 / 24 / 25 = 11,121.0817 | ✓ |
+
+**The Task 1 bitmask change is confirmed live in `success_rates`:** February
+reports **383** rejected closures, not the 371 the old `status == 65` rule found.
+Over the full three months the same comparison is **600** (new) against 585
+(old). Both match the figures measured when Plan 7 was written. The headline rate
+barely moves (0.999944 → 0.999943) — the point of the change is classification
+correctness, not the headline.
+
+### Three reporting defects found by this reconciliation, and fixed (commit 7a44358)
+
+Every underlying number was correct. The prose around three of them was not, and
+none of the three is reproducible on the tiny test fixture.
+
+1. **2,927 closures were silently outside the rate.** `success_rate`'s
+   denominator is successful + rejected, but the report printed those two counts
+   beside a capping-operations total they do not sum to: 6,669,339 + 383 against
+   6,672,649. The gap is 2,926 closures with `status = 2` and torque > 0, plus one
+   with `status = 4` — neither clean nor rejected, so they carry no pass/fail
+   verdict. The report now states this and the arithmetic closes.
+2. **Two indistinguishable drift findings.** The drift plan trends both torque
+   and success_rate, and both rendered the identical sentence. The signal is now
+   named: *Drift (torque)* and *Drift (success_rate)*.
+3. **A false "odd head out".** `head_correlation` returns every head ranked by
+   mean correlation — not a filtered outlier set — and the renderer named the
+   first one. All 36 heads correlate above 0.9999, so the report asserted *"Head
+   24 has the lowest mean correlation to its peers (1.000)"*. It now reports
+   agreement when the heads are indistinguishable at the printed precision.
+
+### Anomalies report
+
+| figure | report |
+|---|---|
+| rejected closures | 383 (agrees with the KPI report on the same period) |
+| outside the configured torque band | 68 (agrees) |
+| beyond their head's robust median ± 3·MAD band | 678,325 |
+| weakest day | 2026-02-05 @ 99.9851% over 94,248 ops |
+
+### Drift report
+
+No head exceeds the Mann-Kendall |tau| ≥ 0.5 threshold on either signal over the
+three months. Most variable head: 9 (sigma 0.0612 Nm about a median of 1.997 Nm).
+Head agreement: all 36 heads at mean correlation 0.9999–1.0000.
+
+### Agentic path, router fallback (no API key) — PASS
+
+    env -u ANTHROPIC_API_KEY scripts/arol ask \
+      "which capping head behaves differently from the others, and is it drifting?" \
+      --period 2026-02..2026-04 --config /tmp/arol-demo.json --out /tmp/arol-ask -v
+
+The report is still produced, 4/4 steps `ok`, and the limits section discloses
+both the attempt and the reason:
+
+> **Planning.** planning failed: the call failed: "Could not resolve
+> authentication method…"; the keyword router selected the drift plan (3 keyword
+> match(es)).
+
+Note the SDK constructs a client without credentials and fails at *call* time, so
+the path that actually fires is the call-failed branch rather than the no-client
+branch. Both degrade to the router. The router's keyword match picked the drift
+plan from the question, which is the right plan for it.
+
+`-v` was also fixed here: it had raised the ROOT logger, so markdown-it emitted a
+line per parse rule per line of the report and buried the tool calls. That run
+printed hundreds of lines; it now prints thirteen — the plan, every tool call
+with its arguments, both fallbacks with their reasons, and the files written.
+
+### Agentic path against the live API — NOT RUN
+
+`ANTHROPIC_API_KEY` was not available in this environment, so the `plan (llm)`
+path has never been exercised against the real API. Every planner and narrator
+test injects a fake client by design. **This is the one part of Plan 7 that
+remains unverified end-to-end**, and it is where a wrong parameter name would
+surface as a 400. To close it:
+
+    export ANTHROPIC_API_KEY=...
+    scripts/arol ask "which capping head behaves differently, and is it drifting?" \
+      --period 2026-02..2026-04 --out /tmp/arol-ask -v
+
+Expect `plan (llm): [...]` in the log and `narrative source: llm` in the report,
+then confirm every number in Findings also appears in `trace.json`.
+
+### Test suite
+
+201 passed (Python), output pristine. C++ 73/73 unchanged.

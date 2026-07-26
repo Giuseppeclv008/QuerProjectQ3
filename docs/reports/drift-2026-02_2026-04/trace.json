@@ -1,0 +1,55 @@
+[
+  {
+    "step": 1,
+    "tool": "trend",
+    "args": {
+      "period": "2026-02..2026-04",
+      "signal": "torque",
+      "by": "day",
+      "window": 7
+    },
+    "rationale": "Rolling mean/sigma of torque per head, with Mann-Kendall drift.",
+    "status": "ok",
+    "rows_scanned": 11908148,
+    "message": ""
+  },
+  {
+    "step": 2,
+    "tool": "trend",
+    "args": {
+      "period": "2026-02..2026-04",
+      "signal": "success_rate",
+      "by": "day",
+      "window": 7
+    },
+    "rationale": "Whether quality moved with torque, or independently of it.",
+    "status": "ok",
+    "rows_scanned": 11908148,
+    "message": ""
+  },
+  {
+    "step": 3,
+    "tool": "torque_stats",
+    "args": {
+      "period": "2026-02..2026-04",
+      "outcome": "successful",
+      "by": "head"
+    },
+    "rationale": "Variability ranking, to separate a drifting head from a noisy one.",
+    "status": "ok",
+    "rows_scanned": 11902090,
+    "message": ""
+  },
+  {
+    "step": 4,
+    "tool": "head_correlation",
+    "args": {
+      "period": "2026-02..2026-04",
+      "by": "day"
+    },
+    "rationale": "Which head is out of step with the rest of the machine.",
+    "status": "ok",
+    "rows_scanned": 11908148,
+    "message": ""
+  }
+]

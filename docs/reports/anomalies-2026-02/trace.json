@@ -1,0 +1,37 @@
+[
+  {
+    "step": 1,
+    "tool": "anomalies",
+    "args": {
+      "period": "2026-02",
+      "method": "both"
+    },
+    "rationale": "Threshold hits, robust per-head deviation, and rejected closures.",
+    "status": "ok",
+    "rows_scanned": 10450551,
+    "message": ""
+  },
+  {
+    "step": 2,
+    "tool": "overview",
+    "args": {
+      "period": "2026-02"
+    },
+    "rationale": "Denominator for every count above, plus data-quality flags.",
+    "status": "ok",
+    "rows_scanned": 10450551,
+    "message": ""
+  },
+  {
+    "step": 3,
+    "tool": "success_rates",
+    "args": {
+      "period": "2026-02",
+      "by": "day"
+    },
+    "rationale": "Daily rates, to place any abnormal interval in context.",
+    "status": "ok",
+    "rows_scanned": 6672649,
+    "message": ""
+  }
+]
