@@ -11,6 +11,8 @@ import json
 import logging
 from dataclasses import asdict
 
+from analytics.agent import llm
+from analytics.agent.llm import client as _client
 from analytics.report.render import Narrative, summarise
 
 log = logging.getLogger(__name__)
@@ -39,15 +41,6 @@ _SCHEMA = {
 }
 
 
-def _client(cfg):
-    try:
-        import anthropic
-        return anthropic.Anthropic(timeout=cfg.api_timeout_s)
-    except Exception as exc:                       # noqa: BLE001
-        log.info("no Anthropic client available (%s)", exc)
-        return None
-
-
 def _payload(execution):
     return json.dumps([
         {
@@ -69,21 +62,11 @@ def narrate(cfg, execution, client=None):
 
     prompt = (f"Goal: {execution.plan.goal}\n\n"
               f"Results:\n{_payload(execution)}")
+    payload, reason = llm.json_call(cfg, client, SYSTEM, prompt, _SCHEMA)
+    if payload is None:
+        log.warning("narration fell back to the deterministic summary: %s", reason)
+        return summarise(execution)
     try:
-        response = client.messages.create(
-            model=cfg.model,
-            max_tokens=cfg.max_tokens,
-            thinking={"type": "adaptive"},
-            output_config={"effort": cfg.effort,
-                           "format": {"type": "json_schema", "schema": _SCHEMA}},
-            system=SYSTEM,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        if getattr(response, "stop_reason", None) == "refusal":
-            raise RuntimeError("the model refused the narration request")
-        text = next(b.text for b in response.content
-                    if getattr(b, "type", "") == "text")
-        payload = json.loads(text)
         return Narrative(findings=payload["findings"],
                          next_checks=payload["next_checks"], source="llm")
     except Exception as exc:                       # noqa: BLE001
