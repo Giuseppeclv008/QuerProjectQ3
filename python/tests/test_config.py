@@ -52,3 +52,31 @@ def test_load_config_malformed_json_raises_config_error(tmp_path):
     p.write_text("{not json")
     with pytest.raises(ConfigError):
         load_config(str(p))
+
+
+def test_verbose_raises_our_loggers_without_raising_our_dependencies():
+    """-v exists to show the tool-use flow. Raising the ROOT logger to DEBUG
+    instead buries it: markdown-it alone emits a line per parse rule per line of
+    the report, which is what a real `arol ask ... -v` run produced."""
+    import logging
+
+    from analytics.log import configure
+
+    configure(verbose=True)
+    try:
+        assert logging.getLogger("analytics.agent.executor").getEffectiveLevel() \
+            == logging.DEBUG
+        assert logging.getLogger("arol").getEffectiveLevel() == logging.DEBUG
+        assert logging.getLogger("markdown_it.rules_block").getEffectiveLevel() \
+            == logging.WARNING
+    finally:
+        configure(verbose=False)
+
+
+def test_without_verbose_our_loggers_are_at_info():
+    import logging
+
+    from analytics.log import configure
+
+    configure(verbose=False)
+    assert logging.getLogger("analytics").getEffectiveLevel() == logging.INFO

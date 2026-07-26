@@ -54,10 +54,11 @@ def summarise(execution):
     narrative is checked against.
     """
     lines, checks = [], []
-    for result in execution.results:
+    for step, result in zip(execution.plan.steps, execution.results):
         if result.status != "ok":
             continue
         v = result.values
+        args = effective_args(step)
         if result.tool == "overview":
             lines.append(
                 f"- **Scope.** {_fmt(v['capping_operations'])} capping operations "
@@ -78,13 +79,22 @@ def summarise(execution):
                              f"reset markers in scope.")
         elif result.tool == "success_rates" and isinstance(v, dict):
             rate = v["success_rate"]
-            lines.append(
-                f"- **Success rate.** {rate * 100:.4f}% "
-                f"({_fmt(v['successful'])} successful, {_fmt(v['failed'])} rejected). "
-                f"Lowest head: {v['lowest_head']}."
-                if rate is not None else
-                "- **Success rate.** No pass/fail verdicts in scope."
-            )
+            if rate is None:
+                lines.append("- **Success rate.** No pass/fail verdicts in scope.")
+            else:
+                line = (f"- **Success rate.** {rate * 100:.4f}% "
+                        f"({_fmt(v['successful'])} successful, "
+                        f"{_fmt(v['failed'])} rejected). "
+                        f"Lowest head: {v['lowest_head']}.")
+                # The rate's denominator is successful + rejected, not every
+                # capping operation: a closure that is neither status 0 nor a
+                # reject carries no verdict. Say so, or the successful and
+                # rejected counts visibly fail to add up to the scope line.
+                undecided = v["total"] - v["successful"] - v["failed"]
+                if undecided:
+                    line += (f" A further {_fmt(undecided)} closures carry no "
+                             f"pass/fail verdict and are outside the rate.")
+                lines.append(line)
         elif result.tool == "success_rates" and isinstance(v, list):
             ranked = [r for r in v if r.get("success_rate") is not None]
             if ranked:
@@ -111,19 +121,23 @@ def summarise(execution):
                 f"{hours:,.1f} head-hours in total."
             )
         elif result.tool == "trend":
+            # A plan may trend more than one signal. Without naming it, two
+            # trend steps produce two identical, indistinguishable findings.
+            signal = args.get("signal", "torque")
             drifting = [d for d in v["drift"] if d["drifting"]]
             if drifting:
                 worst = drifting[0]
                 lines.append(
-                    f"- **Drift.** {len(drifting)} head(s) drifting; the strongest is "
-                    f"head {worst['head_id']} ({worst['direction']}, tau = "
-                    f"{worst['tau']:.2f})."
+                    f"- **Drift ({signal}).** {len(drifting)} head(s) drifting; the "
+                    f"strongest is head {worst['head_id']} ({worst['direction']}, "
+                    f"tau = {worst['tau']:.2f})."
                 )
-                checks.append(f"Re-run drift on head {worst['head_id']} next month; "
-                              f"a tau that keeps its sign is a maintenance trigger.")
+                checks.append(f"Re-run {signal} drift on head {worst['head_id']} next "
+                              f"month; a tau that keeps its sign is a maintenance "
+                              f"trigger.")
             else:
-                lines.append("- **Drift.** No head exceeds the Mann-Kendall drift "
-                             "threshold in this period.")
+                lines.append(f"- **Drift ({signal}).** No head exceeds the "
+                             f"Mann-Kendall drift threshold in this period.")
         elif result.tool == "torque_stats" and isinstance(v, list) and v:
             worst = v[0]     # already ordered by stddev DESC
             lines.append(
@@ -132,13 +146,29 @@ def summarise(execution):
                 f"{worst['median']:.3f} Nm)."
             )
         elif result.tool == "head_correlation":
-            outliers = v.get("outliers") or []
-            if outliers:
-                odd = outliers[0]
-                lines.append(
-                    f"- **Odd head out.** Head {odd['head_id']} has the lowest mean "
-                    f"correlation to its peers ({odd['mean_correlation']:.3f})."
-                )
+            # `outliers` is every head ranked by mean correlation, not a filtered
+            # set, so outliers[0] is only "odd" if it is actually out of step.
+            # On a healthy machine every head correlates above 0.999 and naming
+            # the lowest reads as a diagnosis of a head that is behaving fine --
+            # printed to 3dp it says "the odd head out correlates 1.000".
+            ranked = v.get("outliers") or []
+            if ranked:
+                odd, closest = ranked[0], ranked[-1]
+                lo, hi = odd["mean_correlation"], closest["mean_correlation"]
+                if hi - lo < 0.001:      # indistinguishable at the printed precision
+                    lines.append(
+                        f"- **Head agreement.** All {len(ranked)} heads track each "
+                        f"other closely (mean correlation {lo:.4f}-{hi:.4f}); none "
+                        f"is out of step."
+                    )
+                else:
+                    lines.append(
+                        f"- **Odd head out.** Head {odd['head_id']} has the lowest "
+                        f"mean correlation to its peers ({lo:.3f}, against "
+                        f"{hi:.3f} for the closest-tracking head)."
+                    )
+                    checks.append(f"Compare head {odd['head_id']}'s torque trace "
+                                  f"against a well-behaved head over the same period.")
         elif result.tool == "anomalies":
             c = v["counts"]
             lines.append(

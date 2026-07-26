@@ -8,10 +8,11 @@ number nobody re-read.
 import json
 from pathlib import Path
 
-from analytics.agent.executor import execute
+from analytics.agent.executor import Execution, execute
 from analytics.agent.plan import Plan, PlanStep
 from analytics.agent.router import canned_plan
 from analytics.report import render
+from analytics.result import ToolResult
 
 GOLDEN = Path(__file__).parent / "fixtures" / "golden_kpi_report.md"
 FIXED_TIME = "2026-07-24T12:00:00Z"
@@ -72,6 +73,72 @@ def test_a_model_shaped_plan_gets_the_same_figures_as_a_router_one(tiny_cfg, tmp
 
     assert drawn[0], "the spelled-out plan produced no figure, so this proves nothing"
     assert drawn[1] == drawn[0], "the model-shaped plan silently lost its figures"
+
+
+def _summarise(*steps_and_results):
+    """summarise() over hand-built results, for the shapes the tiny store cannot
+    produce. Each argument is (PlanStep, ToolResult)."""
+    steps = [s for s, _ in steps_and_results]
+    results = [r for _, r in steps_and_results]
+    return render.summarise(Execution(plan=Plan(goal="g", steps=steps),
+                                      results=results)).findings
+
+
+def test_two_trend_steps_produce_two_distinguishable_findings():
+    """A drift plan trends torque and success_rate. Unlabelled, both render the
+    same sentence and the reader cannot tell which signal is which."""
+    quiet = ToolResult.ok("trend", {"series": [], "drift": []})
+    findings = _summarise(
+        (PlanStep("trend", {"signal": "torque"}), quiet),
+        (PlanStep("trend", {"signal": "success_rate"}), quiet),
+    )
+    assert "Drift (torque)" in findings
+    assert "Drift (success_rate)" in findings
+
+
+def test_heads_that_all_agree_are_not_reported_as_an_odd_head_out():
+    """`outliers` is every head ranked, not a filtered set. On real data every
+    head correlates above 0.9999, and naming the lowest printed the
+    self-defeating claim that the odd head out correlates 1.000."""
+    ranked = [{"head_id": h, "mean_correlation": c}
+              for h, c in ((24, 0.99995), (7, 0.99997), (3, 0.99999))]
+    findings = _summarise((PlanStep("head_correlation", {}),
+                           ToolResult.ok("head_correlation",
+                                         {"matrix": {}, "outliers": ranked})))
+    assert "Odd head out" not in findings
+    assert "Head agreement" in findings
+    assert "none is out of step" in findings
+
+
+def test_a_head_that_really_is_out_of_step_is_still_named():
+    ranked = [{"head_id": 12, "mean_correlation": 0.71},
+              {"head_id": 4, "mean_correlation": 0.998}]
+    findings = _summarise((PlanStep("head_correlation", {}),
+                           ToolResult.ok("head_correlation",
+                                         {"matrix": {}, "outliers": ranked})))
+    assert "Odd head out" in findings
+    assert "Head 12" in findings and "0.710" in findings
+
+
+def test_closures_with_no_verdict_are_disclosed_not_silently_dropped():
+    """The rate's denominator is successful + rejected. On the real store 2,927
+    February closures were neither, so the two counts did not add up to the
+    capping-operations figure printed two lines above and nothing said why."""
+    findings = _summarise((PlanStep("success_rates", {"by": "overall"}),
+                           ToolResult.ok("success_rates",
+                                         {"total": 1000, "successful": 900,
+                                          "failed": 40, "success_rate": 900 / 940,
+                                          "lowest_head": 3})))
+    assert "60 closures carry no pass/fail verdict" in findings
+
+
+def test_a_rate_whose_counts_do_add_up_says_nothing_extra():
+    findings = _summarise((PlanStep("success_rates", {"by": "overall"}),
+                           ToolResult.ok("success_rates",
+                                         {"total": 940, "successful": 900,
+                                          "failed": 40, "success_rate": 900 / 940,
+                                          "lowest_head": 3})))
+    assert "no pass/fail verdict" not in findings
 
 
 def test_provenance_reaches_the_limits_section(tiny_cfg, tmp_path):
