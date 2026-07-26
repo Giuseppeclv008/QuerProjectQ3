@@ -36,6 +36,12 @@ class Config:
     # A head is idle after this many seconds of sustained No-Load.
     idle_min_seconds: int = 300
 
+    # WP3: the model that plans and narrates. It never computes a number.
+    model: str = "claude-opus-5"
+    effort: str = "high"            # low | medium | high | xhigh | max
+    max_tokens: int = 16000
+    api_timeout_s: float = 120.0
+
     def __post_init__(self):
         if self.torque_min >= self.torque_max:
             raise ConfigError(
@@ -44,6 +50,12 @@ class Config:
             )
         if self.idle_min_seconds <= 0:
             raise ConfigError(f"idle_min_seconds must be > 0, got {self.idle_min_seconds}")
+        if self.effort not in ("low", "medium", "high", "xhigh", "max"):
+            raise ConfigError(
+                f"effort must be one of low/medium/high/xhigh/max, got {self.effort!r}"
+            )
+        if self.max_tokens < 1024:
+            raise ConfigError(f"max_tokens must be >= 1024, got {self.max_tokens}")
 
 
 def load_config(path):

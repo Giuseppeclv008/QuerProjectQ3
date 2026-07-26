@@ -15,6 +15,7 @@ import logging
 import os
 from dataclasses import dataclass
 
+from analytics.agent.plan import effective_args
 from analytics.report import plots
 
 log = logging.getLogger(__name__)
@@ -165,12 +166,18 @@ def _figures(execution, out_dir):
     """Draw whatever the results support. Returns [(caption, filename), ...]."""
     figures = []
     for step, result in zip(execution.plan.steps, execution.results):
+        # Read the step the way the executor did: a null argument means the tool's
+        # own default was used, so that default is what decides the figure. A model
+        # plan spells out every argument, nulling the ones it does not set, and
+        # matching on the raw args would silently drop every figure from every
+        # model-planned report.
+        args = effective_args(step)
         keys = []
-        if result.tool == "success_rates" and step.args.get("by") == "head":
+        if result.tool == "success_rates" and args.get("by", "head") == "head":
             keys = [("success_rates", "head")]
         elif result.tool == "capping_speed":
             keys = [("capping_speed", None)]
-        elif result.tool == "trend" and step.args.get("signal", "torque") == "torque":
+        elif result.tool == "trend" and args.get("signal", "torque") == "torque":
             keys = [("trend", "torque"), ("trend", "drift")]
         elif result.tool == "anomalies":
             keys = [("anomalies", None)]

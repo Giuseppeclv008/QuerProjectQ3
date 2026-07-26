@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 
 from analytics.agent.executor import execute
+from analytics.agent.plan import Plan, PlanStep
 from analytics.agent.router import canned_plan
 from analytics.report import render
 
@@ -47,6 +48,30 @@ def test_plots_are_written_and_referenced(tiny_cfg, tmp_path):
     for png in tmp_path.glob("*.png"):
         assert f"({png.name})" in text, f"{png.name} written but never referenced"
     assert list(tmp_path.glob("*.png")), "KPI report produced no figures at all"
+
+
+def test_a_model_shaped_plan_gets_the_same_figures_as_a_router_one(tiny_cfg, tmp_path):
+    """Structured outputs make the model spell out every argument, nulling the ones
+    it does not set. Null means "the tool's default", so a plan that leaves `by`
+    null must draw exactly the figure that a plan saying `by="head"` draws -- the
+    figures cannot depend on whether the default was written out."""
+    spelled = Plan(goal="g", steps=[
+        PlanStep("success_rates", {"period": "2026-02", "by": "head"})])
+    nulled = Plan(goal="g", source="llm", steps=[
+        PlanStep("success_rates", {"period": "2026-02", "by": None, "outcome": None,
+                                   "bucket": None, "method": None, "signal": None,
+                                   "window": None, "min_seconds": None, "heads": None})])
+
+    drawn = []
+    for name, plan in (("spelled", spelled), ("nulled", nulled)):
+        out = tmp_path / name
+        out.mkdir()
+        ex = execute(tiny_cfg, plan)
+        render.render(ex, tiny_cfg, out, render.summarise(ex), generated_at=FIXED_TIME)
+        drawn.append(sorted(p.name for p in out.glob("*.png")))
+
+    assert drawn[0], "the spelled-out plan produced no figure, so this proves nothing"
+    assert drawn[1] == drawn[0], "the model-shaped plan silently lost its figures"
 
 
 def test_provenance_reaches_the_limits_section(tiny_cfg, tmp_path):

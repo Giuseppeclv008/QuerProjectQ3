@@ -15,6 +15,7 @@ Two things happen here that happen nowhere else:
 import logging
 from dataclasses import dataclass, field, replace
 
+from analytics.agent.plan import effective_args
 from analytics.agent.registry import TOOLS, validate_step
 from analytics.result import ToolResult
 
@@ -32,7 +33,7 @@ def execute(cfg, plan):
     """Run every step. A failing step is recorded and the plan continues."""
     results, trace = [], []
     for index, step in enumerate(plan.steps, start=1):
-        args = {k: v for k, v in step.args.items() if v is not None}
+        args = effective_args(step)
         reason = validate_step(replace(step, args=args))
         if reason is not None:
             log.warning("step %d rejected: %s", index, reason)
