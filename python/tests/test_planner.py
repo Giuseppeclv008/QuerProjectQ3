@@ -71,7 +71,13 @@ def test_the_request_carries_the_configured_model_and_effort(tiny_cfg):
     assert sent["model"] == tiny_cfg.model
     assert sent["output_config"]["effort"] == tiny_cfg.effort
     assert sent["thinking"] == {"type": "adaptive"}
-    assert "temperature" not in sent and "top_p" not in sent
+    assert sent["max_tokens"] == tiny_cfg.max_tokens
+    # This model rejects all four of these with a 400. budget_tokens especially:
+    # it is the pre-4.6 way to size thinking, so it is the one most likely to be
+    # reintroduced by someone working from memory.
+    for banned in ("temperature", "top_p", "top_k", "budget_tokens"):
+        assert banned not in sent, f"{banned} is rejected by {tiny_cfg.model}"
+    assert "budget_tokens" not in sent["thinking"]
 
 
 def test_the_request_constrains_the_model_to_the_plan_schema(tiny_cfg):
