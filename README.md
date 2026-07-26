@@ -1,12 +1,23 @@
 # IIoT Data Refinement MAS — AROL Capping Machine Telemetry
 
-Multi-agent system (MAS) for refining and analyzing Industrial IoT telemetry
-from an AROL capping machine. Built for the **System and Device Programming**
-course at Politecnico di Torino.
+Multi-agent system (MAS) for refining Industrial IoT telemetry from an AROL
+capping machine, plus an **agentic analytics layer** that answers questions
+about the refined data and writes reports. Built for the **System and Device
+Programming** course at Politecnico di Torino.
+
+Two tiers, each usable on its own:
+
+1. **Ingestion (C++)** — collapses a 1 Hz polling stream of 89 CSV day-files
+   into reconstructed cap closures in DuckDB. 20.3M events over three months.
+2. **Analytics and reporting (Python)** — eight deterministic analysis tools, an
+   LLM that chooses which of them to run and writes the prose, and the `arol`
+   CLI. **The model never computes a number**; every figure comes from the same
+   parameterised SQL whether the model is involved or not.
 
 **Stack:** C++20 core · ZeroMQ PUSH/PULL with heartbeat-driven liveness ·
-DuckDB persistence · Python validation oracle · Chaos E2E resilience testing ·
-Benchmark sweep harness
+DuckDB persistence · Python analytics toolkit · Claude (structured outputs,
+registry-validated plans) · matplotlib · Python validation oracles ·
+Chaos E2E resilience testing · Benchmark sweep harness
 
 ---
 
@@ -19,6 +30,7 @@ Benchmark sweep harness
   - [C4 Component (Level 3)](#c4-component-level-3)
 - [Project Structure](#project-structure)
 - [Core Domain: The Dedup Transform](#core-domain-the-dedup-transform)
+- [Status Semantics](#status-semantics)
 - [Components in Detail](#components-in-detail)
   - [Domain Layer](#domain-layer)
   - [Store Layer](#store-layer)
@@ -51,6 +63,12 @@ Benchmark sweep harness
   - [Validation Against Python Oracle](#validation-against-python-oracle)
   - [Chaos E2E Test](#chaos-e2e-test)
   - [Performance Benchmark](#performance-benchmark)
+- [Analytics CLI and Reports](#analytics-cli-and-reports)
+  - [Build the analytics environment](#build-the-analytics-environment)
+  - [Generate a report](#generate-a-report)
+  - [Ask a question](#ask-a-question)
+  - [Configuration (WP5)](#configuration-wp5)
+  - [Reproduce the demo](#reproduce-the-demo)
 - [Testing](#testing)
 - [Design Decisions](#design-decisions)
 - [Roadmap](#roadmap)
@@ -111,6 +129,13 @@ database stores, and the testing/validation scripts.
 | DuckDB Store | DuckDB | Persistent `cap_events` table with idempotent upserts |
 | `chaos_e2e.sh` | Bash | Resilience test: SIGKILL a worker, verify full recovery |
 | `run_bench.sh` | Bash | Performance sweep across architectures, threads, and volumes |
+| `arol` | Python CLI | WP4 BOT interface: three fixed report types plus free-text `ask` |
+| analytics toolkit | Python | WP2: eight deterministic tools reading the `cap_events` store |
+| report agent | Python + Claude | WP3: plans which tools to run and narrates the result |
+
+The C4 diagrams below predate the analytics tier and show the C++ ingestion
+containers only. For how a request becomes a report, see
+[`docs/agent-decision-flow.md`](docs/agent-decision-flow.md).
 
 ### C4 Component (Level 3)
 
@@ -131,7 +156,7 @@ organized by layer.
 ├── core/                                   # C++ source code
 │   ├── include/mas/
 │   │   ├── domain/                         # Domain layer (pure logic, no I/O)
-│   │   │   ├── CapEvent.hpp                # RawRow, CapEvent, NUM_HEADS, is_fault_status
+│   │   │   ├── CapEvent.hpp                # RawRow, CapEvent, NUM_HEADS, is_reject
 │   │   │   ├── CapEventExtractor.hpp       # Stateful per-head dedup engine
 │   │   │   └── Pipeline.hpp                # clean_file() orchestrator
 │   │   ├── store/                          # Storage layer (persistence)
@@ -181,12 +206,45 @@ organized by layer.
 │   └── fakes/
 │       └── FakeTransport.hpp               # FakeSource, FakeSink, FakeTickSource
 │
-├── python/                                 # Python validation oracle
+├── python/                                 # Analytics tier (WP2-WP5) + validation oracles
+│   ├── requirements.txt                    # duckdb, matplotlib, anthropic, markdown-it-py
 │   ├── oracle.py                           # Reference dedup implementation
 │   ├── test_oracle.py                      # Pytest unit tests for the oracle
-│   └── validate_real.py                    # Cross-validation: C++ vs Python on real data
+│   ├── validate_real.py                    # Cross-validation: C++ vs Python on real data
+│   ├── oracle_kpi.py                       # Independent KPI oracle, recomputed from raw CSV
+│   └── analytics/
+│       ├── config.py                       # WP5: every path, band and threshold (no hard-coding)
+│       ├── log.py                          # Logging, configured once at the CLI boundary
+│       ├── status.py                       # The slide-6 status bitmask; REJECT_SQL lives here
+│       ├── store.py                        # DuckDB connection + period scoping
+│       ├── result.py                       # ToolResult: values + status + provenance
+│       ├── cli.py                          # WP4: arol report kpi|drift|anomalies, arol ask
+│       ├── tools/                          # WP2: the eight deterministic analyses
+│       │   ├── overview.py                 # Scope and data quality
+│       │   ├── success.py                  # The flagship KPI: success rates
+│       │   ├── torque.py                   # Per-head torque distribution
+│       │   ├── speed.py                    # Capping speed (pieces/hour)
+│       │   ├── idle.py                     # Idle periods (gaps-and-islands)
+│       │   ├── anomaly.py                  # Threshold + robust (median +/- k*MAD) detection
+│       │   ├── trend.py                    # Mann-Kendall drift
+│       │   └── correlation.py              # Per-head torque correlation
+│       ├── agent/                          # WP3: the report agent
+│       │   ├── plan.py                     # Plan / PlanStep, and effective_args()
+│       │   ├── registry.py                 # The tools as data -> LLM + plan JSON schemas
+│       │   ├── router.py                   # Keyword router and the three canned plans
+│       │   ├── llm.py                      # The one place this project calls the API
+│       │   ├── planner.py                  # Claude -> a registry-validated plan
+│       │   ├── narrator.py                 # Claude -> prose around numbers it cannot alter
+│       │   └── executor.py                 # Runs a plan; every failure becomes a value
+│       └── report/
+│           ├── render.py                   # The six mandated sections + tool-call trace
+│           ├── plots.py                    # Five matplotlib figures, driven only by ToolResults
+│           └── export.py                   # Self-contained HTML; best-effort PDF
+│   └── tests/                              # 207 tests incl. golden report + mocked-LLM agent
 │
 ├── scripts/
+│   ├── arol                                # WP4 entry point: arol report kpi --period 2026-02
+│   ├── demo.sh                             # One command: three report types on the real store
 │   └── chaos_e2e.sh                        # Resilience E2E: kill worker mid-run, verify recovery
 │
 ├── bench/                                  # Performance benchmarking
@@ -197,6 +255,13 @@ organized by layer.
 │
 ├── docs/
 │   ├── validation-log.md                   # Real-data test results log
+│   ├── analytics-methods.md                # Per-tool: definition, SQL shape, assumptions
+│   ├── agent-decision-flow.md              # How a request becomes a report, and every fallback
+│   ├── presentation/outline.md             # 13-slide outline, bullets fully written
+│   ├── reports/                            # Committed sample reports (hand-reconciled)
+│   │   ├── kpi-2026-02/
+│   │   ├── drift-2026-02_2026-04/
+│   │   └── anomalies-2026-02/
 │   ├── bench/
 │   │   └── results.md                      # Benchmark analysis: medians, scaling, bottleneck
 │   └── diagrams/                           # C4 architecture diagrams
@@ -226,7 +291,53 @@ organized by layer.
 | **Held** | `c == last` | *No event emitted* (no cap applied) |
 
 Each event carries: `head_id` (1–36), `timestamp`, `cap_seq` (counter value),
-`app_torque`, `status`, `delta`, `is_fault` (status == 65), `aggregated`, `reset`.
+`app_torque`, `status`, `delta`, `is_fault` (the reject bit — see
+[Status semantics](#status-semantics)), `aggregated`, `reset`.
+
+---
+
+## Status Semantics
+
+The `status` column is **a bitmask, not an enumeration**. Bit 0 is the reject
+signal; bits 1–6 are the conditions that caused it. The machine brief's status
+table lists 14 rows, which is 7 conditions × {reject, no reject}.
+
+| bit | value | condition |
+|---|---|---|
+| 0 | 1 | **reject signal** — the cap was rejected |
+| 1 | 2 | No Load |
+| 2 | 4 | No Closure |
+| 3 | 8 | No InTorque |
+| 4 | 16 | No CapTurns |
+| 5 | 32 | Following Error |
+| 6 | 64 | Bad Closure |
+
+So `65` is `64 + 1` (Bad Closure **with** reject) and `9` is `8 + 1` (No
+InTorque with reject). **A closure is a rejection iff its status is odd:**
+
+```sql
+CAST(status AS BIGINT) % 2 = 1
+```
+
+Single-sourced in [`analytics/status.py`](python/analytics/status.py)
+(`REJECT_SQL`) and `CapEvent::is_reject`.
+
+**This corrected a shipped number.** An earlier `status == 65` rule missed every
+rejection that was not a Bad Closure. Measured on the three-month store:
+
+| period | successful | rejects (`status == 65`) | rejects (reject bit) |
+|---|---:|---:|---:|
+| 2026-02 | 6,669,339 | 371 | **383** |
+| 2026-02..2026-04 | 11,902,090 | 585 | **600** |
+
+The bitmask reading is confirmed by the data, not assumed: 585 closures at
+status 65 plus 15 at status 9 is exactly the 600 the odd-status rule returns.
+
+A closure that is neither `status == 0` nor a reject carries **no pass/fail
+verdict** — 5,452 No-Load-with-torque rows over three months — and is excluded
+from the success-rate denominator rather than being guessed at. The reports say
+so explicitly. Full detail in
+[`docs/analytics-methods.md`](docs/analytics-methods.md).
 
 ---
 
@@ -296,7 +407,7 @@ CREATE TABLE IF NOT EXISTS cap_events (
     app_torque REAL,                     -- applied torque (Nm)
     status     REAL,                     -- AROL Equatorque status code
     delta      INTEGER,                  -- caps since last observation
-    is_fault   BOOLEAN,                  -- true if status == 65
+    is_fault   BOOLEAN,                  -- true if the reject bit is set (status is odd)
     aggregated BOOLEAN,                  -- true if delta > 1
     is_reset   BOOLEAN,                  -- true if counter reset/rollover
     UNIQUE (machine_id, head_id, cap_seq)
@@ -484,14 +595,16 @@ overlap. `mas_merge` safely skips corrupt stores.
 
 ## Python Validation Oracle
 
-An independent Python re-implementation of the dedup logic serves as a
-**reference oracle** for cross-checking the C++ core:
+Independent Python re-implementations serve as **reference oracles**, sharing no
+code with the implementations they check — an oracle that imports the definition
+under test cannot detect an error in it:
 
 | File | Purpose |
 |------|---------|
 | [`oracle.py`](python/oracle.py) | `extract(path)` → list of event tuples. Mirrors `CapEventExtractor` logic exactly. |
 | [`test_oracle.py`](python/test_oracle.py) | Pytest: verifies increment counting, dedup of held rows, and aggregated detection. |
 | [`validate_real.py`](python/validate_real.py) | Asserts C++ output row count matches oracle count on real data. |
+| [`oracle_kpi.py`](python/oracle_kpi.py) | Recomputes the headline KPIs straight from the raw CSV — no DuckDB, no toolkit SQL. Cross-checks the WP2 analytics tier. |
 
 **Validated result:** On 2026-02-01 day-file (86,399 rows): C++ = 765,711 events, Python = 765,711 events → **MATCH**.
 
@@ -639,12 +752,101 @@ bench/run_bench.sh --quick
 
 ---
 
+## Analytics CLI and Reports
+
+WP2–WP5. The C++ MAS above refines raw telemetry into a DuckDB store; this layer
+answers questions about it and writes reports a human can hand over.
+
+### Build the analytics environment
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r python/requirements.txt
+```
+
+### Generate a report
+
+```bash
+scripts/arol report kpi       --period 2026-02          --config arol.json
+scripts/arol report drift     --period 2026-02..2026-04 --config arol.json
+scripts/arol report anomalies --period 2026-02          --config arol.json
+```
+
+Each writes a self-contained directory: `report.md` (source of truth),
+`report.html` (portable, plots inlined as data URIs), `trace.json` (every tool
+call with its arguments and row counts), and PNGs.
+
+These three verbs run **fixed plans with no model in the loop** — the same store
+and period gives the same report every time, apart from the generation timestamp
+in the header. Committed examples are under
+[`docs/reports/`](docs/reports/), and every number in them is reconciled against
+a direct DuckDB query in the [validation log](docs/validation-log.md).
+
+### Ask a question
+
+```bash
+export ANTHROPIC_API_KEY=...
+scripts/arol ask "which head behaves differently, and why?" --period 2026-02
+```
+
+Claude chooses which tools to run and writes the narrative. **It never computes a
+number**: every figure comes from the same deterministic SQL the `report` verbs
+use, and the figures, the tool-call trace and the limits section are rendered
+from the tool results regardless of what the model says.
+
+With no API key, no network, a refusal, or a malformed plan, `ask` falls back to
+a keyword router and the report's *Confidence and limits* section names the
+reason. A model failure costs readability, never correctness.
+
+### Configuration (WP5)
+
+No path, band, or threshold is hard-coded. `arol.json`:
+
+```json
+{
+  "store_path": "events_3mo.duckdb",
+  "machine_id": "MCC",
+  "torque_min": 1.5,
+  "torque_max": 2.5,
+  "mad_k": 3.0,
+  "idle_min_seconds": 300,
+  "model": "claude-opus-5",
+  "effort": "high"
+}
+```
+
+A configuration problem (unreadable config, unknown report type) exits 2 before
+any work starts. An analysis gap — an empty period, a period the tools cannot
+parse — is not an error: it produces a report whose limits section names the gap,
+because a report generated unattended must still land on disk.
+
+### Reproduce the demo
+
+```bash
+scripts/demo.sh
+```
+
+Loads the three-month store and generates all three report types into
+`docs/reports/` — 20.3 M rows, three reports, ~8 s.
+
+PDF export needs WeasyPrint (`pip install weasyprint`, plus Cairo/Pango); without
+it, `--pdf` logs how to install it and writes Markdown and HTML as normal.
+
+---
+
 ## Testing
 
-The project has **68 unit tests** (12 suites) across 10 Google Test files:
+The project has **73 C++ unit tests** across 11 Google Test files, plus **206
+Python tests** for the analytics tier.
+
+```bash
+cd build && ctest --output-on-failure     # 73 C++ tests
+cd python && ../.venv/bin/python -m pytest -q   # 206 Python tests
+```
 
 | Test File | What It Tests |
 |-----------|---------------|
+| `test_cap_event.cpp` | The status bitmask: a closure is rejected iff its status is odd (bit 0), across every condition in the brief's slide-6 table |
 | `test_cap_event_extractor.cpp` | Increment, aggregated, reset, held-dedup, first-observation seeding |
 | `test_csv_raw_reader.cpp` | Happy path, truncated rows, malformed numerics, missing file |
 | `test_pipeline.cpp` | End-to-end CSV→events flow, batch boundary, error codes |
@@ -659,6 +861,15 @@ The project has **68 unit tests** (12 suites) across 10 Google Test files:
 Test doubles: [`FakeTransport.hpp`](tests/fakes/FakeTransport.hpp) provides
 `FakeSource`, `FakeSink`, and `FakeTickSource` (supports interleaved nullopt
 ticks to model recv timeouts).
+
+On the Python side, the analytics tools are tested against purpose-built DuckDB
+fixtures — including degenerate ones (a head with no pass/fail verdicts, a head
+with constant torque, a reject that carried no load) — and the agent's
+orchestration is tested against an **injected fake API client**, so the suite
+makes no network call and needs no API key. A golden-report test renders a fixed
+plan over a fixed store and diffs the Markdown byte-for-byte, so a change in any
+tool's SQL surfaces as a diff in a committed file rather than a silent shift in
+a number.
 
 ---
 
@@ -683,7 +894,7 @@ ticks to model recv timeouts).
 
 ## Roadmap
 
-- [ ] **Python analytics agents** — extend the MAS with analysis agents (trend detection, anomaly flagging)
+- [x] **Python analytics agents** — eight deterministic analysis tools, an LLM planner and narrator that cannot alter a number, and the `arol` CLI. See [Analytics CLI and Reports](#analytics-cli-and-reports).
 - [ ] **Attack the merge bottleneck** — the benchmark's headline finding: partitioned Parquet output or a concurrent-writer store would remove the 35–54 s unification cost that currently caps end-to-end speedup at ~1.15×
 - [ ] **PUB/SUB fan-out and REQ/REP registration** — the two ZeroMQ patterns from the spec that the current 3-endpoint PUSH/PULL fabric does not yet use
 - [ ] **TRY_CAST + quarantine** — gracefully handle malformed timestamps (currently strict-CAST aborts the day-file)

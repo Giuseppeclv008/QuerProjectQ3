@@ -1,0 +1,60 @@
+[
+  {
+    "step": 1,
+    "tool": "overview",
+    "args": {
+      "period": "2026-02"
+    },
+    "rationale": "Establish the scope: counts, heads, time range, data-quality flags.",
+    "status": "ok",
+    "rows_scanned": 10450551,
+    "message": ""
+  },
+  {
+    "step": 2,
+    "tool": "success_rates",
+    "args": {
+      "period": "2026-02",
+      "by": "overall"
+    },
+    "rationale": "The headline KPI the brief asks for first.",
+    "status": "ok",
+    "rows_scanned": 6672649,
+    "message": ""
+  },
+  {
+    "step": 3,
+    "tool": "success_rates",
+    "args": {
+      "period": "2026-02",
+      "by": "head"
+    },
+    "rationale": "Per-head breakdown, to name the weakest head.",
+    "status": "ok",
+    "rows_scanned": 6672649,
+    "message": ""
+  },
+  {
+    "step": 4,
+    "tool": "capping_speed",
+    "args": {
+      "period": "2026-02",
+      "bucket": "day"
+    },
+    "rationale": "Production rate in pieces/hour, day by day.",
+    "status": "ok",
+    "rows_scanned": 6672649,
+    "message": ""
+  },
+  {
+    "step": 5,
+    "tool": "idle_periods",
+    "args": {
+      "period": "2026-02"
+    },
+    "rationale": "Sustained No-Load runs, to separate downtime from failure.",
+    "status": "ok",
+    "rows_scanned": 10450551,
+    "message": ""
+  }
+]

@@ -12,7 +12,7 @@ mas::CapEvent makeEvent(const mas::RawRow& row, int h, long long c, int delta, b
     e.app_torque = row.torque[h];
     e.status = row.status[h];
     e.delta = delta;
-    e.is_fault = mas::is_fault_status(row.status[h]);
+    e.is_fault = mas::is_reject(row.status[h]);
     e.aggregated = delta > 1;
     e.reset = reset;
     return e;
