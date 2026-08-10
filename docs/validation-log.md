@@ -706,3 +706,74 @@ Raw data, all 12 runs:
 | 4 | mono-1T | 108.8 | 0.0 | 108.8 | 21,872,663 |
 | 4 | mono-MT T=8 | 38.0 | 36.4 | 74.4 | 21,872,663 |
 | 4 | mas N=16 | 47.0 | 33.7 | 80.7 | 21,872,663 |
+---
+
+## CUDA cleaning pipeline and the three-way benchmark
+
+The dedup was ruled a poor GPU fit in the 2026-07-04 spec (§3: "GPU acceleration
+is optional stretch for analytics only, not the cleaning core") on the premise
+that it is a sequential per-head scan. It is not. Every branch of
+`CapEventExtractor::process` ends with `last = c`, and the held branch is entered
+only when `c == *last` — so `last_count_[h]` after row `i` is always
+`llround(count[i][h])`, and the transform never reads state older than one row.
+
+`tests/test_cap_event_extractor_flat.cpp` is that claim as a test: the
+element-wise `extract_flat` and the shipped stateful extractor produce identical
+`CapEvent` vectors — all nine fields — on the edge cases and on a real day-file
+(765,711 events). It runs with no GPU.
+
+Two timing modes, because at GPU speeds the DuckDB write is two orders of
+magnitude larger than the transform and would flatten every arch into the same
+number. `clean` is the comparison; `e2e` is the deployment truth. Measured on
+the M3 at one day-file: `mono-1T` cleans in 0.47 s and takes 3.2 s end to end,
+so the store is 85% of the wall clock.
+
+### The vectorized Python contender is slower than the naive loop
+
+The expectation going in was that `clean_vectorized.py` would beat `oracle.py`
+by a wide margin. It does not: median of three at one day-file, `py-naive`
+1.246 s against `py-numpy` 1.793 s. The cause is not vectorization failing to
+pay — it is float parsing.
+
+`oracle.py` uses `float()`, which is correctly rounded. pandas' default C parser
+uses `xstrtod`, which is not: on the real pool it lands one ulp off on values
+like `2.002`, and the differential test caught it at event 8055 of
+2026-02-01. `float_precision="high"` is bit-identical to the default (66,553
+differing cells on that same day-file), so only `float_precision="round_trip"`
+agrees with `oracle.py` — and round_trip costs 1.18 s of the 1.79 s against
+0.34 s for the wrong-but-fast path.
+
+The remaining ~0.6 s is materializing 765,711 Python tuples, which numpy does
+not remove either. So for this transform, at this output shape, vectorizing
+Python buys nothing: the cost is correct parsing plus object materialization,
+and both survive the rewrite. Reading the columns as strings and converting with
+`numpy.astype(float64)` is bit-exact and slightly cheaper (0.98 s), which would
+narrow the gap but not close it.
+
+The wrong-but-fast parse was not kept. Spec §10 R2 applies to the Python
+contender the same way it applies to the CUDA one: a parse that is one ulp out
+is a bug to fix, not a tolerance to widen. Note that it would not have been
+caught by the sweep's own cross-arch gate — the Count columns are integers and
+parse exactly in every mode, so the event *counts* agree; only the torque and
+status carried on each event differ.
+
+### Numbers: pending, for CUDA
+
+The development machine is an Apple M3 with no NVIDIA GPU and no `nvcc`, so the
+CUDA path has never been compiled, let alone measured. `cuda_clean_main.cpp` is
+plain C++ and does compile here; `CudaCleaner.cu` does not. It is written, and
+its correctness gate (`mas_cuda_clean --verify`, bitwise against
+`CapEventExtractorFlat`) runs as part of the sweep. To close this:
+
+    cmake -S . -B build -DMAS_BENCH_ONLY=ON -DMAS_ENABLE_CUDA=ON
+    cmake --build build --config Release
+    python bench/run_bench_cuda.py --data telemetry_..._2026-02.zip
+
+`py-naive` is measured at the 1-day volume only — 28 day-files is roughly two
+hours of interpreted loop — and its larger volumes are linear extrapolations,
+labelled as such. The transform is O(rows) with no cross-file state, so the
+extrapolation is sound for `clean`; it is not claimed for `e2e`.
+
+`bench/results_cuda.csv` and `docs/bench/cuda_*.png` currently hold the
+CPU-and-Python-only sweep from the M3. `cuda_stages.png` is absent because there
+are no CUDA rows yet; that is correct, not a failure.

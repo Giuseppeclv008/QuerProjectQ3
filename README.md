@@ -686,6 +686,30 @@ on the clean phase.
 
 All 81 runs matched the correctness oracle exactly.
 
+### CUDA cleaning benchmark
+
+`CapEventExtractor` never reads state older than the previous row — every branch
+of `process()` leaves `last_count_[h]` equal to the current row's count. So the
+transform is element-wise over 3,110,364 independent (row, head) pairs per
+day-file, not 36 sequential chains, and it ports to the GPU cleanly.
+
+`bench/run_bench_cuda.py` measures the same transform five ways on one machine:
+pure-Python (`oracle.py`), vectorized Python (`clean_vectorized.py`), C++ 1-thread
+and 8-thread (`bench_cpu`), and CUDA (`mas_cuda_clean`).
+
+```bash
+cmake -S . -B build -DMAS_BENCH_ONLY=ON -DMAS_ENABLE_CUDA=ON
+cmake --build build --config Release
+python bench/run_bench_cuda.py --data telemetry_..._2026-02.zip
+```
+
+`MAS_BENCH_ONLY=ON` builds only the cleaning core and the benchmark binaries —
+no DuckDB, no ZeroMQ, nothing downloaded — so it configures on any machine with
+CMake, a C++20 compiler, and Python. See [`bench/README.md`](bench/README.md) for
+the Windows path and
+[`docs/superpowers/specs/2026-08-10-cuda-cleaning-bench-design.md`](docs/superpowers/specs/2026-08-10-cuda-cleaning-bench-design.md)
+for the design.
+
 ---
 
 ## Chaos E2E Testing
