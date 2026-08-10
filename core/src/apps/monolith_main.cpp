@@ -1,5 +1,7 @@
 #include "mas/domain/Pipeline.hpp"
 #include "mas/store/DuckDbEventStore.hpp"
+#include "mas/store/EventStore.hpp"
+#include "mas/util/platform_metrics.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -7,6 +9,7 @@
 #include <exception>
 #include <iomanip>
 #include <iostream>
+#include <span>
 #include <string>
 #include <thread>
 #include <vector>
@@ -29,18 +32,37 @@ void remove_store(const std::string& path) {
     std::remove((path + ".wal").c_str());
 }
 
+// Counts events and discards them. Lets the benchmark time the clean path
+// without DuckDB dominating it (spec §6.1): at ~15 ms of GPU work per day-file,
+// the store write is two orders of magnitude larger and would flatten every
+// arch into the same number.
+class NullEventStore : public mas::IEventStore {
+public:
+    void write(std::span<const mas::CapEvent> events) override {
+        n_ += static_cast<long long>(events.size());
+    }
+    long long count() const { return n_; }
+
+private:
+    long long n_ = 0;
+};
+
 } // namespace
 
 int main(int argc, char** argv) {
-    if (argc < 5) {
-        std::cerr << "usage: mas_monolith <out.duckdb> <machine_id> <threads> "
-                     "<day1.csv> [day2.csv ...]\n";
+    mas::metrics_init();
+    int argi = 1;
+    bool no_store = false;
+    if (argi < argc && std::string(argv[argi]) == "--no-store") { no_store = true; ++argi; }
+    if (argc - argi < 4) {
+        std::cerr << "usage: mas_monolith [--no-store] <out.duckdb> <machine_id> "
+                     "<threads> <day1.csv> [day2.csv ...]\n";
         return 2;
     }
-    const std::string out = argv[1], machine = argv[2];
+    const std::string out = argv[argi++], machine = argv[argi++];
     int threads = 0;
     try {
-        threads = std::stoi(argv[3]);
+        threads = std::stoi(argv[argi++]);
     } catch (const std::exception&) {
         std::cerr << "error: threads must be a number\n";
         return 2;
@@ -49,8 +71,13 @@ int main(int argc, char** argv) {
         std::cerr << "error: threads must be >= 1\n";
         return 2;
     }
+    if (no_store && threads != 1) {
+        std::cerr << "error: --no-store requires threads = 1 "
+                     "(the MT path merges per-thread stores)\n";
+        return 2;
+    }
     std::vector<std::string> files;
-    for (int i = 4; i < argc; ++i) files.emplace_back(argv[i]);
+    for (int i = argi; i < argc; ++i) files.emplace_back(argv[i]);
 
     try {
         const auto t0 = std::chrono::steady_clock::now();
@@ -60,17 +87,31 @@ int main(int argc, char** argv) {
 
         if (threads == 1) {
             // Baseline arch "mono-1T": one store, one file after another.
-            mas::DuckDbEventStore store(out, machine);
-            for (const auto& f : files) {
-                const long long n = mas::clean_file(f, store);
-                if (n < 0) {
-                    std::cerr << "error: cannot clean " << f << "\n";
-                    return 1;
+            if (no_store) {
+                NullEventStore store;
+                for (const auto& f : files) {
+                    const long long n = mas::clean_file(f, store);
+                    if (n < 0) {
+                        std::cerr << "error: cannot clean " << f << "\n";
+                        return 1;
+                    }
+                    events += n;
                 }
-                events += n;
+                clean_s = seconds_since(t0);
+                rows = 0;
+            } else {
+                mas::DuckDbEventStore store(out, machine);
+                for (const auto& f : files) {
+                    const long long n = mas::clean_file(f, store);
+                    if (n < 0) {
+                        std::cerr << "error: cannot clean " << f << "\n";
+                        return 1;
+                    }
+                    events += n;
+                }
+                clean_s = seconds_since(t0);
+                rows = store.count();
             }
-            clean_s = seconds_since(t0);
-            rows = store.count();
         } else {
             // Arch "mono-MT" (spec §3): fixed pool of T threads pulling file
             // indices off an atomic counter — the same file-grain unit of
@@ -145,6 +186,7 @@ int main(int argc, char** argv) {
                   << clean_s << " s, merge " << merge_s << " s, total "
                   << (clean_s + merge_s) << " s, store holds " << rows
                   << " rows\n";
+        std::cerr << mas::metrics_line("clean", mas::read_metrics()) << "\n";
         return 0;
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";
