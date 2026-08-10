@@ -70,18 +70,30 @@ set_target_properties(duckdb_imported PROPERTIES
   IMPORTED_LOCATION "${duckdb_prebuilt_SOURCE_DIR}/${DUCKDB_LIBNAME}"
   INTERFACE_INCLUDE_DIRECTORIES "${duckdb_prebuilt_SOURCE_DIR}")
 
-add_library(mas_core
+# Cleaning hot path: C++20 stdlib only, no DuckDB, no ZeroMQ. This is what the
+# portable benchmark build (MAS_BENCH_ONLY) compiles, and the reason the split
+# exists -- Pipeline.cpp used to drag duckdb_imported into anything that cleaned.
+add_library(mas_clean_core
   core/src/domain/CapEventExtractor.cpp
   core/src/domain/CapEventExtractorFlat.cpp
-  core/src/store/CsvRawReader.cpp
+  core/src/store/CsvRawReader.cpp)
+target_include_directories(mas_clean_core PUBLIC core/include)
+
+add_library(mas_store
   core/src/store/CsvEventStore.cpp
   core/src/store/DuckDbEventStore.cpp
-  core/src/domain/Pipeline.cpp
+  core/src/domain/Pipeline.cpp)
+target_link_libraries(mas_store PUBLIC mas_clean_core PRIVATE duckdb_imported)
+
+add_library(mas_agent
   core/src/agent/Message.cpp
   core/src/agent/CleaningWorker.cpp
   core/src/agent/Coordinator.cpp)
-target_include_directories(mas_core PUBLIC core/include)
-target_link_libraries(mas_core PRIVATE duckdb_imported)
+target_link_libraries(mas_agent PUBLIC mas_store)
+
+# Back-compat alias so existing target_link_libraries(... mas_core) keeps working.
+add_library(mas_core INTERFACE)
+target_link_libraries(mas_core INTERFACE mas_agent)
 
 add_library(mas_transport core/src/transport/ZmqTransport.cpp)
 target_include_directories(mas_transport PUBLIC core/include)
