@@ -36,7 +36,7 @@ def test_the_report_names_no_model_when_none_was_used(tiny_store, tmp_path):
     out = tmp_path / "out"
     cli.main(["report", "kpi", "--period", "2026-02",
               "--config", _cfg_file(tmp_path, tiny_store), "--out", str(out)])
-    text = (out / "kpi" / "report.md").read_text()
+    text = (out / "kpi" / "report.md").read_text(encoding="utf-8")
     assert "No model was used to plan this report" in text
 
 
@@ -53,7 +53,7 @@ def test_ask_works_with_no_api_key(tiny_store, tmp_path, monkeypatch):
     # to the new report.
     runs = sorted((out / "ask").iterdir())
     assert len(runs) == 1, f"expected one run directory, got {runs}"
-    text = (runs[0] / "report.md").read_text()
+    text = (runs[0] / "report.md").read_text(encoding="utf-8")
     assert "keyword router" in text.lower() or "no anthropic client" in text.lower()
 
 
@@ -62,7 +62,7 @@ def test_an_empty_period_produces_a_report_that_says_so(tiny_store, tmp_path):
     code = cli.main(["report", "kpi", "--period", "2026-07",
                      "--config", _cfg_file(tmp_path, tiny_store), "--out", str(out)])
     assert code == 0
-    text = (out / "kpi" / "report.md").read_text()
+    text = (out / "kpi" / "report.md").read_text(encoding="utf-8")
     assert "insufficient_data" in text
 
 
@@ -71,7 +71,7 @@ def test_a_malformed_period_exits_cleanly_not_with_a_traceback(tiny_store, tmp_p
     code = cli.main(["report", "kpi", "--period", "February",
                      "--config", _cfg_file(tmp_path, tiny_store), "--out", str(out)])
     assert code == 0                              # the report explains the failure
-    assert "February" in (out / "kpi" / "report.md").read_text()
+    assert "February" in (out / "kpi" / "report.md").read_text(encoding="utf-8")
 
 
 def test_a_bad_config_exits_2_with_a_usable_message(tmp_path, capsys):
