@@ -145,6 +145,10 @@ if(WIN32)
   set_target_properties(win_time_exe PROPERTIES OUTPUT_NAME win_time)
 endif()
 
+add_executable(bench_cpu_exe core/src/apps/bench_cpu_main.cpp)
+target_link_libraries(bench_cpu_exe PRIVATE mas_clean_core Threads::Threads)
+set_target_properties(bench_cpu_exe PROPERTIES OUTPUT_NAME bench_cpu)
+
 enable_testing()
 add_executable(unit_tests
   tests/test_cap_event.cpp
@@ -152,6 +156,7 @@ add_executable(unit_tests
   tests/test_cap_event_extractor_flat.cpp
   tests/test_platform_metrics.cpp
   tests/test_csv_raw_reader.cpp
+  tests/test_bench_cpu_parity.cpp
   tests/test_pipeline.cpp
   tests/test_duckdb_smoke.cpp
   tests/test_duckdb_event_store.cpp
