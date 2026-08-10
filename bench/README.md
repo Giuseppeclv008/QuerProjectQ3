@@ -7,7 +7,7 @@ See `docs/superpowers/specs/2026-08-10-cuda-cleaning-bench-design.md`.
 
 | Platform | Needs |
 |---|---|
-| Windows | Visual Studio 2022 Build Tools, CUDA Toolkit, CMake, Python 3.9+ |
+| Windows | Visual Studio 2022 Build Tools, CUDA Toolkit, CMake, Python 3.9+ — if MSVC or CUDA are missing, `scripts\setup_windows_toolchain.ps1` (elevated) installs them; CMake comes from the venv (`pip install cmake`) |
 | Linux | gcc/clang with C++20, CUDA Toolkit, CMake, Python 3.9+ |
 | macOS | Xcode CLT, CMake, Python 3.9+ (no CUDA — CPU and Python arches only) |
 
