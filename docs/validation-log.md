@@ -777,3 +777,58 @@ extrapolation is sound for `clean`; it is not claimed for `e2e`.
 `bench/results_cuda.csv` and `docs/bench/cuda_*.png` currently hold the
 CPU-and-Python-only sweep from the M3. `cuda_stages.png` is absent because there
 are no CUDA rows yet; that is correct, not a failure.
+
+## 2026-08-10 — First session on the Windows target box: pool + Python gate PASS, toolchain absent
+
+- Machine: Windows 11 Pro (10.0.26200), RTX 4070 Laptop GPU 8 GB, driver 592.82,
+  Python 3.14.3. Pool: all three months extracted at the repo root.
+- **The CUDA gap stays open — the box cannot compile.** VS 2022 Community is
+  installed *without* the C++ workload (no MSVC toolset, no vcvars), there is no
+  CUDA Toolkit (driver only) and no system CMake. All three need elevation this
+  session did not have. `scripts/setup_windows_toolchain.ps1` (new) adds the C++
+  workload to the existing VS and the CUDA Toolkit via winget; CMake 4.4.2 +
+  ninja are already in the repo venv via pip. After it runs once, the three
+  README commands close the pending-numbers section above.
+
+### Pool integrity + Python side of the correctness gate — PASS
+
+- Per-file differential `oracle.extract` vs `clean_vectorized.extract`, all nine
+  tuple fields, on days 01, 02, 16, 17 (the counter-reset window): **bitwise
+  identical** — 765,711 / 998,920 / 1,109,468 / 858,651 events. Per-file event
+  counts agree between the two arches on all 28 day-files; total **21,872,663**
+  events, the exact count every earlier entry measured.
+- Union oracle on prefixes: 1 day = 765,711; 7 = 3,900,837; 28 = **14,372,237**
+  — all three exact. The reset signature reproduces (day 17 adds 15 new
+  (head, cap_seq) keys out of 858,651 events), so this box's copy of the pool is
+  equivalent to the one the M3 sweeps measured.
+- Indicative clean-mode timings on this box (not results_cuda rows — spec §6.5
+  says that file is regenerated whole, one machine, once CUDA rows can join):
+  py-naive 1d median-of-3 2.645 s; py-numpy 1d 3.134 s, 7d 20.7 s, 28d 89.2 s.
+
+### Two Windows-only defects found and fixed
+
+- **Python suite 229 passed, 5 skipped** (real-data analytics tests skip while
+  `events_3mo.duckdb` is absent) — after fixing two failures no macOS run could
+  see: `test_render.py` read the UTF-8 golden fixture and the written report
+  back with the locale codec, which on Windows is cp1252, so every em-dash
+  compared as mojibake. All report read-backs in tests now pass
+  `encoding="utf-8"`, and `tests/regen_golden.py` writes the golden as UTF-8
+  (regenerating it on Windows would have produced a cp1252 fixture).
+- **The §4 CRLF risk happened.** This clone has `core.autocrlf=true` and was
+  made from `main`, which predates the branch's `.gitattributes`: switching
+  branches rewrites only files that differ, so the tracked `*.sh` scripts sat
+  CRLF in the working tree (bash would die on `$'\r'`). Re-checked out with
+  attributes → LF. Committed CSVs were unaffected (all changed on-branch, so
+  the eol=lf rule applied at switch).
+
+### Static review of the never-compiled path (no blocking defect)
+
+`CudaCleaner.cu` + `cuda_clean_main.cpp` against `CapEventExtractorFlat`, and
+`platform_metrics.hpp` on its `_WIN32` branch, reviewed line by line. Recorded
+for the record, none blocking on this pool: the GPU parser diverges from
+`load_columns` only on rows the CPU would skip or roll back (short rows,
+unparsable cells — zero exist in the pool, and `--verify` is the bitwise gate);
+the CUB `DeviceSelect` calls take `int` item counts, capping a single file at
+2 GB (day-files are 58 MB); GPU `clean_s` sums the seven stage timers and so
+excludes host-side event materialization; `provenance()` records
+platform/python/gpu/nvcc but not the §6.5 compiler-id/cores/RAM extras.
