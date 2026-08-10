@@ -112,8 +112,13 @@ def provenance():
         lines.append(f"# gpu: {gpu.stdout.strip() or 'none'}")
     except (OSError, subprocess.SubprocessError):
         lines.append("# gpu: nvidia-smi not found")
+    # PATH is not enough: a shell older than the CUDA install (or one that
+    # trims PATH) misses nvcc while CUDA_PATH is set -- fall back to it.
+    nvcc = shutil.which("nvcc") or os.path.join(
+        os.environ.get("CUDA_PATH", ""), "bin",
+        "nvcc" + (".exe" if os.name == "nt" else ""))
     try:
-        nv = subprocess.run(["nvcc", "--version"], capture_output=True,
+        nv = subprocess.run([nvcc, "--version"], capture_output=True,
                             text=True, timeout=30)
         tail = nv.stdout.strip().splitlines()[-1] if nv.stdout.strip() else "unknown"
         lines.append(f"# nvcc: {tail}")
