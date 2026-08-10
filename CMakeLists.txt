@@ -78,6 +78,9 @@ add_library(mas_clean_core
   core/src/domain/CapEventExtractorFlat.cpp
   core/src/store/CsvRawReader.cpp)
 target_include_directories(mas_clean_core PUBLIC core/include)
+if(WIN32)
+  target_link_libraries(mas_clean_core PUBLIC psapi)
+endif()
 
 add_library(mas_store
   core/src/store/CsvEventStore.cpp
@@ -124,6 +127,7 @@ add_executable(unit_tests
   tests/test_cap_event.cpp
   tests/test_cap_event_extractor.cpp
   tests/test_cap_event_extractor_flat.cpp
+  tests/test_platform_metrics.cpp
   tests/test_csv_raw_reader.cpp
   tests/test_pipeline.cpp
   tests/test_duckdb_smoke.cpp
