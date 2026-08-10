@@ -24,12 +24,21 @@ if ($haveMsvc) {
     if (-not (Test-Path $vsInstaller)) {
         throw "VS Installer not found at $vsInstaller -- install VS 2022 first."
     }
-    Write-Host "Adding the C++ workload to the existing VS 2022 Community..."
-    & $vsInstaller modify --installPath $vsPath `
-        --add Microsoft.VisualStudio.Workload.NativeDesktop --includeRecommended `
-        --passive --norestart | Out-Null
+    Write-Host "Adding the C++ workload to the existing VS 2022 Community (10-20 min)..."
+    # setup.exe is a bootstrapper: without --wait it hands off to an elevated
+    # child and returns at once, so the toolset check below would fire while the
+    # install had barely started. Belt and braces: --wait plus Start-Process -Wait.
+    $p = Start-Process -FilePath $vsInstaller -Wait -PassThru -ArgumentList @(
+        "modify", "--installPath", $vsPath,
+        "--add", "Microsoft.VisualStudio.Workload.NativeDesktop",
+        "--includeRecommended", "--passive", "--norestart", "--wait")
+    # 0 = ok, 3010 = ok + reboot pending, 862968 = ok + reboot pending (new installer)
+    if ($p.ExitCode -notin 0, 3010, 862968) {
+        throw ("VS setup exited $($p.ExitCode). Log: %TEMP%\dd_setup_*.log -- " +
+               "or add the 'Desktop development with C++' workload from the VS Installer GUI.")
+    }
     if (-not (Test-Path "$vsPath\VC\Tools\MSVC")) {
-        throw "VS modify finished but no MSVC toolset appeared -- open the VS Installer GUI and check."
+        throw "VS setup exited 0 but no MSVC toolset appeared -- open the VS Installer GUI and check."
     }
 }
 
