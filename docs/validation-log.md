@@ -832,3 +832,94 @@ the CUB `DeviceSelect` calls take `int` item counts, capping a single file at
 2 GB (day-files are 58 MB); GPU `clean_s` sums the seven stage timers and so
 excludes host-side event materialization; `provenance()` records
 platform/python/gpu/nvcc but not the §6.5 compiler-id/cores/RAM extras.
+
+## 2026-08-10 — CUDA numbers closed: first compile, first GPU run, full sweep on the target box
+
+Same box as the entry above, later the same day, after the user ran
+`scripts/setup_windows_toolchain.ps1`: MSVC 14.41 (VS 2022 Community) +
+CUDA Toolkit 13.3 (V13.3.73), CMake 4.4.2 from the repo venv. The script took
+three iterations against the real installer — setup.exe hands off and returns
+immediately (fixed by polling for the toolset), this installer version rejects
+`--wait` with exit 87, and PowerShell 5.1's `Start-Process` splits unquoted
+spaced paths (`--installPath C:\Program`). All three fixes are in the script.
+
+### First MSVC/CUDA compile — spec R3 predicted "a one-line fix"; it took three
+
+1. CUDA 13's CCCL refuses cl.exe's traditional preprocessor (fatal C1189) →
+   `-Xcompiler=/Zc:preprocessor` on the `.cu` compilation.
+2. CCCL 3.0 removed `cub::CountingInputIterator` → `thrust::counting_iterator`.
+3. `platform_metrics.hpp` included `windows.h` without `NOMINMAX`; the min/max
+   macros broke the first TU calling `std::min` after it (`cuda_clean_main`).
+
+Everything else — the whole monolith + DuckDB + store stack — compiled clean on
+MSVC at first try. The Windows DuckDB v1.2.2 asset downloaded, worked, and its
+SHA256 is now pinned (closing the "fill in after first verified download" note).
+C++ suites from the repo root: bench-only **34/34**, full **50/50**, both
+including the two real-data tests. R9 (Windows DuckDB asset misbehaving) never
+triggered.
+
+### `--verify` earned its keep twice
+
+- **GPU parse, real defect.** First `--verify` run failed at event 25,194 of
+  day 1: GPU torque one ulp under CPU on a cell reading `2.0020000000000002`.
+  The §4 "plain decimal, ≤ 3 dp" premise is false on the real pool (see the
+  correction note in the spec): 66,553 AppTorque cells on day 1 (~2%, zero in
+  Count/Status) carry full 17-digit double reprs, whose mantissas exceed 2^53
+  and double-round through the kernel's integer-mantissa-then-divide path. A
+  ucrtbase probe confirmed MSVC's strtod correctly rounded — the CPU was right,
+  the GPU wrong. Fix: the kernel flags rows whose mantissa exceeds 2^53
+  (Count-block hits are fatal by design; none exist), and the host re-reads
+  flagged events' torque/status from the raw line with strtod. Post-fix:
+  `--verify` bitwise-green on days 01, 02, 16 — 2,874,099 events.
+- **Driver, real defect.** The sweep's cross-arch gate then killed the run at
+  the 7-day volume: `cuda=765711` vs `3901017` everywhere else. Not a GPU bug —
+  with `--verify` the binary prints per-file `verify ok: … (N events)` lines
+  before its summary, and the driver's `_EVENTS.search` took the *first* "N
+  events" in the blob (day 1's), passing at one day by coincidence. The driver
+  now takes the last match; every contender prints its summary last.
+
+### Full sweep — 68 measured rows + 2 extrapolated, every count oracle-exact
+
+`python bench/run_bench_cuda.py --data telemetry_…_2026-02` (extracted dir).
+Every arch at every volume × repeat emitted identical event counts: 765,711 /
+3,901,017 / 21,872,663 — the cross-arch gate held for all 9 volume×repeat
+cells. `clean_s` medians of 3 (seconds):
+
+| arch [mode] | 1 day | 7 days | 28 days |
+|---|---:|---:|---:|
+| py-naive [clean] | 2.686 | (18.8) | (75.2) — extrapolated |
+| py-numpy [clean] | 3.142 | 19.694 | 91.003 |
+| cpp-1T [clean] | 1.641 | 10.689 | 46.772 |
+| cpp-MT 8T [clean] | 1.666 | 2.014 | 7.677 |
+| **cuda [clean]** | **0.059** | **0.377** | **1.821** |
+| mono-1T [clean, no-store] | 1.646 | 10.754 | 46.510 |
+| mono-1T [e2e] | 8.334 | 44.433 | 230.449 |
+| mono-MT 8T [e2e] | 8.560 | 11.854 | 42.064 |
+
+- **Headline: CUDA cleans the month in 1.82 s — 12.0 M events/s — 25.7× the
+  single-thread C++, 4.2× the 8-thread C++, 50× vectorized Python.** The stage
+  breakdown says the transform has stopped being the cost: at 28 days
+  (hot cache) disk read is 1.17 s of the 1.82, and the four GPU compute stages
+  (index+parse+delta+compact) total ~0.29 s for 2.4 GB / 21.9 M events.
+- The `e2e` truth is unchanged: the single-writer DuckDB store is 79.8% of
+  mono-1T's month wall-clock (230.4 s vs 46.5 s clean). 8-thread e2e lands at
+  42.1 s — per-thread stores + merge parallelize the write far better here
+  (5.5×) than on the M3's numbers.
+- py-naive beats py-numpy here too (2.686 vs 3.142 at 1 day) — the M3 finding
+  about round_trip parse + tuple materialization replicates on Windows.
+- Caveats: laptop thermals; cuda 28-day rep 1 measured 3.887 s against 1.8 s
+  for reps 2-3 (cold file cache on the first pass, and rep 1 also carries
+  `--verify`'s CPU-side load in wall time though not in `clean_s`); `cpp-MT` at
+  1 day equals `cpp-1T` (one file, file-grain threading); the `# nvcc` line in
+  the CSV header was corrected by hand after the run — the sweep ran from a
+  shell predating the CUDA install, so PATH had no `nvcc` (value taken from
+  `nvcc --version` on the same box; `provenance()` now falls back to
+  `CUDA_PATH` so this cannot recur).
+- Outputs: `bench/results_cuda.csv`, `bench/results_cuda_stages.csv`, and
+  `docs/bench/cuda_{throughput,scaling,stages}.png` — the stages plot exists
+  for the first time.
+
+Remaining gaps, deliberate: the 5 real-data Python analytics tests still skip
+(`events_3mo.duckdb` not built on this box — `scripts/build_store.sh`, ~5 min,
+any time it is wanted); the ZeroMQ runtime stays off on Windows by design
+(spec §2 non-goal).

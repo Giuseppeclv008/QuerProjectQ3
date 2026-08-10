@@ -172,6 +172,16 @@ Confirmed by reading the real pool at
 | Numerics | plain decimal, no quoting, no exponent, no thousands separator |
 | Line endings | **LF** (verified with `od -c` on the extracted pool) |
 
+> **Correction (2026-08-10, first run on the target box).** "Plain decimal"
+> hid a wrong implicit premise: ~2% of AppTorque cells (66,553 on day 1; none
+> in Count or Status) carry the **full 17-significant-digit repr of a double**,
+> e.g. `2.0020000000000002`. A 17-digit mantissa exceeds 2^53, so the CUDA
+> parser's integer-mantissa-then-divide path double-rounds exactly there —
+> caught bitwise by `--verify` at event 25,194 of day 1. The kernel now flags
+> such cells per row and the host re-parses the flagged events' payloads with
+> `strtod` (see `CudaCleaner.cu`); a >2^53 mantissa in a *Count* cell is a hard
+> error, and none exists in the pool.
+
 The AROL brief's slide-4 table shows an interleaved layout; the delivered pool is
 grouped. `python/oracle.py` already indexes the grouped layout and is
 correctness-locked against the C++ core on real data, which confirms grouped is
