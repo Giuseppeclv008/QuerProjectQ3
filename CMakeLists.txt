@@ -86,6 +86,7 @@ endif()
 
 add_library(mas_core
   core/src/domain/CapEventExtractor.cpp
+  core/src/domain/CapEventExtractorFlat.cpp
   core/src/store/CsvRawReader.cpp
   core/src/store/CsvEventStore.cpp
   core/src/store/DuckDbEventStore.cpp
@@ -133,6 +134,7 @@ enable_testing()
 add_executable(unit_tests
   tests/test_cap_event.cpp
   tests/test_cap_event_extractor.cpp
+  tests/test_cap_event_extractor_flat.cpp
   tests/test_csv_raw_reader.cpp
   tests/test_pipeline.cpp
   tests/test_duckdb_smoke.cpp
