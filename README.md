@@ -934,6 +934,9 @@ killed mid-run. Wall clock ~57 s (30 s death threshold dominates).
 - **Python 3** (for validation oracle and benchmark, optional)
 - **CUDA Toolkit** (only for `-DMAS_ENABLE_CUDA=ON`; ships CUB, which the kernels use)
 
+On a Windows box missing MSVC or the CUDA Toolkit, `scripts\setup_windows_toolchain.ps1`
+(elevated) installs both; CMake can come from the venv (`pip install cmake`).
+
 All C++ dependencies are fetched automatically via CMake `FetchContent`:
 - Google Test v1.14.0
 - libzmq 4.3.5 + cppzmq 4.10.0
