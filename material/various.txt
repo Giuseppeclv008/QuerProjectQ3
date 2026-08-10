@@ -1,0 +1,22 @@
+process run:
+bottle rotating + tap rotating going one toward the other
+the rotation velocity decreases with the tapping
+proceding (the actual action of topping), waiting until the motor is stopped
+
+codes:
+2… and 3… bottle or tap missing, so no match
+4… and 5… torch not reached
+64… and 65… torch reached but velocity didn't come to 0
+
+terminology: head=station
+· may machines are not in production sometimes:
+this can be spotted looking at data e.g. if I read the some row (with just the time changed)
+
+· if “HO1 Count" has more equal values
+within different seconds just one has to
+be considered (so apply a unique on the id)
+· it works with an internal mem shared where all heads
+save their tap tection values collected and
+every sec this array of data (type of the collected info)
+is collected and seved in one row of the DB
+· speed of production: bottles closed/second
