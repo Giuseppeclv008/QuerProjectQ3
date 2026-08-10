@@ -15,7 +15,7 @@ def anomaly_store(tmp_path):
             machine_id VARCHAR NOT NULL, head_id SMALLINT NOT NULL, ts TIMESTAMP,
             cap_seq BIGINT NOT NULL, app_torque REAL, status REAL, delta INTEGER,
             is_fault BOOLEAN, aggregated BOOLEAN, is_reset BOOLEAN,
-            UNIQUE (machine_id, head_id, cap_seq))
+            UNIQUE (machine_id, head_id, ts))
     """)
     for i in range(20):
         tq = 2.00 + (0.01 if i % 2 else -0.01)
@@ -88,7 +88,7 @@ def multi_reject_store(tmp_path):
             machine_id VARCHAR NOT NULL, head_id SMALLINT NOT NULL, ts TIMESTAMP,
             cap_seq BIGINT NOT NULL, app_torque REAL, status REAL, delta INTEGER,
             is_fault BOOLEAN, aggregated BOOLEAN, is_reset BOOLEAN,
-            UNIQUE (machine_id, head_id, cap_seq))
+            UNIQUE (machine_id, head_id, ts))
     """)
     # Head 1: status 65 (Bad Closure, reject bit set) with torque 2.0 Nm
     con.execute("INSERT INTO cap_events VALUES ('MCC',1,'2026-02-01 00:00:00',1,2.0,65.0,1,true,false,false)")

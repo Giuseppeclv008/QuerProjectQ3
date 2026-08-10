@@ -23,7 +23,7 @@ CAP_EVENTS_DDL = """
         is_fault   BOOLEAN,
         aggregated BOOLEAN,
         is_reset   BOOLEAN,
-        UNIQUE (machine_id, head_id, cap_seq)
+        UNIQUE (machine_id, head_id, ts)
     )
 """
 

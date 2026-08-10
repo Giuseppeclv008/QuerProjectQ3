@@ -66,7 +66,7 @@ def dirty_cfg(tmp_path):
             machine_id VARCHAR NOT NULL, head_id SMALLINT NOT NULL, ts TIMESTAMP,
             cap_seq BIGINT NOT NULL, app_torque REAL, status REAL, delta INTEGER,
             is_fault BOOLEAN, aggregated BOOLEAN, is_reset BOOLEAN,
-            UNIQUE (machine_id, head_id, cap_seq))
+            UNIQUE (machine_id, head_id, ts))
     """)
     for head, ts, seq, torque, status, is_reset in DIRTY_ROWS:
         con.execute(

@@ -1,24 +1,32 @@
 #!/usr/bin/env python3
-"""Expected UNIQUE(head_id, cap_seq) row count across day-files (spec §7 oracle).
+"""Expected row count in the store across day-files (spec §7 oracle).
 
-The real month's Count counter reset mid-day-16 (discovered at the Task 5
-gate): days 16-24 replay cap_seq ranges already seen in days 1-15, and the
-store's UNIQUE(machine_id, head_id, cap_seq) constraint dedupes the replays.
-So for multi-day volumes the expected row count is the union of
-(head_id, cap_seq) pairs, not the sum of per-file event counts
-(21,872,663 events vs 14,372,237 rows over the 28-day month).
+The store's identity is (machine_id, head_id, ts): one head closes at most once
+per poll, so a timestamp names the observation. This script counts the distinct
+(head_id, ts) pairs the extractor would emit over the given files — what the
+store must hold after loading them all.
+
+It used to count distinct (head_id, cap_seq), on the theory that days 16-24
+"replayed" cap_seq ranges from days 1-15 and the store was right to drop them.
+That theory was never tested and is false: of head 1's 23,851 day-17 closures
+whose cap_seq collides with days 1-15, 18,721 carry a *different* torque. They
+are distinct physical caps. The old oracle counted exactly the quantity the old
+UNIQUE key left stable, so 81 of 81 benchmark runs reported "oracle-exact" while
+34% of February and 63% of the three months were being discarded.
+
+Because the day-files are contiguous and non-overlapping, this number now equals
+the sum of the per-file event counts. The union is kept rather than a sum so an
+overlapping or re-delivered file still yields the right answer.
 """
 import sys
 
 import oracle
 
-_KEY = 10 ** 12  # cap_seq stays far below this; packs (head_id, cap_seq) into one int
-
 
 def union_rows(paths):
     u = set()
     for p in paths:
-        u |= {e[0] * _KEY + int(e[2]) for e in oracle.extract(p)}
+        u |= {(e[0], e[1]) for e in oracle.extract(p)}   # (head_id, ts)
     return len(u)
 
 
