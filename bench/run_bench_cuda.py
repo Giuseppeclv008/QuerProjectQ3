@@ -43,6 +43,17 @@ _CLEAN = re.compile(r"clean ([\d.]+) s")
 _STAGE = re.compile(r"stages: (.*)")
 
 
+def last_match(pattern, blob):
+    """Final occurrence, not the first: with --verify the CUDA binary prints a
+    per-file "verify ok: ... (N events)" line before its summary, so the first
+    "N events" in the blob is day 1's count, not the total. Every binary prints
+    its summary last."""
+    m = None
+    for m in pattern.finditer(blob):
+        pass
+    return m
+
+
 def die(msg, fix=None):
     print(f"\nERROR: {msg}", file=sys.stderr)
     if fix:
@@ -120,8 +131,8 @@ def run(cmd, cwd=None):
     m = _METRICS.search(blob)
     wall, cpu, rss = (float(m.group(2)), float(m.group(3)), float(m.group(4))) \
         if m else (0.0, 0.0, 0.0)
-    ev = _EVENTS.search(blob)
-    cl = _CLEAN.search(blob)
+    ev = last_match(_EVENTS, blob)
+    cl = last_match(_CLEAN, blob)
     events = int(ev.group(1)) if ev else 0
     clean_s = float(cl.group(1)) if cl else wall
     return blob, wall, cpu, rss, events, clean_s
@@ -165,7 +176,8 @@ def py_arch_time(module, files):
     if p.returncode != 0:
         die(f"{module} failed:\n{p.stdout}{p.stderr}")
     blob = p.stdout + p.stderr
-    return int(_EVENTS.search(blob).group(1)), float(_CLEAN.search(blob).group(1))
+    return (int(last_match(_EVENTS, blob).group(1)),
+            float(last_match(_CLEAN, blob).group(1)))
 
 
 def main():
