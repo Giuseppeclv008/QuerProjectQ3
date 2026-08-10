@@ -1,6 +1,7 @@
 #pragma once
 #include "mas/store/EventStore.hpp"
 #include "mas/transport/Transport.hpp"
+#include <chrono>
 #include <functional>
 #include <string>
 
@@ -10,11 +11,18 @@ namespace mas {
 // clean each day-file into the injected store, PUSH one WorkResult per item,
 // and PUSH heartbeats so the coordinator can tell death from silence.
 // Liveness contract: one heartbeat at run() entry, one per empty recv tick
-// (production wires a 1 s recv timeout), one after each result. The only
-// silent window is while clean_fn runs on one file.
+// (production wires a 1 s recv timeout), one after each result, and one at most
+// every kBeatEvery while a file is being cleaned. The coordinator's death
+// threshold is 30 s, so a worker must never fall silent that long while it is in
+// fact working.
 class CleaningWorker {
 public:
     using CleanFn = std::function<long long(const std::string&, IEventStore&)>;
+
+    // Minimum spacing between in-progress heartbeats. Far under the
+    // coordinator's 30 s death threshold, and coarse enough that a day-file's
+    // ~93 store writes do not become 93 frames.
+    static constexpr std::chrono::milliseconds kBeatEvery{1000};
 
     // Consecutive empty ticks before run() gives up on the coordinator and
     // returns (~60 s at the production 1 s tick). Tick counting instead of a
