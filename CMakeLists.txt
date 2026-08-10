@@ -171,6 +171,13 @@ if(MAS_ENABLE_CUDA)
   add_executable(cuda_clean_exe core/cuda/CudaCleaner.cu core/src/apps/cuda_clean_main.cpp)
   target_link_libraries(cuda_clean_exe PRIVATE mas_clean_core CUDA::cudart)
   target_include_directories(cuda_clean_exe PRIVATE core/cuda)
+  if(MSVC)
+    # CUDA >= 13 ships CCCL, which refuses cl.exe's traditional preprocessor
+    # (fatal C1189 in cccl/cuda/std/__cccl/preprocessor.h). Host-side flag for
+    # the .cu compilation only; the plain C++ TUs never include CUB.
+    target_compile_options(cuda_clean_exe PRIVATE
+      $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/Zc:preprocessor>)
+  endif()
   set_target_properties(cuda_clean_exe PROPERTIES OUTPUT_NAME mas_cuda_clean)
   # CUDA_ARCHITECTURES native needs CMake >= 3.24 and the target machine's
   # version is unknown, so fall back to an explicit list covering Pascal..Ada.
