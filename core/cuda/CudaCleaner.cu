@@ -2,7 +2,11 @@
 #include "mas/domain/CapEventExtractorFlat.hpp"   // expected_header()
 #include <cub/cub.cuh>
 #include <cuda_runtime.h>
+// CCCL 3.0 (CUDA 13) removed cub::CountingInputIterator; the unified library's
+// replacement is thrust's counting_iterator, which CUB's device algorithms take.
+#include <thrust/iterator/counting_iterator.h>
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -43,10 +47,21 @@ __device__ __forceinline__ double pow10_(int e) {
 }
 
 // Integer-mantissa parse: accumulate digits as an integer, divide once by an
-// exact power of ten. Correctly rounded for the <=3 decimal places this pool
-// uses, unlike repeated fused multiply-add. Stops at any non-digit, which is
-// how a trailing '\r' is absorbed for free.
-__device__ __forceinline__ double parse_num(const char* p, const char* e) {
+// exact power of ten. Correctly rounded while the mantissa stays <= 2^53 (both
+// operands of the division are then exact, and IEEE division rounds once).
+// Stops at any non-digit, which is how a trailing '\r' is absorbed for free.
+//
+// The design spec (§4) recorded the pool as "plain decimal, <= 3 dp". The real
+// pool violates that: ~2% of AppTorque cells carry the full 17-digit repr of a
+// double (e.g. "2.0020000000000002"), whose mantissa does not fit in 53 bits --
+// the cast rounds it, the division rounds again, and the double rounding landed
+// one ulp under strtod on exactly the halfway cases (caught by --verify at
+// event 25194 of 2026-02-01). Those cells set *inexact; the host re-parses the
+// flagged rows' event cells with strtod, which is exact by construction.
+__device__ __forceinline__ double parse_num(const char* p, const char* e,
+                                            bool* inexact) {
+    constexpr long long kExact = 1LL << 53;          // cast to double is exact
+    constexpr long long kGuard = (0x7fffffffffffffffLL - 9) / 10;  // no overflow
     bool neg = false;
     if (p < e && (*p == '-' || *p == '+')) { neg = (*p == '-'); ++p; }
     long long mant = 0;
@@ -56,9 +71,11 @@ __device__ __forceinline__ double parse_num(const char* p, const char* e) {
         const char c = *p;
         if (c == '.') { frac = true; continue; }
         if (c < '0' || c > '9') break;
+        if (mant > kGuard) { *inexact = true; break; }
         mant = mant * 10 + (c - '0');
         if (frac) ++scale;
     }
+    if (mant > kExact) *inexact = true;
     double v = static_cast<double>(mant);
     if (scale > 0) v /= pow10_(scale);
     return neg ? -v : v;
@@ -79,9 +96,12 @@ __global__ void flag_newlines(const char* buf, size_t n, unsigned char* flags,
 // One thread per data row. Uncoalesced by construction -- each thread walks its
 // own ~650 contiguous bytes -- but the whole file is 58 MB, so even a large
 // efficiency loss lands in single-digit milliseconds. Spec §5.5.
+// row_flags[r]: bit 0 = a torque/status cell was parse-inexact (host patches
+// the affected events from the raw line); bit 1 = a Count cell was (fatal:
+// event existence and cap_seq derive from counts, no after-the-fact repair).
 __global__ void parse_rows(const char* buf, const unsigned long long* nl,
                            unsigned int n_rows, double* count, double* torque,
-                           double* status, char* ts_out) {
+                           double* status, char* ts_out, unsigned char* row_flags) {
     const unsigned int r = blockIdx.x * blockDim.x + threadIdx.x;
     if (r >= n_rows) return;
 
@@ -100,10 +120,13 @@ __global__ void parse_rows(const char* buf, const unsigned long long* nl,
         ts_out[static_cast<size_t>(r) * TS_LEN + i] = (i < tslen && i < TS_LEN - 1) ? p[i] : '\0';
     p = (q < e) ? q + 1 : e;
 
+    unsigned char fl = 0;
     for (int f = 0; f < 3 * NUM_HEADS; ++f) {
         q = p;
         while (q < e && *q != ',') ++q;
-        const double v = parse_num(p, q);
+        bool inexact = false;
+        const double v = parse_num(p, q, &inexact);
+        if (inexact) fl |= (f < NUM_HEADS) ? 2u : 1u;
         const int h = f % NUM_HEADS;
         const size_t idx = static_cast<size_t>(r) * NUM_HEADS + h;
         if (f < NUM_HEADS)            count[idx] = v;
@@ -111,6 +134,7 @@ __global__ void parse_rows(const char* buf, const unsigned long long* nl,
         else                          status[idx] = v;
         p = (q < e) ? q + 1 : e;
     }
+    row_flags[r] = fl;
 }
 
 // One thread per (row, head) for rows 1..n_rows-1. Row 0 is the seed.
@@ -199,10 +223,14 @@ bool cuda_clean_file(const std::string& path, std::vector<CapEvent>& out,
     in.seekg(0);
 
     char* h_buf = nullptr;
-    CUDA_TRY(cudaHostAlloc(&h_buf, n_bytes, cudaHostAllocDefault), "cudaHostAlloc");
+    // +1: NUL-terminated so the patch path below can strtod straight into the
+    // buffer -- it stops at ',' or '\r'/'\n', and the terminator bounds a file
+    // that ends mid-number.
+    CUDA_TRY(cudaHostAlloc(&h_buf, n_bytes + 1, cudaHostAllocDefault), "cudaHostAlloc");
     Timer t;
     t.start();
     in.read(h_buf, static_cast<std::streamsize>(n_bytes));
+    h_buf[n_bytes] = '\0';
     times.read_s = t.stop();
 
     char* d_buf = nullptr;
@@ -211,6 +239,7 @@ bool cuda_clean_file(const std::string& path, std::vector<CapEvent>& out,
     unsigned int* d_nl_count = nullptr;
     double *d_count = nullptr, *d_torque = nullptr, *d_status = nullptr;
     char* d_ts = nullptr;
+    unsigned char* d_rowflags = nullptr;
     CapEventDevice *d_slots = nullptr, *d_dense = nullptr;
     unsigned char* d_evflags = nullptr;
     unsigned int* d_ev_count = nullptr;
@@ -218,8 +247,9 @@ bool cuda_clean_file(const std::string& path, std::vector<CapEvent>& out,
     auto cleanup = [&] {
         cudaFree(d_buf); cudaFree(d_flags); cudaFree(d_nl); cudaFree(d_nl_count);
         cudaFree(d_count); cudaFree(d_torque); cudaFree(d_status); cudaFree(d_ts);
-        cudaFree(d_slots); cudaFree(d_dense); cudaFree(d_evflags);
-        cudaFree(d_ev_count); cudaFree(d_tmp); cudaFreeHost(h_buf);
+        cudaFree(d_rowflags); cudaFree(d_slots); cudaFree(d_dense);
+        cudaFree(d_evflags); cudaFree(d_ev_count); cudaFree(d_tmp);
+        cudaFreeHost(h_buf);
     };
 #define FAIL_IF(expr, what)                                               \
     do { const cudaError_t rc_ = (expr);                                  \
@@ -251,7 +281,7 @@ bool cuda_clean_file(const std::string& path, std::vector<CapEvent>& out,
     if (n_lines >= 2) {
         FAIL_IF(cudaMalloc(&d_nl, static_cast<size_t>(n_lines) * sizeof(unsigned long long)),
                 "cudaMalloc nl");
-        cub::CountingInputIterator<unsigned long long> idx(0);
+        thrust::counting_iterator<unsigned long long> idx(0);
         size_t tmp_bytes = 0;
         cub::DeviceSelect::Flagged(nullptr, tmp_bytes, idx, d_flags, d_nl,
                                    d_nl_count, static_cast<int>(n_bytes));
@@ -272,11 +302,13 @@ bool cuda_clean_file(const std::string& path, std::vector<CapEvent>& out,
     FAIL_IF(cudaMalloc(&d_torque, cells * sizeof(double)), "cudaMalloc torque");
     FAIL_IF(cudaMalloc(&d_status, cells * sizeof(double)), "cudaMalloc status");
     FAIL_IF(cudaMalloc(&d_ts, static_cast<size_t>(n_rows) * TS_LEN), "cudaMalloc ts");
+    FAIL_IF(cudaMalloc(&d_rowflags, n_rows), "cudaMalloc rowflags");
     t.start();
     {
         const int blk = 128;
         const unsigned int grid = (n_rows + blk - 1) / blk;
-        parse_rows<<<grid, blk>>>(d_buf, d_nl, n_rows, d_count, d_torque, d_status, d_ts);
+        parse_rows<<<grid, blk>>>(d_buf, d_nl, n_rows, d_count, d_torque, d_status,
+                                  d_ts, d_rowflags);
     }
     times.parse_s = t.stop();
     FAIL_IF(cudaGetLastError(), "S3 parse");
@@ -318,16 +350,38 @@ bool cuda_clean_file(const std::string& path, std::vector<CapEvent>& out,
     // ---- S6: download -------------------------------------------------------
     std::vector<CapEventDevice> host_ev(n_events);
     std::vector<char> host_ts(static_cast<size_t>(n_rows) * TS_LEN);
+    std::vector<unsigned char> host_flags(n_rows);
+    std::vector<unsigned long long> host_nl(n_lines);
     t.start();
     if (n_events)
         FAIL_IF(cudaMemcpy(host_ev.data(), d_dense, n_events * sizeof(CapEventDevice),
                            cudaMemcpyDeviceToHost), "D2H events");
     FAIL_IF(cudaMemcpy(host_ts.data(), d_ts, host_ts.size(),
                        cudaMemcpyDeviceToHost), "D2H ts");
+    FAIL_IF(cudaMemcpy(host_flags.data(), d_rowflags, n_rows,
+                       cudaMemcpyDeviceToHost), "D2H rowflags");
+    FAIL_IF(cudaMemcpy(host_nl.data(), d_nl, n_lines * sizeof(unsigned long long),
+                       cudaMemcpyDeviceToHost), "D2H nl");
     times.d2h_s = t.stop();
 
+    for (unsigned int r = 0; r < n_rows; ++r)
+        if (host_flags[r] & 2u) {
+            error = path + ": data row " + std::to_string(r + 1) +
+                    " has a Count cell with a mantissa beyond 2^53; cap_seq and "
+                    "event existence derive from counts, which the GPU parse "
+                    "cannot round correctly and the host cannot repair after "
+                    "the fact";
+            cleanup();
+            return false;
+        }
+
     // ---- host: materialize --------------------------------------------------
+    // Rows flagged parse-inexact get their event payloads re-read from the raw
+    // line with strtod (exact for any digit count). Events arrive in (row asc,
+    // head asc) order, so a one-row cache of field offsets amortizes the scan.
     out.reserve(out.size() + n_events);
+    long long cached_row = -1;
+    const char* fld[1 + 3 * NUM_HEADS];
     for (unsigned int k = 0; k < n_events; ++k) {
         const CapEventDevice& d = host_ev[k];
         CapEvent e;
@@ -340,6 +394,22 @@ bool cuda_clean_file(const std::string& path, std::vector<CapEvent>& out,
         e.is_fault = is_reject(d.status);
         e.aggregated = d.delta > 1;
         e.reset = d.reset != 0;
+        if (host_flags[d.row_index] & 1u) {
+            if (cached_row != d.row_index) {
+                const char* p = h_buf + host_nl[d.row_index] + 1;
+                const char* end = h_buf + host_nl[d.row_index + 1];
+                int f = 0;
+                fld[f++] = p;
+                for (; p < end && f < 1 + 3 * NUM_HEADS; ++p)
+                    if (*p == ',') fld[f++] = p + 1;
+                for (; f < 1 + 3 * NUM_HEADS; ++f) fld[f] = end;  // short row
+                cached_row = d.row_index;
+            }
+            const int h0 = d.head_id - 1;
+            e.app_torque = std::strtod(fld[1 + NUM_HEADS + h0], nullptr);
+            e.status = std::strtod(fld[1 + 2 * NUM_HEADS + h0], nullptr);
+            e.is_fault = is_reject(e.status);
+        }
         out.push_back(e);
     }
 #undef FAIL_IF
