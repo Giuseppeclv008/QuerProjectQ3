@@ -59,7 +59,9 @@ if(NOT MAS_BENCH_ONLY)
                                          # not the DLL; ELF and Mach-O need no
                                          # equivalent, which is why the other
                                          # two branches do not set it.
-    set(DUCKDB_SHA256 "")                # fill in after the first verified download
+    # Pinned from the first verified download on the Windows target box
+    # (2026-08-10, matches the official v1.2.2 release asset).
+    set(DUCKDB_SHA256 8fa8b50b49d0ec9a84a95edff9bfa926b8ae336d5d9a3a6442ea494606ebc9c7)
   elseif(APPLE)
     set(DUCKDB_ASSET libduckdb-osx-universal.zip)
     set(DUCKDB_LIBNAME libduckdb.dylib)
