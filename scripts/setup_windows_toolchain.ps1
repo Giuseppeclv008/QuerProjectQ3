@@ -33,8 +33,11 @@ function Test-Elevated {
 
 if (-not (Test-Elevated)) {
     Write-Host "Relaunching elevated -- approve the single UAC prompt."
-    $p = Start-Process powershell -Verb RunAs -Wait -PassThru -ArgumentList @(
-        "-ExecutionPolicy", "Bypass", "-File", $MyInvocation.MyCommand.Path)
+    # ArgumentList as ONE pre-quoted string: Windows PowerShell 5.1's
+    # Start-Process joins array elements with spaces WITHOUT quoting, which
+    # splits any path containing one.
+    $p = Start-Process powershell -Verb RunAs -Wait -PassThru -ArgumentList `
+        "-ExecutionPolicy Bypass -File `"$($MyInvocation.MyCommand.Path)`""
     # The elevated child did the work in its own window; verify from here.
     Write-Host ""
     if (Test-Path $toolset) { Write-Host "MSVC toolset: OK" }
@@ -70,10 +73,13 @@ if (Test-Path $toolset) {
         throw "VS Installer not found at $vsInstaller -- install VS 2022 first."
     }
     Write-Host "Adding the C++ workload to the existing VS 2022 Community (10-20 min)..."
-    Start-Process -FilePath $vsInstaller -ArgumentList @(
-        "modify", "--installPath", $vsPath,
-        "--add", "Microsoft.VisualStudio.Workload.NativeDesktop",
-        "--includeRecommended", "--passive", "--norestart")
+    # Same 5.1 quoting trap as the relaunch above: the space in $vsPath once
+    # reached setup.exe as `--installPath C:\Program` (exit 1, "no product
+    # matching"). One pre-quoted string keeps the path whole.
+    Start-Process -FilePath $vsInstaller -ArgumentList (
+        "modify --installPath `"$vsPath`" " +
+        "--add Microsoft.VisualStudio.Workload.NativeDesktop " +
+        "--includeRecommended --passive --norestart")
     $deadline = (Get-Date).AddMinutes(45)
     while ((Get-Date) -lt $deadline) {
         Start-Sleep -Seconds 15
