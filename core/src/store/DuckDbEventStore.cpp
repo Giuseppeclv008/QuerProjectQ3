@@ -1,6 +1,7 @@
 #include "mas/store/DuckDbEventStore.hpp"
 #include <duckdb.hpp>
 #include <stdexcept>
+#include <vector>
 
 namespace mas {
 
@@ -186,6 +187,58 @@ void DuckDbEventStore::merge_from(const std::string& other_db_path) {
         throw;
     }
     execOrThrow(impl_->con, "DETACH src");
+}
+
+void DuckDbEventStore::merge_all(const std::vector<std::string>& other_db_paths) {
+    if (other_db_paths.empty()) return;
+    if (other_db_paths.size() == 1) { merge_from(other_db_paths[0]); return; }
+
+    // The bulk path deduplicates the union of the sources against itself, not
+    // against rows already present, so it is only valid on an empty table.
+    if (count() > 0) {
+        for (const auto& p : other_db_paths) merge_from(p);
+        return;
+    }
+
+    static constexpr const char* kCols =
+        "machine_id, head_id, ts, cap_seq, app_torque, status, delta, "
+        "is_fault, aggregated, is_reset";
+
+    std::vector<std::string> aliases;
+    aliases.reserve(other_db_paths.size());
+    auto detach_all = [&] {
+        for (const auto& a : aliases) {
+            auto res = impl_->con.Query("DETACH " + a);   // best effort while unwinding
+            (void)res;
+        }
+    };
+
+    try {
+        std::string un;
+        for (std::size_t i = 0; i < other_db_paths.size(); ++i) {
+            const std::string alias = "msrc" + std::to_string(i);
+            execOrThrow(impl_->con, "ATTACH '" + sql_quote(other_db_paths[i]) +
+                                    "' AS " + alias + " (READ_ONLY)");
+            aliases.push_back(alias);
+            if (i) un += " UNION ALL ";
+            un += "SELECT " + std::string(kCols) + " FROM " + alias + ".cap_events";
+        }
+        // One hash aggregation over the whole union, then one bulk append, in
+        // place of N sequential INSERT OR IGNORE passes each probing the UNIQUE
+        // index per row against a destination that keeps growing.
+        //
+        // No ORDER BY on the DISTINCT ON: duplicates only arise from a
+        // re-dispatched file, and those rows agree in every column, so which
+        // one survives cannot be observed.
+        execOrThrow(impl_->con,
+            "INSERT INTO cap_events (" + std::string(kCols) + ") "
+            "SELECT DISTINCT ON (machine_id, head_id, ts) " + std::string(kCols) +
+            " FROM (" + un + ")");
+    } catch (...) {
+        detach_all();
+        throw;
+    }
+    detach_all();
 }
 
 } // namespace mas
