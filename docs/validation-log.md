@@ -484,13 +484,50 @@ MATCH: 765711 events, all 9 fields
 This is the first time `is_reject` has been checked against an independent
 oracle on real data.
 
-### Still open
+### Store rebuilt, reports regenerated
 
-- **The three committed reports in `docs/reports/` were generated from the old
-  store and every number in them is computed on the residue.** They must be
-  regenerated after `scripts/build_store.sh` rebuilds `events_3mo.duckdb` under
-  the new key. Expect February's `rows scanned` to rise from 10,450,551 toward
-  ~21.9M, and the derived KPIs to move with it.
-- Throughput in those reports is also wrong for a second reason: `capping_speed`
-  divided a day's closures by a flat 24 h. It now divides by the hours that
-  actually saw a closure. On the golden fixture that is 0.25 → 6 pieces/hour.
+`events_3mo.duckdb` rebuilt from all 89 day-files under the new key:
+**55,132,433 rows**, against 20,347,822 before — 2.71x, and exactly the number
+of events the extractor emits. Nothing is discarded now. Per-month: 2026-01
+119,984 (the 16:00 offset of the first file), 2026-02 21,971,506, 2026-03
+11,409,247, 2026-04 21,631,696. 36 heads, and zero duplicate
+`(machine_id, head_id, ts)`.
+
+Built in stages (February, March, then April in two halves) because only 2.2 GB
+of disk was free and a single pass needs ~5 GB. The store is append-mode and the
+key makes loading idempotent and order-independent, so the staged result is
+identical to a single run. The April run that hit `No space left on device`
+failed cleanly and left the store readable at exactly the 33,300,411 rows it
+held before — the `BEGIN`/`COMMIT` added in this branch is what made that a
+clean abort instead of a partial write.
+
+What the three committed reports had been reporting, February:
+
+| | on the residue | rebuilt |
+|---|---:|---:|
+| rows scanned | 10,450,551 | 21,971,506 |
+| capping operations | 6,672,649 | 14,824,304 |
+| no-load cycles | 3,774,599 | 7,141,531 |
+| rejected closures | 383 | 748 |
+| torque outside band | 68 | 130 |
+| **counter resets** | **36** | **145** |
+| beyond robust band | 678,325 | 1,612,634 |
+| idle | 7,486.0 head-hours | 11,551.3 head-hours |
+| throughput | 11,121 pieces/hour | 27,985 pieces/hour |
+| **period covered** | **2026-02-01 08:43:30 →** | **2026-02-01 00:00:09 →** |
+
+Two rows deserve reading twice.
+
+**The period.** The old report opened February at 08:43:30. February does not
+start at 08:43. Those hours existed in the raw pool and had been evicted from
+the store, so the report quietly described a shorter month than the one it
+claimed to cover.
+
+**Counter resets: 36, always 36.** February and the full three months both
+reported exactly 36 — one per head, i.e. one reset event, in 89 days. The
+figure was stable because the reset markers were themselves being deduped away
+by the key that the resets had made ambiguous. The rebuilt store finds 145 in
+February alone.
+
+Throughput moves for two reasons at once: more rows, and `capping_speed` no
+longer dividing a day's closures by a flat 24 h.

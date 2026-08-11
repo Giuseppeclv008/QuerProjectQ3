@@ -1,6 +1,6 @@
 # Capping KPI report for 2026-02.
 
-*Generated 2026-07-26T10:21:07Z — narrative source: template, plan source: router.*
+*Generated 2026-08-11T11:00:08Z — narrative source: template, plan source: router.*
 
 ## Goal
 
@@ -10,7 +10,7 @@ Capping KPI report for 2026-02.
 
 - Store: `events_3mo.duckdb`, machine `MCC`
 - Torque band: 1.5–2.5 Nm; robust band k = 3.0; idle threshold 300s
-- Rows scanned across all steps: 40,919,049
+- Rows scanned across all steps: 88,415,924
 
 ## Analyses executed
 
@@ -22,13 +22,13 @@ Capping KPI report for 2026-02.
 
 ## Findings
 
-- **Scope.** 6,672,649 capping operations across heads 1-36, from 2026-02-01 08:43:30 to 2026-02-28 15:59:59. 3,774,599 no-load cycles are excluded from every rate below.
-- **Data quality.** 68 closures carry torque outside the configured band; 0 carry no torque reading at all.
-- **Counter resets.** 36 reset markers in scope.
-- **Success rate.** 99.9943% (6,669,339 successful, 383 rejected). Lowest head: 29. A further 2,927 closures carry no pass/fail verdict and are outside the rate.
-- **Weakest head.** 29 at 99.9660% over 185,349 capping operations.
-- **Throughput.** 11,121.0817 pieces/hour, averaged over 25 active buckets.
-- **Idle time.** 12,276 sustained no-load periods, 7,486.0 head-hours in total.
+- **Scope.** 14,824,304 capping operations across heads 1-36, from 2026-02-01 00:00:09 to 2026-02-28 23:59:59. 7,141,531 no-load cycles are excluded from every rate below.
+- **Data quality.** 130 closures carry torque outside the configured band; 0 carry no torque reading at all.
+- **Counter resets.** 145 reset markers in scope.
+- **Success rate.** 99.9950% (14,817,976 successful, 748 rejected). Lowest head: 29. A further 5,580 closures carry no pass/fail verdict and are outside the rate.
+- **Weakest head.** 29 at 99.9781% over 411,776 capping operations.
+- **Throughput.** 27,984.7704 pieces/hour, averaged over 28 active buckets.
+- **Idle time.** 22,459 sustained no-load periods, 11,551.3 head-hours in total.
 
 ### Success Rate Per Head
 
@@ -41,14 +41,15 @@ Capping KPI report for 2026-02.
 ## Confidence and limits
 
 - **No model was used to plan this report.** The tool calls below are a fixed plan; the numbers would be identical either way.
-- `overview`: 10,450,551 rows scanned; filters: period=2026-02
-- `success_rates`: 6,672,649 rows scanned; filters: app_torque > 0 (capping operations only)
-- `success_rates`: 6,672,649 rows scanned; filters: app_torque > 0 (capping operations only)
-- `capping_speed`: 6,672,649 rows scanned; filters: bucket=day, app_torque > 0 (only real caps produce pieces)
-- `idle_periods`: 10,450,551 rows scanned; filters: min_seconds=300
+- `overview`: 21,971,506 rows scanned; filters: period=2026-02
+- `success_rates`: 14,824,304 rows scanned; filters: app_torque > 0 (capping operations only)
+- `success_rates`: 14,824,304 rows scanned; filters: app_torque > 0 (capping operations only)
+- `capping_speed`: 14,824,304 rows scanned; filters: bucket=day, app_torque > 0 (only real caps produce pieces)
+- `idle_periods`: 21,971,506 rows scanned; filters: min_seconds=300
 - **Assumption.** a capping operation is a closure with torque > 0; no-load cycles (status 2, torque 0) are excluded from success denominators.
 - **Assumption.** an idle period is a sustained run of no-load cycles (status 2.0, torque 0).
-- **Assumption.** mean_pieces_per_hour is the mean over active buckets only; buckets with zero capping operations are not emitted, so idle hours/days do not lower it.
+- **Assumption.** buckets with zero capping operations are never emitted, so a fully idle hour or day does not pull the mean down.
+- **Assumption.** rate = closures / hours that actually saw a closure in the bucket, not / the bucket's calendar length; a day with 10 productive hours is not divided by 24.
 
 ## Next checks
 
@@ -62,8 +63,8 @@ Every call this report is built from, in order. The full record is in
 
 | # | tool | arguments | status | rows scanned |
 |---|---|---|---|---|
-| 1 | `overview` | `period='2026-02'` | ok | 10,450,551 |
-| 2 | `success_rates` | `by='overall', period='2026-02'` | ok | 6,672,649 |
-| 3 | `success_rates` | `by='head', period='2026-02'` | ok | 6,672,649 |
-| 4 | `capping_speed` | `bucket='day', period='2026-02'` | ok | 6,672,649 |
-| 5 | `idle_periods` | `period='2026-02'` | ok | 10,450,551 |
+| 1 | `overview` | `period='2026-02'` | ok | 21,971,506 |
+| 2 | `success_rates` | `by='overall', period='2026-02'` | ok | 14,824,304 |
+| 3 | `success_rates` | `by='head', period='2026-02'` | ok | 14,824,304 |
+| 4 | `capping_speed` | `bucket='day', period='2026-02'` | ok | 14,824,304 |
+| 5 | `idle_periods` | `period='2026-02'` | ok | 21,971,506 |

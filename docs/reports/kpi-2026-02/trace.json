@@ -7,7 +7,7 @@
     },
     "rationale": "Establish the scope: counts, heads, time range, data-quality flags.",
     "status": "ok",
-    "rows_scanned": 10450551,
+    "rows_scanned": 21971506,
     "message": ""
   },
   {
@@ -19,7 +19,7 @@
     },
     "rationale": "The headline KPI the brief asks for first.",
     "status": "ok",
-    "rows_scanned": 6672649,
+    "rows_scanned": 14824304,
     "message": ""
   },
   {
@@ -31,7 +31,7 @@
     },
     "rationale": "Per-head breakdown, to name the weakest head.",
     "status": "ok",
-    "rows_scanned": 6672649,
+    "rows_scanned": 14824304,
     "message": ""
   },
   {
@@ -43,7 +43,7 @@
     },
     "rationale": "Production rate in pieces/hour, day by day.",
     "status": "ok",
-    "rows_scanned": 6672649,
+    "rows_scanned": 14824304,
     "message": ""
   },
   {
@@ -54,7 +54,7 @@
     },
     "rationale": "Sustained No-Load runs, to separate downtime from failure.",
     "status": "ok",
-    "rows_scanned": 10450551,
+    "rows_scanned": 21971506,
     "message": ""
   }
 ]
