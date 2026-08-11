@@ -84,15 +84,17 @@ measured on `events_3mo.duckdb` (55,132,433 rows, machine `MCC`, 36 heads,
 
   | status | torque>0 | count | decoded |
   |---|---|---:|---|
-  | 0 | yes | 11,902,090 | clean |
-  | 2 | no | 8,433,525 | No Load — the idle cycle |
-  | 2 | yes | 5,452 | No Load with torque |
-  | 65 | yes | 585 | Bad Closure + reject |
-  | 9 | yes | 15 | No InTorque + reject |
-  | 4 | — | 7 | No Closure, not rejected |
+  | 0 | yes | 31,655,161 | clean |
+  | 2 | no | 23,447,151 | No Load — the idle cycle |
+  | 0 | no | 16,552 | clean status, no torque applied |
+  | 2 | yes | 12,461 | No Load with torque |
+  | 65 | yes | 1,071 | Bad Closure + reject |
+  | 9 | yes | 24 | No InTorque + reject |
+  | 4 | — | 12 | No Closure, not rejected |
+  | 65 | no | 1 | Bad Closure, no torque |
 
-- 585 + 15 = **600 rejects**, exactly what the odd-status rule returns. The
-  bitmask is confirmed by the data, not assumed.
+- 1,071 + 24 + 1 = **1,096 rejects**, exactly what the odd-status rule returns.
+  The bitmask is confirmed by the data, not assumed.
 - **This changed a number.** The earlier rule `status == 65` undercounts: February
   has **748** rejected closures.
 - **Success rate excludes no-load cycles** — a head that only ever cycled with no
@@ -158,13 +160,13 @@ measured on `events_3mo.duckdb` (55,132,433 rows, machine `MCC`, 36 heads,
 
 ## 10. A finding
 
-- The machine-level number looks perfect: **99.9943%** success over February
+- The machine-level number looks perfect: **99.9950%** success over February
   (14,817,976 successful, 748 rejected).
-- Per head, it is not evenly spread. Over three months **head 29 accounts for 75
-  of the 600 rejected closures** — against a per-head mean of 16.7, and against
-  37 for the next-worst head. **4.5× the machine average.**
+- Per head, it is not evenly spread. Over three months **head 29 accounts for 117
+  of the 1,095 rejected capping operations** — against a per-head mean of 30.4,
+  and against 78 for the next-worst head (35). **3.8× the machine average.**
 - That is the actionable finding, and the headline rate hides it completely.
-  99.9943% and 99.9660% look like the same number until you count rejects per
+  99.9950% and 99.9781% look like the same number until you count rejects per
   head.
 - **Equally important: what we did *not* find.** No head exceeds the Mann-Kendall
   drift threshold on torque or on success rate over three months, and all 36
@@ -229,28 +231,32 @@ measured on `events_3mo.duckdb` (55,132,433 rows, machine `MCC`, 36 heads,
 
 ---
 
-## Numbers still to re-derive before the talk
+## Provenance of the numbers
 
-The store was rebuilt on 2026-08-11 under the `(machine_id, head_id, ts)`
-identity: 55,132,433 rows against 20,347,822, because the old `cap_seq` key was
-collapsing distinct closures across the PLC's counter reset (see
-`docs/validation-log.md`). February's figures above have been re-derived from
-the regenerated reports in `docs/reports/`.
+Every figure in this outline is derived from `events_3mo.duckdb` as rebuilt on
+2026-08-11 under the `(machine_id, head_id, ts)` identity: **55,132,433 rows**,
+against 20,347,822 before. The old `(machine_id, head_id, cap_seq)` key was
+collapsing distinct closures across the PLC's counter reset — see
+`docs/validation-log.md` for the measurement that settles it.
 
-**These have not, and the values still in the text are computed on the old
-residue. Do not present them as they stand:**
+Re-derived from the rebuilt store, not carried over:
 
-- The status-code table around slide 6 (`585` status-65 rejects, `600` total
-  rejects over three months).
-- "Head 29 accounts for N of the rejected closures" — the headline finding.
-  The direction survives: the regenerated February report still names head 29
-  as weakest, at 99.9781% over 411,776 capping operations. The count does not.
+- February success rate and counts, and the per-head rate for head 29
+- the three-month status distribution in section 6, and the 1,096 reject total
+- head 29's share of the rejects
 
-Re-derive with the store present:
+**The finding survived the rebuild but got smaller, and the smaller number is
+the one to present.** On the old residue head 29 looked like 75 of 600 rejects
+against a next-worst of 37 — 4.5x the machine mean. On the full data it is 117
+of 1,095 against a next-worst of 78, i.e. **3.8x**. Still the clear outlier,
+still the actionable finding, but the gap to the second-worst head is half what
+it appeared to be.
+
+To regenerate everything from scratch:
 
     scripts/build_store.sh events_3mo.duckdb telemetry_*.zip
-    scripts/arol report kpi --period 2026-02..2026-04 --out /tmp/pres
+    scripts/demo.sh
 
-The store is ~2.6 GB and needs ~5 GB free to build in one pass; it was deleted
-after the benchmark sweep to make room. Build it month by month if disk is
-tight — the store appends and the key makes loading order-independent.
+The store is ~2.6 GB and a single pass needs ~5 GB free. Build it month by month
+if disk is tight — the store appends and the ts key makes loading
+order-independent.

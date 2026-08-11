@@ -40,8 +40,8 @@ CAST(status AS BIGINT) % 2 = 1
 This is the single definition of failure across the toolkit
 (`analytics/status.py:REJECT_SQL`) and in the C++ tier
 (`CapEvent::is_reject`). It replaced an earlier `status == 65` rule, which
-undercounted: on February alone, 383 closures carry the reject bit but only 371
-have status 65.
+undercounted: on February alone, 748 closures carry the reject bit but only 732
+have status 65 — the other 16 are status 9, No InTorque.
 
 ### Measured distribution, three months
 
@@ -124,7 +124,7 @@ Measured, February: 14,817,976 successful, 748 rejected → **99.9950%**.
 **Question:** how many pieces per hour, and how does that move over time?
 
 Groups closures with torque > 0 into hour or day buckets and divides by the
-bucket's length in hours.
+hours in the bucket that actually saw a closure.
 
 **`mean_pieces_per_hour` is the mean over *active* buckets only.** `GROUP BY`
 never emits a bucket with zero capping operations, so an idle hour or an idle
