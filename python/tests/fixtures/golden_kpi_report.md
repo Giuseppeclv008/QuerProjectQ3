@@ -45,6 +45,7 @@ Capping KPI report for 2026-02.
 - `idle_periods`: **insufficient_data** — no idle periods of >= 300s in period '2026-02'
 - **Assumption.** a capping operation is a closure with torque > 0; no-load cycles (status 2, torque 0) are excluded from success denominators.
 - **Assumption.** buckets with zero capping operations are never emitted, so a fully idle hour or day does not pull the mean down.
+- **Assumption.** counts are rows, i.e. polls at which a head's counter advanced; a poll that caught up on several caps (delta > 1) counts once. Measured undercount on real data: 0.0017% of caps.
 - **Assumption.** rate = closures / hours that actually saw a closure in the bucket, not / the bucket's calendar length; a day with 10 productive hours is not divided by 24.
 
 ## Next checks

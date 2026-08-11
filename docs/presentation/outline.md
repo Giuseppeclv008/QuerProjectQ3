@@ -1,7 +1,7 @@
 # Presentation outline — 13 slides
 
 Every bullet is written to be transcribed onto a slide as-is. Numbers are
-measured on `events_3mo.duckdb` (20,347,822 rows, machine `MCC`, 36 heads,
+measured on `events_3mo.duckdb` (55,132,433 rows, machine `MCC`, 36 heads,
 2026-02-01 → 2026-04-30) and reconciled in
 [`docs/validation-log.md`](../validation-log.md).
 
@@ -53,7 +53,7 @@ measured on `events_3mo.duckdb` (20,347,822 rows, machine `MCC`, 36 heads,
   reprocessing, so re-running a day-file cannot double-count.
 - Staging + merge write path into DuckDB; cross-worker merge unifies per-worker
   stores.
-- Result: **20,347,822 cap events** over three months, 36 heads.
+- Result: **55,132,433 cap events** over three months, 36 heads.
 - Validated against an **independent Python oracle** — the C++ output and a
   raw-CSV re-derivation agree exactly.
 
@@ -94,7 +94,7 @@ measured on `events_3mo.duckdb` (20,347,822 rows, machine `MCC`, 36 heads,
 - 585 + 15 = **600 rejects**, exactly what the odd-status rule returns. The
   bitmask is confirmed by the data, not assumed.
 - **This changed a number.** The earlier rule `status == 65` undercounts: February
-  has **383** rejected closures, not 371.
+  has **748** rejected closures.
 - **Success rate excludes no-load cycles** — a head that only ever cycled with no
   load performed zero capping operations and is omitted, not reported at 0%.
 
@@ -159,7 +159,7 @@ measured on `events_3mo.duckdb` (20,347,822 rows, machine `MCC`, 36 heads,
 ## 10. A finding
 
 - The machine-level number looks perfect: **99.9943%** success over February
-  (6,669,339 successful, 383 rejected).
+  (14,817,976 successful, 748 rejected).
 - Per head, it is not evenly spread. Over three months **head 29 accounts for 75
   of the 600 rejected closures** — against a per-head mean of 16.7, and against
   37 for the next-worst head. **4.5× the machine average.**
@@ -226,3 +226,31 @@ measured on `events_3mo.duckdb` (20,347,822 rows, machine `MCC`, 36 heads,
   `drift-2026-02_2026-04`, `anomalies-2026-02`.
 - Close on the invariant: **the model chose the analyses; the SQL produced every
   number.**
+
+---
+
+## Numbers still to re-derive before the talk
+
+The store was rebuilt on 2026-08-11 under the `(machine_id, head_id, ts)`
+identity: 55,132,433 rows against 20,347,822, because the old `cap_seq` key was
+collapsing distinct closures across the PLC's counter reset (see
+`docs/validation-log.md`). February's figures above have been re-derived from
+the regenerated reports in `docs/reports/`.
+
+**These have not, and the values still in the text are computed on the old
+residue. Do not present them as they stand:**
+
+- The status-code table around slide 6 (`585` status-65 rejects, `600` total
+  rejects over three months).
+- "Head 29 accounts for N of the rejected closures" — the headline finding.
+  The direction survives: the regenerated February report still names head 29
+  as weakest, at 99.9781% over 411,776 capping operations. The count does not.
+
+Re-derive with the store present:
+
+    scripts/build_store.sh events_3mo.duckdb telemetry_*.zip
+    scripts/arol report kpi --period 2026-02..2026-04 --out /tmp/pres
+
+The store is ~2.6 GB and needs ~5 GB free to build in one pass; it was deleted
+after the benchmark sweep to make room. Build it month by month if disk is
+tight — the store appends and the key makes loading order-independent.

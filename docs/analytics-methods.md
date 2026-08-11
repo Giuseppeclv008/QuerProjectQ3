@@ -115,7 +115,7 @@ without saying so the printed counts visibly fail to add up.
 **Degenerate case:** a group with no verdicts at all yields `success_rate =
 None`, never `0.0` and never a `ZeroDivisionError`.
 
-Measured, February: 6,669,339 successful, 383 rejected → **99.9943%**.
+Measured, February: 14,817,976 successful, 748 rejected → **99.9950%**.
 
 ---
 
@@ -131,8 +131,15 @@ never emits a bucket with zero capping operations, so an idle hour or an idle
 weekend does not drag the mean down. It is a typical *active-bucket* rate, not
 total pieces over elapsed time — the returned assumptions say so.
 
-Measured, February: 11,121.0817 pieces/hour over 25 active day-buckets
-(= 6,672,649 / 24 / 25).
+The denominator is the hours that actually saw a closure, not the bucket's
+calendar length. It used to be a flat 24 for day buckets, so the reported
+"pieces/hour" was pieces-per-day over 24 — while `idle_periods` reported
+thousands of idle head-hours for the same month. The two numbers described
+different machines.
+
+Measured, February: 27,984.7704 pieces/hour over 28 active day-buckets. AROL
+define production speed as bottles closed per unit time
+(`material/various.txt`), so `pieces_per_second` is reported alongside.
 
 ---
 
@@ -144,10 +151,20 @@ A gaps-and-islands query over per-head runs of no-load cycles. Consecutive
 no-load rows for one head form an island; a run lasting at least
 `idle_min_seconds` (default 300) is an idle period.
 
-Ordering is tie-broken on `cap_seq` as well as `ts`, because the PLC can emit two
-rows with the same timestamp — ordering on `ts` alone would fragment one idle run
-into several shorter ones and lose the whole period to the minimum-duration
-filter.
+Ordering is tie-broken on `cap_seq` as well as `ts`. The tie-breaker is now
+belt-and-braces rather than load-bearing: the window is `PARTITION BY head_id`,
+and within one head a duplicate timestamp is unrepresentable — the store's
+identity is `(machine_id, head_id, ts)`, and a head closes at most once per poll
+because caps missed between polls arrive as one event with `delta > 1`. Measured
+on the rebuilt store: **0 duplicate `(machine_id, head_id, ts)` across
+55,132,433 rows**. An earlier version of this paragraph claimed the PLC "can
+emit two rows with the same timestamp", which is true across heads (36 share
+each poll) and false within one.
+
+**Scope limit:** `cap_events` only holds rows where a counter advanced, so a
+machine that is switched off produces no rows and no islands. This measures
+no-load *cycling*, not downtime. AROL detect a stopped machine from the raw
+pool — consecutive rows identical but for the timestamp.
 
 **Assumption declared:** an idle period is a sustained run of no-load cycles
 (status 2.0, torque 0).
@@ -176,8 +193,10 @@ The two detectors are independent on purpose: a head can drift entirely within
 the configured band (deviation hits, no threshold hits), and a correctly centred
 head can run a product whose band is wrong (threshold hits, no deviation hits).
 
-Measured, February: 383 rejected, 68 outside the configured band, 678,325 beyond
-their head's robust band.
+Measured, February: 748 rejected, 130 outside the configured band, 1,612,634
+beyond their head's robust band. The itemised lists are capped at
+`max_anomaly_items` (default 5,000) per category; the reported counts stay
+exact.
 
 ---
 

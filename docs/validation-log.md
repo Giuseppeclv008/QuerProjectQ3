@@ -531,3 +531,67 @@ February alone.
 
 Throughput moves for two reasons at once: more rows, and `capping_speed` no
 longer dividing a day's closures by a flat 24 h.
+
+### The other half of the identity proof
+
+The 2026-08-11 entry above shows the old key collapsed distinct closures. The
+complementary check — that the new one does not — was run on the rebuilt store:
+
+```sql
+SELECT COUNT(*) FROM (
+  SELECT machine_id, head_id, ts FROM cap_events GROUP BY 1,2,3 HAVING COUNT(*) > 1
+);
+-- 0, over 55,132,433 rows
+```
+
+Upstream of the store the same property holds in the raw pool: 86,399 rows per
+day-file, 86,399 distinct timestamps. `docs/analytics-methods.md` claimed the
+PLC "can emit two rows with the same timestamp", which is true across heads —
+36 share every poll — and false within one. The idle query's `cap_seq`
+tie-breaker is therefore belt-and-braces, not load-bearing.
+
+### One row is one poll, not one cap
+
+No analytics tool reads `delta` or `aggregated`; everything is `COUNT(*)`. A row
+whose `delta` is 3 stands for three caps applied between two polls and is
+counted once. This predates the key change, but the change removes the ambiguity
+it was hiding behind, so it is worth a number rather than a shrug.
+
+Measured over three real day-files (2026-02-01..03):
+
+```
+rows (non-reset):   2,290,233
+SUM(delta):         2,290,271
+undercount:                38   (0.0017% of real caps)
+rows with delta > 1:       38   (one in ~60,000)
+```
+
+At ~0.2 caps/s/head against a 1 Hz poll, a poll almost never catches two caps.
+0.0017% is far below the point where rewriting every tool to `SUM(delta)` would
+buy more correctness than it risks, so `overview` now declares it in its
+assumptions instead.
+
+### Merge optimisation, measured (branch `perf/merge-set-based`)
+
+`merge_from` called once per source is N sequential `INSERT OR IGNORE` passes,
+each probing the UNIQUE index per row against a growing destination — ~22M
+probes that, the sources now being disjoint, almost never find anything.
+`merge_all` unions every source and deduplicates once.
+
+A/B on the merge alone: 8 source stores built once from the 28 February
+day-files, both binaries alternated over the same sources so thermal drift
+could not land on one side.
+
+| | median of 3 | rows |
+|---|---:|---:|
+| `merge_from` in a loop | 65.867 s | 21,872,663 |
+| `merge_all` | **22.792 s** | 21,872,663 |
+
+**2.89x, 43.1 s saved, identical row counts in all six runs.** Row equality is
+the load-bearing check: a faster merge that loses rows is the defect this branch
+exists to prevent, in a new costume.
+
+Projected end-to-end, NOT yet measured: MAS N=16 at 28 days is 27.1 s clean +
+64.0 s merge = 91.2 s. At ~23 s of merge it would be ~50 s, i.e. ~2.0x over
+mono-1T instead of 1.11x. That projection needs a full sweep before it is
+written down as a result.
