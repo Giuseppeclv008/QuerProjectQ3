@@ -5,12 +5,25 @@
 set -euo pipefail
 
 QUICK=0
-[ "${1:-}" = "--quick" ] && QUICK=1
+ONLY=both              # both | mono | mas
+VOLUMES_ARG=""         # e.g. "1 7"; empty = the default ladder
+OUT_CSV_ARG=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --quick)   QUICK=1; shift ;;
+        --only)    ONLY="$2"; shift 2 ;;
+        --volumes) VOLUMES_ARG="$2"; shift 2 ;;
+        --out)     OUT_CSV_ARG="$2"; shift 2 ;;
+        *) echo "usage: $0 [--quick] [--only mono|mas|both] [--volumes \"1 7\"] [--out file.csv]" >&2
+           exit 2 ;;
+    esac
+done
+case "$ONLY" in (mono|mas|both) ;; (*) echo "--only must be mono, mas or both"; exit 2;; esac
 BUILD="${BUILD_DIR:-build}"
 ZIP="telemetry_MCC777eda3db57348ef8a3113a642ae74db_2026-02.zip"
 DATA="${DATA_DIR:-telemetry_MCC777eda3db57348ef8a3113a642ae74db_2026-02}"
 MACHINE="MCC777eda3db57348ef8a3113a642ae74db"
-OUT_CSV="bench/results.csv"
+OUT_CSV="${OUT_CSV_ARG:-bench/results.csv}"
 ROWS_PER_DAY=86399
 REPEATS=3
 WORK=tcp://127.0.0.1:5591 RES=tcp://127.0.0.1:5592 HB=tcp://127.0.0.1:5593
@@ -44,6 +57,7 @@ while IFS= read -r f; do FILES+=("$f"); done \
 
 VOLUMES=(1 7 28)
 [ "$QUICK" = 1 ] && VOLUMES=(1)
+[ -n "$VOLUMES_ARG" ] && VOLUMES=($VOLUMES_ARG)
 
 T="$(mktemp -d /tmp/mas_bench.XXXXXX)"
 PIDS=()
@@ -106,6 +120,7 @@ check_count() {   # $1 = actual rows, $2 = volume, $3 = label
 }
 
 # --- monolith runs -----------------------------------------------------------
+if [ "$ONLY" != mas ]; then
 for v in "${VOLUMES[@]}"; do
     for th in 1 2 4 8; do
         for rep in 1 2 3; do
@@ -128,7 +143,10 @@ for v in "${VOLUMES[@]}"; do
     done
 done
 
+fi   # end monolith block
+
 # --- MAS runs ----------------------------------------------------------------
+if [ "$ONLY" != mono ]; then
 for v in "${VOLUMES[@]}"; do
     for n in 1 2 4 8 16; do
         for rep in 1 2 3; do
@@ -185,5 +203,7 @@ for v in "${VOLUMES[@]}"; do
         done
     done
 done
+
+fi   # end MAS block
 
 echo "sweep complete: $(( $(wc -l < "$OUT_CSV") - 1 )) rows in $OUT_CSV"

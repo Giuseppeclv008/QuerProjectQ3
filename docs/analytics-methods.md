@@ -8,7 +8,7 @@ raises: a gap in the data is a `status` on the result, not an exception. Nothing
 below the CLI propagates an error, because a report generated unattended must
 still land on disk saying what it could not answer.
 
-All measured figures below come from `events_3mo.duckdb` — 20,347,822 rows,
+All measured figures below come from `events_3mo.duckdb` — 55,132,433 rows,
 machine `MCC`, 36 heads, 2026-02-01 → 2026-04-30.
 
 ---
@@ -40,24 +40,25 @@ CAST(status AS BIGINT) % 2 = 1
 This is the single definition of failure across the toolkit
 (`analytics/status.py:REJECT_SQL`) and in the C++ tier
 (`CapEvent::is_reject`). It replaced an earlier `status == 65` rule, which
-undercounted: on February alone, 383 closures carry the reject bit but only 371
-have status 65.
+undercounted: on February alone, 748 closures carry the reject bit but only 732
+have status 65 — the other 16 are status 9, No InTorque.
 
 ### Measured distribution, three months
 
 | status | torque > 0 | count | share | decoded |
 |---|---|---:|---:|---|
-| 0 | yes | 11,902,090 | 58.4932% | clean capping operation |
-| 2 | no | 8,433,525 | 41.4468% | No Load — the idle cycle |
-| 0 | no | 6,148 | 0.0302% | clean, but no load applied |
-| 2 | yes | 5,452 | 0.0268% | No Load **with** torque |
-| 65 | yes | 585 | 0.0029% | Bad Closure + reject |
-| 9 | yes | 15 | 0.0001% | No InTorque + reject |
-| 4 | yes | 6 | 0.0000% | No Closure, not rejected |
-| 4 | no | 1 | 0.0000% | No Closure, not rejected |
+| 0 | yes | 31,655,161 | 57.4166% | clean capping operation |
+| 2 | no | 23,447,151 | 42.5288% | No Load — the idle cycle |
+| 0 | no | 16,552 | 0.0300% | clean, but no load applied |
+| 2 | yes | 12,461 | 0.0226% | No Load **with** torque |
+| 65 | yes | 1,071 | 0.0019% | Bad Closure + reject |
+| 9 | yes | 24 | 0.0000% | No InTorque + reject |
+| 4 | yes | 10 | 0.0000% | No Closure, not rejected |
+| 4 | no | 2 | 0.0000% | No Closure, not rejected |
+| 65 | no | 1 | 0.0000% | Bad Closure, no torque |
 
-585 + 15 = **600 rejected closures** over three months, which is exactly what
-`CAST(status AS BIGINT) % 2 = 1` returns. The bitmask reading is confirmed by
+1,071 + 24 + 1 = **1,096 rejected closures** over three months, which is exactly
+what `CAST(status AS BIGINT) % 2 <> 0` returns. The bitmask reading is confirmed by
 the data, not merely consistent with it.
 
 **No Load with torque (5,452 rows) is not a contradiction.** No Load means the
@@ -109,13 +110,13 @@ catastrophically failing head when nothing was ever capped. It is omitted.
 `status = 0` nor a reject carries no pass/fail verdict — the 5,452 No-Load-with-
 torque and 6 No-Closure rows above. They are excluded from the ratio, so
 `successful + failed` can be less than the total. The report states the
-difference explicitly; on February that is 2,927 closures out of 6,672,649, and
+difference explicitly; on February that is 5,580 closures out of 14,824,304, and
 without saying so the printed counts visibly fail to add up.
 
 **Degenerate case:** a group with no verdicts at all yields `success_rate =
 None`, never `0.0` and never a `ZeroDivisionError`.
 
-Measured, February: 6,669,339 successful, 383 rejected → **99.9943%**.
+Measured, February: 14,817,976 successful, 748 rejected → **99.9950%**.
 
 ---
 
@@ -124,15 +125,22 @@ Measured, February: 6,669,339 successful, 383 rejected → **99.9943%**.
 **Question:** how many pieces per hour, and how does that move over time?
 
 Groups closures with torque > 0 into hour or day buckets and divides by the
-bucket's length in hours.
+hours in the bucket that actually saw a closure.
 
 **`mean_pieces_per_hour` is the mean over *active* buckets only.** `GROUP BY`
 never emits a bucket with zero capping operations, so an idle hour or an idle
 weekend does not drag the mean down. It is a typical *active-bucket* rate, not
 total pieces over elapsed time — the returned assumptions say so.
 
-Measured, February: 11,121.0817 pieces/hour over 25 active day-buckets
-(= 6,672,649 / 24 / 25).
+The denominator is the hours that actually saw a closure, not the bucket's
+calendar length. It used to be a flat 24 for day buckets, so the reported
+"pieces/hour" was pieces-per-day over 24 — while `idle_periods` reported
+thousands of idle head-hours for the same month. The two numbers described
+different machines.
+
+Measured, February: 27,984.7704 pieces/hour over 28 active day-buckets. AROL
+define production speed as bottles closed per unit time
+(`material/various.txt`), so `pieces_per_second` is reported alongside.
 
 ---
 
@@ -144,10 +152,20 @@ A gaps-and-islands query over per-head runs of no-load cycles. Consecutive
 no-load rows for one head form an island; a run lasting at least
 `idle_min_seconds` (default 300) is an idle period.
 
-Ordering is tie-broken on `cap_seq` as well as `ts`, because the PLC can emit two
-rows with the same timestamp — ordering on `ts` alone would fragment one idle run
-into several shorter ones and lose the whole period to the minimum-duration
-filter.
+Ordering is tie-broken on `cap_seq` as well as `ts`. The tie-breaker is now
+belt-and-braces rather than load-bearing: the window is `PARTITION BY head_id`,
+and within one head a duplicate timestamp is unrepresentable — the store's
+identity is `(machine_id, head_id, ts)`, and a head closes at most once per poll
+because caps missed between polls arrive as one event with `delta > 1`. Measured
+on the rebuilt store: **0 duplicate `(machine_id, head_id, ts)` across
+55,132,433 rows**. An earlier version of this paragraph claimed the PLC "can
+emit two rows with the same timestamp", which is true across heads (36 share
+each poll) and false within one.
+
+**Scope limit:** `cap_events` only holds rows where a counter advanced, so a
+machine that is switched off produces no rows and no islands. This measures
+no-load *cycling*, not downtime. AROL detect a stopped machine from the raw
+pool — consecutive rows identical but for the timestamp.
 
 **Assumption declared:** an idle period is a sustained run of no-load cycles
 (status 2.0, torque 0).
@@ -176,8 +194,10 @@ The two detectors are independent on purpose: a head can drift entirely within
 the configured band (deviation hits, no threshold hits), and a correctly centred
 head can run a product whose band is wrong (threshold hits, no deviation hits).
 
-Measured, February: 383 rejected, 68 outside the configured band, 678,325 beyond
-their head's robust band.
+Measured, February: 748 rejected, 130 outside the configured band, 1,612,634
+beyond their head's robust band. The itemised lists are capped at
+`max_anomaly_items` (default 5,000) per category; the reported counts stay
+exact.
 
 ---
 
