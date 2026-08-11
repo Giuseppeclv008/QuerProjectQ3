@@ -20,6 +20,22 @@ from analytics.store import connect, scope_clause
 _METHODS = ("threshold", "deviation", "both")
 
 
+def _sample(con, sql, params, limit):
+    """Return (rows, exact_total) with at most `limit` rows materialised.
+
+    Every hit used to become a Python dict inside the ToolResult, and plots.py
+    then scattered all of them: 678,325 deviation hits on February, 1,734,460
+    across the three months. The counts a report quotes must stay exact, so the
+    total is recomputed with COUNT(*) -- but only when the sample actually
+    filled up, which on a healthy period it does not.
+    """
+    rows = con.execute(f"{sql} LIMIT {limit + 1}", params).fetchall()
+    if len(rows) <= limit:
+        return rows, len(rows)
+    total = con.execute(f"SELECT COUNT(*) FROM ({sql})", params).fetchone()[0]
+    return rows[:limit], total
+
+
 def anomalies(cfg, period=None, method="both"):
     if method not in _METHODS:
         return ToolResult.error(
@@ -36,37 +52,38 @@ def anomalies(cfg, period=None, method="both"):
         f"SELECT COUNT(*) FROM cap_events WHERE {where}", params
     ).fetchone()[0]
 
+    cap = cfg.max_anomaly_items
+    fault_rows, n_faults = _sample(
+        con,
+        f"""SELECT head_id, ts, app_torque, status FROM cap_events
+            WHERE {REJECT_SQL} AND {where} ORDER BY ts, cap_seq""",
+        params, cap)
     faults = [
         {"head_id": int(r[0]), "ts": r[1], "app_torque": r[2],
          "reason": "reject: " + ", ".join(decode(r[3])["conditions"] or ["unspecified"])}
-        for r in con.execute(
-            f"""SELECT head_id, ts, app_torque, status FROM cap_events
-                WHERE {REJECT_SQL} AND {where} ORDER BY ts, cap_seq""",
-            params,
-        ).fetchall()
+        for r in fault_rows
     ]
 
-    threshold_hits = []
+    threshold_hits, n_threshold = [], 0
     if method in ("threshold", "both"):
+        rows, n_threshold = _sample(
+            con,
+            f"""SELECT head_id, ts, app_torque FROM cap_events
+                WHERE app_torque > 0 AND (app_torque < ? OR app_torque > ?)
+                  AND {where}
+                ORDER BY ts, cap_seq""",
+            [cfg.torque_min, cfg.torque_max] + params, cap)
         threshold_hits = [
             {"head_id": int(r[0]), "ts": r[1], "app_torque": r[2],
              "reason": f"torque outside band [{cfg.torque_min}, {cfg.torque_max}]"}
-            for r in con.execute(
-                f"""SELECT head_id, ts, app_torque FROM cap_events
-                    WHERE app_torque > 0 AND (app_torque < ? OR app_torque > ?)
-                      AND {where}
-                    ORDER BY ts, cap_seq""",
-                [cfg.torque_min, cfg.torque_max] + params,
-            ).fetchall()
+            for r in rows
         ]
 
-    deviation_hits = []
+    deviation_hits, n_deviation = [], 0
     if method in ("deviation", "both"):
         # MEDIAN(|x - median|) per head, then flag |x - median| > k * MAD.
-        deviation_hits = [
-            {"head_id": int(r[0]), "ts": r[1], "app_torque": r[2],
-             "reason": f"torque deviates > {cfg.mad_k}*MAD from head median {r[3]:.3f}"}
-            for r in con.execute(
+        rows, n_deviation = _sample(
+                con,
                 f"""
                 WITH caps AS (
                     SELECT head_id, ts, app_torque, cap_seq FROM cap_events
@@ -87,8 +104,11 @@ def anomalies(cfg, period=None, method="both"):
                   AND ABS(c.app_torque - mad.m) > ? * mad.mad
                 ORDER BY c.ts, c.cap_seq
                 """,
-                params + [cfg.mad_k],
-            ).fetchall()
+                params + [cfg.mad_k], cap)
+        deviation_hits = [
+            {"head_id": int(r[0]), "ts": r[1], "app_torque": r[2],
+             "reason": f"torque deviates > {cfg.mad_k}*MAD from head median {r[3]:.3f}"}
+            for r in rows
         ]
 
     return ToolResult.ok(
@@ -97,7 +117,13 @@ def anomalies(cfg, period=None, method="both"):
             "faults": faults,
             "threshold_hits": threshold_hits,
             "deviation_hits": deviation_hits,
+            # Exact totals, independent of how many were itemised above.
             "counts": {
+                "faults": n_faults,
+                "threshold_hits": n_threshold,
+                "deviation_hits": n_deviation,
+            },
+            "listed": {
                 "faults": len(faults),
                 "threshold_hits": len(threshold_hits),
                 "deviation_hits": len(deviation_hits),
@@ -107,6 +133,10 @@ def anomalies(cfg, period=None, method="both"):
         rows_scanned=scanned,
         filters=[f"method={method}", f"band=[{cfg.torque_min}, {cfg.torque_max}]",
                  f"mad_k={cfg.mad_k}"],
-        assumptions=["deviation uses median +/- k*MAD (robust); mean/sigma would let "
-                     "extreme outliers inflate the band and hide themselves"],
+        assumptions=[
+            "deviation uses median +/- k*MAD (robust); mean/sigma would let "
+            "extreme outliers inflate the band and hide themselves",
+            f"counts are exact; the itemised lists are capped at "
+            f"{cfg.max_anomaly_items} per category (see `listed`)",
+        ],
     )

@@ -100,7 +100,10 @@ def main(argv=None):
         slug = args.type
     else:
         plan = planner.plan(cfg, args.question, args.period)
-        slug = "ask"
+        # Every ask used to land in reports/ask, so each run overwrote the last
+        # and left stale PNGs from the previous question beside the new report.
+        slug = os.path.join(
+            "ask", datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
 
     log.info("plan (%s): %s", plan.source, [s.tool for s in plan.steps])
     execution = execute(cfg, plan)
