@@ -28,5 +28,10 @@ for z in "${ZIPS[@]}"; do
 done
 
 echo "cleaning ${#CSVS[@]} day-files into $OUT"
-rm -f "$OUT"
+# `rm -f "$OUT"` alone left two kinds of debris, both of which silently fold a
+# previous run's rows into the new store: DuckDB's write-ahead log beside the
+# destination, and mas_monolith's per-thread stores ($OUT.tN.duckdb), which it
+# opens in append mode. mas_monolith now removes its own, but a store built
+# before that fix still has them sitting next to it.
+rm -f "$OUT" "$OUT".wal "$OUT".t*.duckdb "$OUT".t*.duckdb.wal
 ./build/mas_monolith "$OUT" MCC 4 "${CSVS[@]}"

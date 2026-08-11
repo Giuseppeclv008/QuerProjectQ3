@@ -168,12 +168,19 @@ TEST(Coordinator, SilentWorkerIsDeclaredDeadAndItsWorkRedispatched) {
     EXPECT_EQ(s.files_failed, 0);
     EXPECT_EQ(s.total_events, 30);
     EXPECT_EQ(s.workers_died, 1);
-    // 2 WORK + 1 re-dispatched WORK (d2) + 1 STOP (only w1 lives).
-    ASSERT_EQ(work.sent.size(), 4u);
+    // 2 WORK + 1 re-dispatched WORK (d2) + 2 STOP.
+    //
+    // Two, not one. w2 was tombstoned for silence, but silence is not proof of
+    // death — that is exactly why its item was re-dispatched instead of failed.
+    // If w2 is in fact alive its pipe is still attached, and PUSH round-robin
+    // would hand it the single STOP meant for w1, leaving the live worker to sit
+    // out its ~60 s idle-exit. One STOP per registered worker closes that.
+    ASSERT_EQ(work.sent.size(), 5u);
     const auto redispatched = mas::decode_work(work.sent[2]);
     ASSERT_TRUE(redispatched.has_value());
     EXPECT_EQ(redispatched->in_path, "d2.csv");
     EXPECT_TRUE(mas::is_stop(work.sent[3]));
+    EXPECT_TRUE(mas::is_stop(work.sent[4]));
 }
 
 TEST(Coordinator, DeadWorkersCompletionsAreReopenedAndRecounted) {
@@ -320,10 +327,13 @@ TEST(Coordinator, ZombieHeartbeatDoesNotResurrect) {
 
     EXPECT_EQ(s.workers_died, 1);
     EXPECT_EQ(s.files_ok, 1);
-    // Exactly one STOP: w2. The zombie w1 must not rejoin the registry.
+    // Two STOPs: one for the live w2, one for w1's registry slot. The zombie w1
+    // must not rejoin the registry (that is what this test guards), but it does
+    // keep its tombstoned slot, and shutdown now sends a STOP per slot so a
+    // still-attached zombie pipe cannot swallow the live worker's.
     int stops = 0;
     for (const auto& m : work.sent) stops += mas::is_stop(m) ? 1 : 0;
-    EXPECT_EQ(stops, 1);
+    EXPECT_EQ(stops, 2);
 }
 
 TEST(Coordinator, LateResultFromTombstonedWorkerIsDropped) {

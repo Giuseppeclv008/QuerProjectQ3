@@ -6,6 +6,12 @@ machine idling. This tool only became possible once the status semantics were
 corrected: the old reading called status 2 an "OK cap", which would have made
 idle time invisible.
 
+Scope limit, stated because the tool's name oversells it: cap_events only holds
+rows where a counter advanced, so a machine that is switched off produces no
+rows and no islands. This measures no-load *cycling*, not downtime. AROL detect a
+stopped machine from the raw pool instead -- consecutive rows identical but for
+the timestamp (material/various.txt) -- which is upstream of this store.
+
 Runs are found with the classic gaps-and-islands trick: number the rows per head,
 number the no-load rows per head, and the difference is constant within a run.
 """

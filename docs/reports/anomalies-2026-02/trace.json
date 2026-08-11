@@ -8,7 +8,7 @@
     },
     "rationale": "Threshold hits, robust per-head deviation, and rejected closures.",
     "status": "ok",
-    "rows_scanned": 10450551,
+    "rows_scanned": 21971506,
     "message": ""
   },
   {
@@ -19,7 +19,7 @@
     },
     "rationale": "Denominator for every count above, plus data-quality flags.",
     "status": "ok",
-    "rows_scanned": 10450551,
+    "rows_scanned": 21971506,
     "message": ""
   },
   {
@@ -31,7 +31,7 @@
     },
     "rationale": "Daily rates, to place any abnormal interval in context.",
     "status": "ok",
-    "rows_scanned": 6672649,
+    "rows_scanned": 14824304,
     "message": ""
   }
 ]

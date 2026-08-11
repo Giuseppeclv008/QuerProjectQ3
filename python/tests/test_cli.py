@@ -48,7 +48,12 @@ def test_ask_works_with_no_api_key(tiny_store, tmp_path, monkeypatch):
                      "--config", _cfg_file(tmp_path, tiny_store),
                      "--out", str(out)])
     assert code == 0
-    text = (out / "ask" / "report.md").read_text()
+    # Each ask lands in its own timestamped directory under out/ask, so a second
+    # question cannot overwrite the first or leave the previous run's PNGs next
+    # to the new report.
+    runs = sorted((out / "ask").iterdir())
+    assert len(runs) == 1, f"expected one run directory, got {runs}"
+    text = (runs[0] / "report.md").read_text()
     assert "keyword router" in text.lower() or "no anthropic client" in text.lower()
 
 

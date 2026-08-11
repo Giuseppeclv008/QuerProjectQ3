@@ -19,8 +19,12 @@ inline constexpr int NUM_HEADS = 36;
 //   status 65, torque > 0   -> Bad Closure, rejected
 //   status 9,  torque > 0   -> No InTorque, rejected
 //   status 4,  torque >= 0  -> No Closure, not rejected
+// `% 2 == 1` would be wrong for a negative status: C++ truncates toward zero,
+// so -65 % 2 is -1 and a rejected closure would read as clean. The PLC has never
+// emitted a negative status in this pool, but the guard is free and the failure
+// mode is silent.
 inline bool is_reject(double status) {
-    return (static_cast<long long>(status) % 2) == 1;
+    return (static_cast<long long>(status) % 2) != 0;
 }
 
 // A capping operation is a closure WITH load. No-load cycles are excluded from

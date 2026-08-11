@@ -3,6 +3,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <cstdio>
 #include <exception>
 #include <iomanip>
 #include <iostream>
@@ -15,6 +16,17 @@ namespace {
 double seconds_since(std::chrono::steady_clock::time_point t0) {
     return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0)
         .count();
+}
+
+std::string thread_store(const std::string& out, int t) {
+    return out + ".t" + std::to_string(t) + ".duckdb";
+}
+
+// DuckDB leaves a .wal beside the database; removing only the .duckdb would let
+// a stale write-ahead log be replayed into the next run's file of the same name.
+void remove_store(const std::string& path) {
+    std::remove(path.c_str());
+    std::remove((path + ".wal").c_str());
 }
 
 } // namespace
@@ -69,10 +81,13 @@ int main(int argc, char** argv) {
             std::vector<long long> per_file(files.size(), 0);
             std::atomic<std::size_t> next{0};
             std::atomic<bool> failed{false};
+            // A previous run's per-thread stores are removed before the pool
+            // opens: DuckDbEventStore appends, so reusing one would fold an
+            // earlier run's events into this one.
+            for (int t = 0; t < threads; ++t) remove_store(thread_store(out, t));
             auto pull = [&](int t) {
                 try {
-                    mas::DuckDbEventStore local(
-                        out + ".t" + std::to_string(t) + ".duckdb", machine);
+                    mas::DuckDbEventStore local(thread_store(out, t), machine);
                     for (std::size_t i;
                          (i = next.fetch_add(1)) < files.size();) {
                         per_file[i] = mas::clean_file(files[i], local);
@@ -102,11 +117,18 @@ int main(int argc, char** argv) {
             // Thread stores are closed (destroyed) here — merge_from's
             // closed/checkpointed precondition holds.
             const auto tm = std::chrono::steady_clock::now();
-            mas::DuckDbEventStore store(out, machine);
-            for (int t = 0; t < threads; ++t)
-                store.merge_from(out + ".t" + std::to_string(t) + ".duckdb");
+            {
+                mas::DuckDbEventStore store(out, machine);
+                for (int t = 0; t < threads; ++t)
+                    store.merge_from(thread_store(out, t));
+                rows = store.count();
+            }   // close the destination before deleting its sources
+            // The per-thread stores used to survive the run. Since the store
+            // appends, a later run over a *different* file set re-merged the
+            // previous run's rows into the new one, silently — build_store.sh
+            // removed only the destination.
+            for (int t = 0; t < threads; ++t) remove_store(thread_store(out, t));
             merge_s = seconds_since(tm);
-            rows = store.count();
         }
 
         std::cerr << "monolith: " << files.size() << " files, " << events

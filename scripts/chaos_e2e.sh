@@ -20,18 +20,20 @@ trap cleanup EXIT
 
 WORK=tcp://127.0.0.1:5571 RES=tcp://127.0.0.1:5572 HB=tcp://127.0.0.1:5573
 
-# Oracle: single-process count per file (clean CLI validated vs the Python
-# oracle in Plans 1-2), summed. The count is on stderr as
-# "wrote <n> cap events; store now holds <m> rows" (stdout stays empty).
-EXPECTED=0
-for f in "$@"; do
-    rm -f "$T/oracle.duckdb" "$T/oracle.duckdb.wal"
-    n="$("$BUILD/clean" "$f" "$T/oracle.duckdb" 2>&1 >/dev/null \
-         | sed -n 's/^wrote \([0-9][0-9]*\) cap events.*/\1/p')" \
-        || { echo "oracle clean failed for $f"; exit 1; }
-    case "$n" in (*[!0-9]*|"") echo "oracle count failed for $f: '$n'"; exit 1;; esac
-    EXPECTED=$((EXPECTED + n))
-done
+# Oracle: python/oracle_union.py, the same reference bench/run_bench.sh uses.
+#
+# This used to sum the per-file counts from the `clean` CLI and compare the sum
+# to the merged store's row count — the exact comparison run_bench.sh documents
+# as wrong, and the reason oracle_union.py exists. It agreed only because the
+# three day-files this script is given (02-01..03) all sit before the counter
+# reset. Run it over a range that spans one and the chaos test would fail for a
+# reason with nothing to do with resilience.
+#
+# oracle_union.py counts distinct (head_id, ts) — what the store holds — and is
+# independent of every C++ binary under test.
+EXPECTED="$(python3 python/oracle_union.py "$@")" \
+    || { echo "oracle_union.py failed"; exit 1; }
+case "$EXPECTED" in (*[!0-9]*|"") echo "oracle count failed: '$EXPECTED'"; exit 1;; esac
 echo "oracle total: $EXPECTED events"
 
 "$BUILD/mas_coordinator" "$WORK" "$RES" "$HB" "$@" 2>"$T/coord.log" &

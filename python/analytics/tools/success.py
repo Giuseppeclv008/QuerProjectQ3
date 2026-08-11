@@ -48,8 +48,10 @@ def success_rates(cfg, period=None, by="head"):
                 "success_rates", f"no capping operations in period {period!r}", period=period
             )
         per_head = con.execute(
+            # No ORDER BY: this feeds min() below and is never returned, so
+            # sorting it was work the result could not show.
             f"""SELECT head_id, {select} {base} GROUP BY head_id
-                HAVING COUNT(*) > 0 ORDER BY 4 DESC, head_id""",
+                HAVING COUNT(*) > 0""",
             sem + params,
         ).fetchall()
         ranked = [h for h in per_head if (h[2] + h[3]) > 0]

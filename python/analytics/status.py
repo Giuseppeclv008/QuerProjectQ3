@@ -6,7 +6,9 @@ Signal = YES" row has an odd status. Reading it as a flat enum is what left
 statuses 4 and 9 unexplained in the three-month store (spec 12, OQ4).
 
     bit 0 (1)  reject signal
-    bit 1 (2)  No Load          - first torque threshold not reached (SlowTorque)
+    bit 1 (2)  No Load          - first torque threshold not reached (SlowTorque);
+                                  AROL describe this as bottle or cap missing, so
+                                  no match was made (material/various.txt)
     bit 2 (4)  No Closure       - final torque threshold not reached (ClosureTorque)
     bit 3 (8)  No InTorque      - head raised before TimeInTorque elapsed
     bit 4 (16) No CapTurns      - cap closed with fewer degrees than CapTurns
@@ -29,7 +31,9 @@ CONDITIONS = {
 }
 
 # A constant, spliced into WHERE clauses. Never built from user input.
-REJECT_SQL = "CAST(status AS BIGINT) % 2 = 1"
+# `% 2 = 1`, not `<> 0`, would miss a negative status: DuckDB truncates toward
+# zero like C++, so -65 % 2 is -1. Mirrors mas::is_reject.
+REJECT_SQL = "CAST(status AS BIGINT) % 2 <> 0"
 
 
 def decode(status):

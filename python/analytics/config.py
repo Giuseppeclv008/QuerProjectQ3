@@ -66,6 +66,13 @@ class Config:
     # for a large context; drop it to ~20 for a local model.
     narrator_max_items: int = 120
 
+    # Most individual hits any one anomaly category will itemise. The tool used
+    # to build a Python dict per hit with no bound -- 678,325 deviation hits on
+    # February, 1,734,460 across the three months -- and hand all of them to
+    # ax.scatter, which costs hundreds of MB to draw a solid block. The reported
+    # counts stay exact; only the itemised sample is capped.
+    max_anomaly_items: int = 5000
+
     PROVIDERS = ("anthropic", "ollama")
     PLANNING = ("plan", "select", "classify")
 
@@ -94,6 +101,10 @@ class Config:
         if self.narrator_max_items < 1:
             raise ConfigError(
                 f"narrator_max_items must be >= 1, got {self.narrator_max_items}"
+            )
+        if self.max_anomaly_items < 1:
+            raise ConfigError(
+                f"max_anomaly_items must be >= 1, got {self.max_anomaly_items}"
             )
         # The planner's prompt is ~2,600 tokens of tool schema before the question
         # is added, and Ollama silently truncates rather than erroring.

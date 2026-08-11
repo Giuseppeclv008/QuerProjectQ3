@@ -15,6 +15,18 @@ ASSUMPTION = (
     "(status 2, torque 0) are excluded from success denominators"
 )
 
+# One row is one poll at which a head's counter advanced, so a row whose delta
+# is > 1 stands for several caps applied between polls. Every tool counts rows,
+# not SUM(delta), which undercounts by exactly delta-1 per aggregated row.
+# Measured over three real day-files (2,290,233 rows): 38 caps, 0.0017%. Below
+# any threshold that would justify rewriting the tools, so it is declared here
+# instead of hidden.
+DELTA_ASSUMPTION = (
+    "counts are rows, i.e. polls at which a head's counter advanced; a poll that "
+    "caught up on several caps (delta > 1) counts once. Measured undercount on "
+    "real data: 0.0017% of caps"
+)
+
 
 def overview(cfg, period=None):
     con = connect(cfg)
@@ -65,5 +77,5 @@ def overview(cfg, period=None):
         period=period,
         rows_scanned=closures,
         filters=[f"period={period}"] if period else [],
-        assumptions=[ASSUMPTION],
+        assumptions=[ASSUMPTION, DELTA_ASSUMPTION],
     )

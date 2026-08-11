@@ -1,6 +1,6 @@
 # Anomaly report for 2026-02.
 
-*Generated 2026-07-26T10:21:10Z — narrative source: template, plan source: router.*
+*Generated 2026-08-11T11:00:12Z — narrative source: template, plan source: router.*
 
 ## Goal
 
@@ -10,7 +10,7 @@ Anomaly report for 2026-02.
 
 - Store: `events_3mo.duckdb`, machine `MCC`
 - Torque band: 1.5–2.5 Nm; robust band k = 3.0; idle threshold 300s
-- Rows scanned across all steps: 27,573,751
+- Rows scanned across all steps: 58,767,316
 
 ## Analyses executed
 
@@ -20,10 +20,10 @@ Anomaly report for 2026-02.
 
 ## Findings
 
-- **Anomalies.** 383 rejected closures, 68 outside the torque band, 678,325 beyond their head's robust band.
-- **Scope.** 6,672,649 capping operations across heads 1-36, from 2026-02-01 08:43:30 to 2026-02-28 15:59:59. 3,774,599 no-load cycles are excluded from every rate below.
-- **Data quality.** 68 closures carry torque outside the configured band; 0 carry no torque reading at all.
-- **Counter resets.** 36 reset markers in scope.
+- **Anomalies.** 748 rejected closures, 130 outside the torque band, 1,612,634 beyond their head's robust band.
+- **Scope.** 14,824,304 capping operations across heads 1-36, from 2026-02-01 00:00:09 to 2026-02-28 23:59:59. 7,141,531 no-load cycles are excluded from every rate below.
+- **Data quality.** 130 closures carry torque outside the configured band; 0 carry no torque reading at all.
+- **Counter resets.** 145 reset markers in scope.
 - **Weakest day.** 2026-02-05 at 99.9851% over 94,248 capping operations.
 
 ### Anomalies Over Time
@@ -33,10 +33,11 @@ Anomaly report for 2026-02.
 ## Confidence and limits
 
 - **No model was used to plan this report.** The tool calls below are a fixed plan; the numbers would be identical either way.
-- `anomalies`: 10,450,551 rows scanned; filters: method=both, band=[1.5, 2.5], mad_k=3.0
-- `overview`: 10,450,551 rows scanned; filters: period=2026-02
-- `success_rates`: 6,672,649 rows scanned; filters: app_torque > 0 (capping operations only)
+- `anomalies`: 21,971,506 rows scanned; filters: method=both, band=[1.5, 2.5], mad_k=3.0
+- `overview`: 21,971,506 rows scanned; filters: period=2026-02
+- `success_rates`: 14,824,304 rows scanned; filters: app_torque > 0 (capping operations only)
 - **Assumption.** a capping operation is a closure with torque > 0; no-load cycles (status 2, torque 0) are excluded from success denominators.
+- **Assumption.** counts are exact; the itemised lists are capped at 5000 per category (see `listed`).
 - **Assumption.** deviation uses median +/- k*MAD (robust); mean/sigma would let extreme outliers inflate the band and hide themselves.
 
 ## Next checks
@@ -52,6 +53,6 @@ Every call this report is built from, in order. The full record is in
 
 | # | tool | arguments | status | rows scanned |
 |---|---|---|---|---|
-| 1 | `anomalies` | `method='both', period='2026-02'` | ok | 10,450,551 |
-| 2 | `overview` | `period='2026-02'` | ok | 10,450,551 |
-| 3 | `success_rates` | `by='day', period='2026-02'` | ok | 6,672,649 |
+| 1 | `anomalies` | `method='both', period='2026-02'` | ok | 21,971,506 |
+| 2 | `overview` | `period='2026-02'` | ok | 21,971,506 |
+| 3 | `success_rates` | `by='day', period='2026-02'` | ok | 14,824,304 |

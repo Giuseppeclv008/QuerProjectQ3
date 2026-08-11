@@ -14,11 +14,29 @@ def test_pieces_per_hour_counts_only_real_caps(tiny_cfg):
     assert buckets[0]["pieces_per_hour"] == pytest.approx(6.0)
 
 
-def test_day_bucket_normalises_to_an_hourly_rate(tiny_cfg):
+def test_day_bucket_rate_uses_active_hours_not_a_flat_24(tiny_cfg):
+    """All six caps land in the 00:00 hour, so the machine ran for one hour.
+
+    The rate is therefore 6/h. Dividing by a flat 24 gave 0.25/h and called it
+    "pieces/hour", so the KPI report's headline throughput was pieces-per-day
+    over 24 while idle_periods reported thousands of idle head-hours for the
+    same month. The two numbers described different machines.
+    """
     r = capping_speed(tiny_cfg, period="2026-02", bucket="day")
     b = r.values["buckets"][0]
     assert b["caps"] == 6
-    assert b["pieces_per_hour"] == pytest.approx(6 / 24)
+    assert b["active_hours"] == 1
+    assert b["pieces_per_hour"] == pytest.approx(6.0)
+    assert b["pieces_per_second"] == pytest.approx(6.0 / 3600)
+
+
+def test_day_bucket_spanning_several_hours_divides_by_those_hours(two_bucket_store):
+    # 6 caps across the 00:00 and 02:00 hours: two active hours, so 3/h.
+    cfg = Config(store_path=two_bucket_store, machine_id="MCC")
+    b = capping_speed(cfg, period="2026-02", bucket="day").values["buckets"][0]
+    assert b["caps"] == 6
+    assert b["active_hours"] == 2
+    assert b["pieces_per_hour"] == pytest.approx(3.0)
 
 
 def test_empty_period_is_insufficient(tiny_cfg):
@@ -43,7 +61,7 @@ def two_bucket_store(tmp_path):
             machine_id VARCHAR NOT NULL, head_id SMALLINT NOT NULL, ts TIMESTAMP,
             cap_seq BIGINT NOT NULL, app_torque REAL, status REAL, delta INTEGER,
             is_fault BOOLEAN, aggregated BOOLEAN, is_reset BOOLEAN,
-            UNIQUE (machine_id, head_id, cap_seq))
+            UNIQUE (machine_id, head_id, ts))
     """)
     rows = [
         ("MCC", 1, "2026-02-01 00:00:00", 1, 2.0, 0.0),

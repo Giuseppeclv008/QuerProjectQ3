@@ -8,7 +8,7 @@ Programming** course at Politecnico di Torino.
 Two tiers, each usable on its own:
 
 1. **Ingestion (C++)** — collapses a 1 Hz polling stream of 89 CSV day-files
-   into reconstructed cap closures in DuckDB. 20.3M events over three months.
+   into reconstructed cap closures in DuckDB. 55.1M events over three months.
 2. **Analytics and reporting (Python)** — eight deterministic analysis tools, an
    LLM that chooses which of them to run and writes the prose, and the `arol`
    CLI. **The model never computes a number**; every figure comes from the same
@@ -193,7 +193,7 @@ organized by layer.
 │           ├── worker_main.cpp             # → mas_worker
 │           └── merge_main.cpp              # → mas_merge
 │
-├── tests/                                  # Google Test unit tests (63 tests)
+├── tests/                                  # Google Test unit tests (80 tests)
 │   ├── test_cap_event_extractor.cpp
 │   ├── test_csv_raw_reader.cpp
 │   ├── test_pipeline.cpp
@@ -241,7 +241,7 @@ organized by layer.
 │           ├── render.py                   # The six mandated sections + tool-call trace
 │           ├── plots.py                    # Five matplotlib figures, driven only by ToolResults
 │           └── export.py                   # Self-contained HTML; best-effort PDF
-│   └── tests/                              # 207 tests incl. golden report + mocked-LLM agent
+│   └── tests/                              # 230 tests incl. golden report + mocked-LLM agent
 │
 ├── scripts/
 │   ├── arol                                # WP4 entry point: arol report kpi --period 2026-02
@@ -328,11 +328,12 @@ rejection that was not a Bad Closure. Measured on the three-month store:
 
 | period | successful | rejects (`status == 65`) | rejects (reject bit) |
 |---|---:|---:|---:|
-| 2026-02 | 6,669,339 | 371 | **383** |
-| 2026-02..2026-04 | 11,902,090 | 585 | **600** |
+| 2026-02 | 14,817,976 | 732 | **748** |
+| 2026-02..2026-04 | 31,655,161 | 1,071 | **1,096** |
 
-The bitmask reading is confirmed by the data, not assumed: 585 closures at
-status 65 plus 15 at status 9 is exactly the 600 the odd-status rule returns.
+The bitmask reading is confirmed by the data, not assumed: 1,071 closures at
+status 65, plus 24 at status 9 and 1 at status 65 with no torque, is exactly the
+1,096 the odd-status rule returns.
 
 A closure that is neither `status == 0` nor a reject carries **no pass/fail
 verdict** — 5,452 No-Load-with-torque rows over three months — and is excluded
@@ -403,7 +404,7 @@ transport → agent → domain ← store
 CREATE TABLE IF NOT EXISTS cap_events (
     machine_id VARCHAR NOT NULL,
     head_id    SMALLINT NOT NULL,       -- 1..36
-    ts         TIMESTAMP,               -- poll timestamp
+    ts         TIMESTAMP NOT NULL,      -- poll timestamp; part of the identity
     cap_seq    BIGINT NOT NULL,         -- head's Count value at this cap
     app_torque REAL,                     -- applied torque (Nm)
     status     REAL,                     -- AROL Equatorque status code
@@ -411,12 +412,31 @@ CREATE TABLE IF NOT EXISTS cap_events (
     is_fault   BOOLEAN,                  -- true if the reject bit is set (status is odd)
     aggregated BOOLEAN,                  -- true if delta > 1
     is_reset   BOOLEAN,                  -- true if counter reset/rollover
-    UNIQUE (machine_id, head_id, cap_seq)
+    UNIQUE (machine_id, head_id, ts)
 );
 ```
 
-The `UNIQUE` constraint on `(machine_id, head_id, cap_seq)` is the backbone
-of idempotent reprocessing.
+The `UNIQUE` constraint on `(machine_id, head_id, ts)` is the backbone of
+idempotent reprocessing — and the identity is the timestamp, not the counter.
+
+It used to be `cap_seq`, the PLC's Count register. That register resets, so a
+closure recorded weeks later can carry a value already used, and `INSERT OR
+IGNORE` dropped it onto the older row. The project called this "replay dedup"
+and never tested it: of head 1's 23,851 day-17 closures whose `cap_seq`
+collides with days 1-15, **18,721 carry a different torque**. They were
+distinct physical caps, and February persisted 21,872,663 events as 14,372,237
+rows.
+
+`ts` works because a head closes at most once per poll — caps missed between
+polls arrive as a single event with `delta > 1` — and the day-files are
+contiguous and non-overlapping. Measured on the rebuilt store: **0 duplicate
+`(machine_id, head_id, ts)` across 55,132,433 rows**.
+
+A store written under the old key is **refused at open** rather than silently
+reused: `CREATE TABLE IF NOT EXISTS` would keep its index and every downstream
+number would stay wrong. A `store_meta` table records the identity in use; if it
+is missing while `cap_events` holds rows, the constructor throws and tells you
+to rebuild.
 
 ### Write Path (Staging + Merge)
 
@@ -434,7 +454,7 @@ On construction, any stale rows from a crashed run are cleared from staging.
 ### Idempotent Reprocessing
 
 Re-running the same day-file against the same database produces **zero new rows**
-thanks to `INSERT OR IGNORE` and the `UNIQUE(machine_id, head_id, cap_seq)` key.
+thanks to `INSERT OR IGNORE` and the `UNIQUE(machine_id, head_id, ts)` key.
 Validated on real data: two runs of the same 86,399-row file both produce
 765,711 events, but the second run adds 0 new rows.
 
@@ -630,14 +650,26 @@ creates deterministic 2-row test files with cross-day counter continuity for
 smoke testing.
 
 **Headline finding — the merge phase is the scaling wall.** Cleaning
-parallelizes well (28-day medians: mono-1T 87.5 s → MAS N=8 27.0 s, a 3.2×
-speedup), but unifying the per-worker stores costs 35–54 s at month scale and
-*grows* with store count (MAS N=1 35 s → N≥4 ~50 s). End-to-end the MAS
-therefore tops out at ~1.15× over the sequential baseline (N=8: 78.0 s vs
-87.5 s), and mono-MT never meaningfully beats mono-1T. This is the measured
-price of the "per-worker single-writer stores, merge at the sink" design: the
-MAS earns its keep through crash isolation and scale-out across machines, not
-through single-machine speedup.
+parallelizes well (28-day medians: mono-1T 101.0 s → MAS N=16 27.1 s, a 3.73×
+speedup), but unifying the per-worker stores costs 63–65 s at month scale.
+End-to-end the MAS tops out at **1.11×** over the sequential baseline (N=16:
+91.2 s vs 101.0 s), and mono-MT never meaningfully beats mono-1T. This is the
+measured price of the "per-worker single-writer stores, merge at the sink"
+design.
+
+These numbers replace an earlier sweep that was timing 66% of the work: under
+the old `cap_seq` key the store wrote 14.4M rows where it now writes 21.9M for
+the same input, and the benchmark counted the shortfall as speed. The merge
+cost also used to *grow* with store count (35 s at N=1 to 51 s at N=16); it is
+now flat, because that growth was the defect doing work — more stores meant
+more colliding `cap_seq` for `INSERT OR IGNORE` to resolve, and every
+resolution discarded a real closure.
+
+The wall is being attacked on branch `perf/merge-set-based`, which replaces N
+per-row index-probing passes with one hash-based `DISTINCT` over the union of
+the sources. Measured in isolation on the same 8 stores, alternating binaries:
+**65.9 s → 22.8 s, 2.89×**, with identical row counts. End-to-end confirmation
+is still pending.
 
 All 81 runs matched the correctness oracle exactly.
 
@@ -869,6 +901,7 @@ For a local model, three fields change and the rest stay:
   "ollama_host": "http://localhost:11434",
   "num_ctx": 8192,
   "narrator_max_items": 20,
+  "max_anomaly_items": 5000,
   "planning": "classify"
 }
 ```
@@ -898,12 +931,12 @@ it, `--pdf` logs how to install it and writes Markdown and HTML as normal.
 
 ## Testing
 
-The project has **73 C++ unit tests** across 11 Google Test files, plus **206
+The project has **80 C++ unit tests** across 11 Google Test files, plus **230
 Python tests** for the analytics tier.
 
 ```bash
-cd build && ctest --output-on-failure     # 73 C++ tests
-cd python && ../.venv/bin/python -m pytest -q   # 206 Python tests
+cd build && ctest --output-on-failure     # 80 C++ tests
+cd python && ../.venv/bin/python -m pytest -q   # 230 Python tests (1 skips without the rebuilt store)
 ```
 
 | Test File | What It Tests |
@@ -957,7 +990,7 @@ a number.
 ## Roadmap
 
 - [x] **Python analytics agents** — eight deterministic analysis tools, an LLM planner and narrator that cannot alter a number, and the `arol` CLI. See [Analytics CLI and Reports](#analytics-cli-and-reports).
-- [ ] **Attack the merge bottleneck** — the benchmark's headline finding: partitioned Parquet output or a concurrent-writer store would remove the 35–54 s unification cost that currently caps end-to-end speedup at ~1.15×
+- [x] **Attack the merge bottleneck** — the benchmark's headline finding. `perf/merge-set-based` replaces the per-row `INSERT OR IGNORE` probes with one set-based dedup over the union: 65.9 s → 22.8 s in isolation (2.89×), same rows. Partitioned Parquet output or a concurrent-writer store remain the larger redesigns
 - [ ] **PUB/SUB fan-out and REQ/REP registration** — the two ZeroMQ patterns from the spec that the current 3-endpoint PUSH/PULL fabric does not yet use
 - [ ] **TRY_CAST + quarantine** — gracefully handle malformed timestamps (currently strict-CAST aborts the day-file)
 - [ ] **Monitoring dashboard** — live view of processing progress and per-head statistics

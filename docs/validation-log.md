@@ -47,7 +47,7 @@
 
 - `./build/mas_monolith /tmp/gate1.duckdb MCC…db 1 "$D"/*.csv` → `monolith: 28 files, 21872663 events, clean 88.372 s, merge 0.000 s, total 88.372 s, store holds 14372237 rows`
 - Same with `8` threads → `…, clean 26.629 s, merge 53.486 s, total 80.115 s, store holds 14372237 rows` — identical rows.
-- **Finding (data): the month's Count counter resets mid-day-16.** Days 16-24 replay cap_seq ranges from days 1-15 (day 17 adds 15 new rows out of 858,651 events); days 25-28 pass the old high-water mark; all 28 day-boundary seams are continuous, so Plan 3's two-day continuity measurement (2026-07-08 entry above) could not see it. UNIQUE(machine_id, head_id, cap_seq) dedupes replays identically for every architecture: 21,872,663 processed events persist as 14,372,237 rows. The multi-day oracle is therefore the distinct-(head,cap_seq) union — `python/oracle_union.py`, independent of every C++ binary under test; it reproduces day-1 = 765,711, days-1-2 = 1,764,631 (the Plan 3 entry's number), and the exact 28-day store count 14,372,237.
+- **[SUPERSEDED 2026-08-11 — the "replay" reading below is false; see "Event identity" at the end of this file. The events were distinct closures and the key was discarding them.]** **Finding (data): the month's Count counter resets mid-day-16.** Days 16-24 replay cap_seq ranges from days 1-15 (day 17 adds 15 new rows out of 858,651 events); days 25-28 pass the old high-water mark; all 28 day-boundary seams are continuous, so Plan 3's two-day continuity measurement (2026-07-08 entry above) could not see it. UNIQUE(machine_id, head_id, cap_seq) dedupes replays identically for every architecture: 21,872,663 processed events persist as 14,372,237 rows. The multi-day oracle is therefore the distinct-(head,cap_seq) union — `python/oracle_union.py`, independent of every C++ binary under test; it reproduces day-1 = 765,711, days-1-2 = 1,764,631 (the Plan 3 entry's number), and the exact 28-day store count 14,372,237.
 
 ### Distribution defect found and fixed before evidence was accepted (spec §5.2/§8)
 
@@ -55,6 +55,8 @@
 - Fix (054cc3b): registration gate — `CoordinatorConfig.expected_workers` holds the initial dispatch until N workers say hello (Plan 4's hello-at-entry heartbeat), `--workers N` CLI flag, degraded/abort timeout semantics, 3 fake-time unit tests. Post-fix probe: 2/2/2/1 distribution across 4 workers, 4 joined, stores sum == 7-day union oracle. Sweep #1 discarded.
 
 ### Full sweep (sweep #2, gated): 81/81 runs oracle-exact — PASS
+
+> **[SUPERSEDED 2026-08-11.** Every figure in this section is computed on the store as it existed under `UNIQUE(machine_id, head_id, cap_seq)`, which was discarding real closures across the PLC's counter reset. See **"Event identity: the counter key was discarding real closures"** at the end of this file for the measurement and the corrected values.**]**
 
 - Command: `./bench/run_bench.sh` (matrix: mono T∈{1,2,4,8} + MAS N∈{1,2,4,8,16}, volumes {1,7,28} day-files, 3 repeats; per-run assertion rows == union oracle; since 7de9ac7 each MAS run also asserts exactly N pre-dispatch registrations).
 - Oracle totals: `oracle[1 days] = 765711`, `oracle[7 days] = 3900837`, `oracle[28 days] = 14372237`; `sweep complete: 81 rows in bench/results.csv`, exit 0.
@@ -68,6 +70,8 @@
 
 ## 2026-07-24 — Plan 6: Analytics foundation, WP2 toolkit on the real three months (real data)
 
+> **[SUPERSEDED 2026-08-11.** Every figure in this section is computed on the store as it existed under `UNIQUE(machine_id, head_id, cap_seq)`, which was discarding real closures across the PLC's counter reset. See **"Event identity: the counter key was discarding real closures"** at the end of this file for the measurement and the corrected values.**]**
+
 - HEAD at run: 654c491 (branch `feat/agentic-analytics`). Store: `scripts/build_store.sh events_3mo.duckdb` over all three month zips → `monolith: 89 files, 55132433 events, clean 76.154 s, merge 133.593 s, total 209.746 s, store holds 20347822 rows` (369 MB). The 55.1M→20.3M gap is the counter-reset dedup the Plan 5 entry above characterised (UNIQUE(machine_id, head_id, cap_seq) collapses replays identically for every architecture).
 - Python suite (project venv): **85 passed** — 80 fixture tests + 5 real-data tests (`python/tests/test_real_data.py`, skipped when the store is absent). C++ suite unchanged this plan (Task 1 semantics fix landed with its own tests earlier on the branch).
 
@@ -76,6 +80,8 @@
 - `python/oracle_kpi.py` recomputes the headline counts straight from the raw CSV — no DuckDB, no toolkit SQL, no shared code — the same discipline that caught the Plan 5 distribution defect. On `2026-02-01.csv` it reproduces the design-time figures **exactly**: `successful=427643, failed=4, no_load_cycles=337772, capping_operations=427802 (=427643+155+4)`. The month's toolkit counts contain the day's (`overview` caps/no-load ≥ the oracle day), tying the SQL to the independent oracle. The Task-1 status-semantics fix is therefore correct on real data, not just on fixtures.
 
 ### Headline KPIs, `overview()` / `success_rates()` / `torque_stats()` / `capping_speed()`
+
+> **[SUPERSEDED 2026-08-11.** Every figure in this section is computed on the store as it existed under `UNIQUE(machine_id, head_id, cap_seq)`, which was discarding real closures across the PLC's counter reset. See **"Event identity: the counter key was discarding real closures"** at the end of this file for the measurement and the corrected values.**]**
 
 | metric | 2026-02 | 2026-02..2026-04 |
 |---|---|---|
@@ -97,6 +103,8 @@
 
 ### `anomalies()`, `trend()`, `idle_periods()`
 
+> **[SUPERSEDED 2026-08-11.** Every figure in this section is computed on the store as it existed under `UNIQUE(machine_id, head_id, cap_seq)`, which was discarding real closures across the PLC's counter reset. See **"Event identity: the counter key was discarding real closures"** at the end of this file for the measurement and the corrected values.**]**
+
 - **anomalies** (band [1.5, 2.5], k=3): 2026-02 `{faults: 371, threshold_hits: 68, deviation_hits: 678325}`; 3-month `{faults: 585, threshold_hits: 129, deviation_hits: 1734460}`. Faults == the status-65 count (consistent). Threshold hits == `invalid_torque` (both are the out-of-band caps). **Caveat:** robust MAD deviation flags ~10% of caps (678k/6.67M) — the successful-torque spread is extremely tight (σ≈0.016 Nm), so median±3·MAD is a narrow band and normal process jitter clears it. This is the detector behaving as specified on a very-low-variance signal, not a defect; a real deployment would widen `mad_k` or gate deviation on a minimum absolute delta. Noted for Plan 7 report-agent tuning.
 - **trend / drift** (Mann-Kendall, |τ|≥0.5, daily torque): **0 heads drift** over 2026-02 and over all three months. Expected for a machine holding 2.0 Nm to ±0.016: day-to-day mean torque is essentially flat, so no monotone walk. The tool ran clean across the 3-month range (`status ok`, 36 drift entries), which is the assertion the real-data test pins.
 - **idle_periods** (min 300 s): 2026-02 → 12,276 periods, 26,949,710 s total; 3-month → 21,802 periods, 137,465,461 s total. Sustained no-load runs are common, consistent with 337k no-load cycles/day.
@@ -108,6 +116,8 @@
 - Spec reconciled (§5.4, §12 OQ#2 RESOLVED): capping speed is SQL in `capping_speed()`, extractor unchanged, no schema column, no reprocessing.
 
 ## 2026-07-26 — Plan 7: WP3 report agent and WP4 CLI, end-to-end on the real three months
+
+> **[SUPERSEDED 2026-08-11.** Every figure in this section is computed on the store as it existed under `UNIQUE(machine_id, head_id, cap_seq)`, which was discarding real closures across the PLC's counter reset. See **"Event identity: the counter key was discarding real closures"** at the end of this file for the measurement and the corrected values.**]**
 
 **Store:** `events_3mo.duckdb` — 20,347,822 rows, machine `MCC`, 36 heads,
 2026-02-01 08:43:30 → 2026-04-30 16:59:59.
@@ -126,6 +136,8 @@ Runtime 8.4 s for all three reports over 20.3 M rows. 12/12 tool steps returned
 | `anomalies-2026-02` | `report anomalies` | 2026-02 |
 
 ### Every number in the KPI report, reconciled by hand
+
+> **[SUPERSEDED 2026-08-11.** Every figure in this section is computed on the store as it existed under `UNIQUE(machine_id, head_id, cap_seq)`, which was discarding real closures across the PLC's counter reset. See **"Event identity: the counter key was discarding real closures"** at the end of this file for the measurement and the corrected values.**]**
 
 Each figure below was re-derived with a direct DuckDB query written independently
 of the toolkit, then compared against the committed `report.md`.
@@ -166,6 +178,8 @@ correctness, not the headline.
 
 ### Three reporting defects found by this reconciliation, and fixed (commit 7a44358)
 
+> **[SUPERSEDED 2026-08-11.** Every figure in this section is computed on the store as it existed under `UNIQUE(machine_id, head_id, cap_seq)`, which was discarding real closures across the PLC's counter reset. See **"Event identity: the counter key was discarding real closures"** at the end of this file for the measurement and the corrected values.**]**
+
 Every underlying number was correct. The prose around three of them was not, and
 none of the three is reproducible on the tiny test fixture.
 
@@ -185,6 +199,8 @@ none of the three is reproducible on the tiny test fixture.
    agreement when the heads are indistinguishable at the printed precision.
 
 ### Anomalies report
+
+> **[SUPERSEDED 2026-08-11.** Every figure in this section is computed on the store as it existed under `UNIQUE(machine_id, head_id, cap_seq)`, which was discarding real closures across the PLC's counter reset. See **"Event identity: the counter key was discarding real closures"** at the end of this file for the measurement and the corrected values.**]**
 
 | figure | report |
 |---|---|
@@ -238,6 +254,8 @@ Expect `plan (llm): [...]` in the log and `narrative source: llm` in the report,
 then confirm every number in Findings also appears in `trace.json`.
 
 ### Per-head reject concentration (the presentation's headline finding)
+
+> **[SUPERSEDED 2026-08-11.** Every figure in this section is computed on the store as it existed under `UNIQUE(machine_id, head_id, cap_seq)`, which was discarding real closures across the PLC's counter reset. See **"Event identity: the counter key was discarding real closures"** at the end of this file for the measurement and the corrected values.**]**
 
 The three-month per-head figures quoted on slide 10 of
 `docs/presentation/outline.md`, and the query that produced them:
@@ -393,3 +411,205 @@ verifier.
 228 passed (Python), output pristine. C++ 73/73. 18 new tests, all against
 injected fake clients — the suite still makes no network call and needs no
 daemon.
+
+## 2026-08-11 — Event identity: the counter key was discarding real closures
+
+Supersedes the "replay dedup" reading recorded in the 2026-07-10 entry above.
+That entry states days 16-24 "replay cap_seq ranges from days 1-15" and that
+`UNIQUE(machine_id, head_id, cap_seq)` "dedupes replays identically for every
+architecture". The replay hypothesis was never tested. It is false.
+
+### The measurement that settles it
+
+For head 1, every day-17 closure whose `cap_seq` also appears on days 1-15,
+compare the torque of the two rows:
+
+```
+head 1, days 01-15: 302,339 distinct cap_seq
+head 1, day 17:      23,851 events
+  colliding cap_seq:            23,851
+    identical torque:            5,130   (a true replay would be all of these)
+    DIFFERENT torque:           18,721   (distinct physical closures)
+```
+
+Sample collisions:
+
+```
+cap_seq 124817: 2026-02-01T21:37:15 τ=1.997  vs  2026-02-16T16:00:03 τ=2.000
+cap_seq 124818: 2026-02-01T21:37:18 τ=2.002  vs  2026-02-16T16:00:06 τ=2.000
+cap_seq 124819: 2026-02-01T21:37:20 τ=2.000  vs  2026-02-16T16:00:08 τ=2.002
+```
+
+The 5,130 "identical" are coincidence — torque clusters near 2.0 with three
+decimals. Day 17 produced 858,651 events across 36 heads against a February
+mean of ~781k/day: a normal production day, not a retransmission. The PLC's
+Count register reset mid-day-16 and climbed again through ranges it had already
+used.
+
+### What it cost
+
+| scope | events extracted | rows persisted | discarded |
+|---|---:|---:|---:|
+| February, 28 files | 21,872,663 | 14,372,237 | 34% |
+| three months, 89 files | 55,132,433 | 20,347,822 | 63% |
+| February *inside* the three-month store | — | 10,450,551 | a further 3.9M |
+
+The last row is the sharpest: February holds 14,372,237 rows when built alone
+and 10,450,551 inside the three-month store. 3.9M February closures were
+evicted by March/April rows reusing their counter values, and because
+`INSERT OR IGNORE` keeps whichever row arrives first, which side survived was
+decided by thread scheduling and merge order. Same input, same count, different
+contents.
+
+### Why no gate caught it
+
+`oracle_union.py` counted distinct `(head_id, cap_seq)` — exactly the quantity
+the defect leaves stable. It was written to reproduce the store's behaviour
+rather than to check it, so 81 of 81 benchmark runs reported "oracle-exact"
+throughout.
+
+`oracle.py` could not have helped either: it still classified rejects as
+`status == 65`, three plans after the C++ moved to the bitmask, and nothing
+noticed because `validate_real.py` compared only event *counts* — and `is_fault`
+does not change how many events there are. The correction the project is
+proudest of had no independent oracle at all.
+
+### The fix
+
+Identity is now `(machine_id, head_id, ts)`. A head closes at most once per poll
+— caps missed between polls arrive as one event with `delta > 1` — so a
+timestamp names the observation. Verified on the pool: 86,399 rows and 86,399
+distinct timestamps per day-file, and the 28 files are contiguous and
+non-overlapping (`2026-01-31T16:00:00` … `2026-02-28T15:59:59`, each starting
+one second after the previous ends). Reprocessing a file still deduplicates
+exactly, so §10 idempotency holds, and the MAS still does not need to see files
+in timestamp order. Stores written under the old key are refused at open rather
+than silently reused.
+
+`oracle_union.py` now counts distinct `(head_id, ts)`. `validate_real.py`
+compares all nine fields. Its first run found a second defect: `CsvEventStore`
+wrote 6 significant digits, so raw cells like `2.0020000000000002` were exported
+as `2.002`.
+
+### Cross-check, 2026-02-01
+
+```
+oracle events: 765711 (rows skipped: 0)
+cpp events:    765711
+MATCH: 765711 events, all 9 fields
+```
+
+This is the first time `is_reject` has been checked against an independent
+oracle on real data.
+
+### Store rebuilt, reports regenerated
+
+`events_3mo.duckdb` rebuilt from all 89 day-files under the new key:
+**55,132,433 rows**, against 20,347,822 before — 2.71x, and exactly the number
+of events the extractor emits. Nothing is discarded now. Per-month: 2026-01
+119,984 (the 16:00 offset of the first file), 2026-02 21,971,506, 2026-03
+11,409,247, 2026-04 21,631,696. 36 heads, and zero duplicate
+`(machine_id, head_id, ts)`.
+
+Built in stages (February, March, then April in two halves) because only 2.2 GB
+of disk was free and a single pass needs ~5 GB. The store is append-mode and the
+key makes loading idempotent and order-independent, so the staged result is
+identical to a single run. The April run that hit `No space left on device`
+failed cleanly and left the store readable at exactly the 33,300,411 rows it
+held before — the `BEGIN`/`COMMIT` added in this branch is what made that a
+clean abort instead of a partial write.
+
+What the three committed reports had been reporting, February:
+
+| | on the residue | rebuilt |
+|---|---:|---:|
+| rows scanned | 10,450,551 | 21,971,506 |
+| capping operations | 6,672,649 | 14,824,304 |
+| no-load cycles | 3,774,599 | 7,141,531 |
+| rejected closures | 383 | 748 |
+| torque outside band | 68 | 130 |
+| **counter resets** | **36** | **145** |
+| beyond robust band | 678,325 | 1,612,634 |
+| idle | 7,486.0 head-hours | 11,551.3 head-hours |
+| throughput | 11,121 pieces/hour | 27,985 pieces/hour |
+| **period covered** | **2026-02-01 08:43:30 →** | **2026-02-01 00:00:09 →** |
+
+Two rows deserve reading twice.
+
+**The period.** The old report opened February at 08:43:30. February does not
+start at 08:43. Those hours existed in the raw pool and had been evicted from
+the store, so the report quietly described a shorter month than the one it
+claimed to cover.
+
+**Counter resets: 36, always 36.** February and the full three months both
+reported exactly 36 — one per head, i.e. one reset event, in 89 days. The
+figure was stable because the reset markers were themselves being deduped away
+by the key that the resets had made ambiguous. The rebuilt store finds 145 in
+February alone.
+
+Throughput moves for two reasons at once: more rows, and `capping_speed` no
+longer dividing a day's closures by a flat 24 h.
+
+### The other half of the identity proof
+
+The 2026-08-11 entry above shows the old key collapsed distinct closures. The
+complementary check — that the new one does not — was run on the rebuilt store:
+
+```sql
+SELECT COUNT(*) FROM (
+  SELECT machine_id, head_id, ts FROM cap_events GROUP BY 1,2,3 HAVING COUNT(*) > 1
+);
+-- 0, over 55,132,433 rows
+```
+
+Upstream of the store the same property holds in the raw pool: 86,399 rows per
+day-file, 86,399 distinct timestamps. `docs/analytics-methods.md` claimed the
+PLC "can emit two rows with the same timestamp", which is true across heads —
+36 share every poll — and false within one. The idle query's `cap_seq`
+tie-breaker is therefore belt-and-braces, not load-bearing.
+
+### One row is one poll, not one cap
+
+No analytics tool reads `delta` or `aggregated`; everything is `COUNT(*)`. A row
+whose `delta` is 3 stands for three caps applied between two polls and is
+counted once. This predates the key change, but the change removes the ambiguity
+it was hiding behind, so it is worth a number rather than a shrug.
+
+Measured over three real day-files (2026-02-01..03):
+
+```
+rows (non-reset):   2,290,233
+SUM(delta):         2,290,271
+undercount:                38   (0.0017% of real caps)
+rows with delta > 1:       38   (one in ~60,000)
+```
+
+At ~0.2 caps/s/head against a 1 Hz poll, a poll almost never catches two caps.
+0.0017% is far below the point where rewriting every tool to `SUM(delta)` would
+buy more correctness than it risks, so `overview` now declares it in its
+assumptions instead.
+
+### Merge optimisation, measured (branch `perf/merge-set-based`)
+
+`merge_from` called once per source is N sequential `INSERT OR IGNORE` passes,
+each probing the UNIQUE index per row against a growing destination — ~22M
+probes that, the sources now being disjoint, almost never find anything.
+`merge_all` unions every source and deduplicates once.
+
+A/B on the merge alone: 8 source stores built once from the 28 February
+day-files, both binaries alternated over the same sources so thermal drift
+could not land on one side.
+
+| | median of 3 | rows |
+|---|---:|---:|
+| `merge_from` in a loop | 65.867 s | 21,872,663 |
+| `merge_all` | **22.792 s** | 21,872,663 |
+
+**2.89x, 43.1 s saved, identical row counts in all six runs.** Row equality is
+the load-bearing check: a faster merge that loses rows is the defect this branch
+exists to prevent, in a new costume.
+
+Projected end-to-end, NOT yet measured: MAS N=16 at 28 days is 27.1 s clean +
+64.0 s merge = 91.2 s. At ~23 s of merge it would be ~50 s, i.e. ~2.0x over
+mono-1T instead of 1.11x. That projection needs a full sweep before it is
+written down as a result.

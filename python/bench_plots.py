@@ -126,7 +126,17 @@ def render(csv_path, out_dir) -> None:
           "merge phase reported separately; mono-MT uses a std::thread "
           "atomic-counter pool (dynamic load balancing, slightly fairer "
           "than PUSH/PULL round-robin)."]
-    (out / "results.md").write_text("\n".join(md) + "\n")
+    # Everything below the generated table is hand-written analysis, and this
+    # function used to overwrite the whole file — regenerating the plots silently
+    # deleted it. Keep whatever follows the first "## " heading after the table.
+    target = out / "results.md"
+    tail = ""
+    if target.exists():
+        existing = target.read_text()
+        marker = existing.find("\n## ")
+        if marker != -1:
+            tail = existing[marker:]
+    target.write_text("\n".join(md) + "\n" + tail)
 
 
 def main() -> int:

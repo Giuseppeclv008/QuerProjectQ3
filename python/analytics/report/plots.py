@@ -144,12 +144,19 @@ def anomalies_over_time(result, out_dir):
     if not any(items for _, items, _ in groups):
         return None
 
+    # anomalies() caps how many hits it itemises, so len(items) is the sample
+    # size, not the finding. The legend must quote the exact count.
+    totals = result.values.get("counts", {})
+    keys = {"rejected closures": "faults", "outside torque band": "threshold_hits",
+            "robust deviation": "deviation_hits"}
     fig, ax = plt.subplots(figsize=_FIGSIZE)
     for label, items, color in groups:
         if not items:
             continue
+        total = totals.get(keys[label], len(items))
+        shown = f" ({total}, {len(items)} shown)" if total > len(items) else f" ({total})"
         ax.scatter([i["ts"] for i in items], [i["app_torque"] for i in items],
-                   s=14, alpha=0.7, color=color, label=f"{label} ({len(items)})")
+                   s=14, alpha=0.7, color=color, label=f"{label}{shown}")
     ax.set_xlabel("timestamp")
     ax.set_ylabel("closing torque (Nm)")
     ax.set_title("Flagged closures over time")

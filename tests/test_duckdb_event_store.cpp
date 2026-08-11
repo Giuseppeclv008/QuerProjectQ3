@@ -26,6 +26,15 @@ void removeDb(const std::string& path) {
     std::remove((path + ".wal").c_str());
 }
 
+// "2026-02-01T HH:MM:SS.000" for a second offset from midnight — one poll per
+// second, the cadence the PLC actually emits.
+std::string tsAtSecond(long long s) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "2026-02-01T%02lld:%02lld:%02lld.000",
+                  s / 3600, (s / 60) % 60, s % 60);
+    return std::string(buf);
+}
+
 TEST(DuckDbEventStore, WritePersistsRowsWithTypedColumns) {
     const std::string path = "t_store_basic.duckdb";
     removeDb(path);
@@ -74,7 +83,7 @@ TEST(DuckDbEventStore, DuplicateKeyWithinOneBatchIsIgnored) {
     mas::DuckDbEventStore store(path, "MCC1");
     std::vector<mas::CapEvent> batch = {
         ev(1, "2026-02-01T00:00:01.000", 101),
-        ev(1, "2026-02-01T00:00:01.000", 101),   // same (machine, head, cap_seq)
+        ev(1, "2026-02-01T00:00:01.000", 101),   // same (machine_id, head_id, ts)
     };
     store.write(batch);
     EXPECT_EQ(store.count(), 1);
@@ -188,8 +197,13 @@ TEST(DuckDbEventStore, WriteHandlesBatchLargerThanPipelineKBatchSize) {
     constexpr long long kBatch = 8192;   // mirrors Pipeline.cpp's chunk size
     std::vector<mas::CapEvent> batch;
     batch.reserve(static_cast<std::size_t>(kBatch + 1));
+    // One event per poll, one poll per second — the shape the extractor emits.
+    // These used to share a single timestamp and differ only in cap_seq, which
+    // UNIQUE(machine_id, head_id, cap_seq) accepted. Under the ts identity they
+    // would be one observation recorded 8,193 times, so the fixture now says
+    // what it means: 8,193 distinct polls.
     for (long long seq = 0; seq < kBatch + 1; ++seq) {
-        batch.push_back(ev(1, "2026-02-01T00:00:01.000", seq));
+        batch.push_back(ev(1, tsAtSecond(seq), seq));
     }
     store.write(batch);
     EXPECT_EQ(store.count(), kBatch + 1);
@@ -235,6 +249,99 @@ TEST(DuckDbEventStore, MergeFromDetachesSourceOnInsertFailureSoAliasIsNotPoisone
     EXPECT_EQ(d.count(), 1);
 
     removeDb(good); removeDb(bad); removeDb(dst);
+}
+
+// --- Event identity: (machine_id, head_id, ts), not cap_seq ---
+
+TEST(DuckDbEventStore, CounterResetDoesNotEvictEarlierClosures) {
+    // The defect this key change exists to fix. The PLC's Count register resets
+    // and starts climbing again, so a later closure can carry a cap_seq already
+    // used weeks earlier. Measured on the real pool: head 1 has 23,851 day-17
+    // closures whose cap_seq collides with days 1-15, and 18,721 of them carry a
+    // different torque — distinct physical caps. Keyed on cap_seq they vanished.
+    const std::string path = "t_store_reset.duckdb";
+    removeDb(path);
+    mas::DuckDbEventStore store(path, "MCC1");
+
+    std::vector<mas::CapEvent> before = {
+        ev(1, "2026-02-01T21:37:15.000", 124817),
+        ev(1, "2026-02-01T21:37:18.000", 124818),
+    };
+    before[0].app_torque = 1.997;
+    before[1].app_torque = 2.002;
+    store.write(before);
+
+    // Same head, same counter values, two weeks later, different torque.
+    std::vector<mas::CapEvent> after = {
+        ev(1, "2026-02-16T16:00:03.000", 124817),
+        ev(1, "2026-02-16T16:00:06.000", 124818),
+    };
+    after[0].app_torque = 2.0;
+    after[1].app_torque = 2.0;
+    store.write(after);
+
+    EXPECT_EQ(store.count(), 4) << "post-reset closures must not collapse onto "
+                                   "the pre-reset rows sharing their cap_seq";
+    removeDb(path);
+}
+
+TEST(DuckDbEventStore, OnePollPerHeadIsOneRowRegardlessOfCapSeq) {
+    // The other half of the identity: a head cannot close twice within one poll.
+    // Caps missed between polls arrive as a single event with delta > 1, so two
+    // rows sharing (head, ts) are the same observation however their cap_seq
+    // differs — a duplicated frame, not two closures.
+    const std::string path = "t_store_same_ts.duckdb";
+    removeDb(path);
+    mas::DuckDbEventStore store(path, "MCC1");
+    std::vector<mas::CapEvent> batch = {
+        ev(1, "2026-02-01T00:00:01.000", 101),
+        ev(1, "2026-02-01T00:00:01.000", 102),
+        ev(2, "2026-02-01T00:00:01.000", 101),   // different head: kept
+    };
+    store.write(batch);
+    EXPECT_EQ(store.count(), 2);
+    removeDb(path);
+}
+
+TEST(DuckDbEventStore, StorePredatingTheKeyChangeIsRefused) {
+    // CREATE TABLE IF NOT EXISTS would happily reuse an old file's
+    // UNIQUE(..., cap_seq) index and go on silently producing wrong numbers.
+    const std::string path = "t_store_legacy.duckdb";
+    removeDb(path);
+    {   // hand-build a store in the old shape, with a row in it
+        duckdb::DuckDB db(path);
+        duckdb::Connection con(db);
+        con.Query(R"sql(
+            CREATE TABLE cap_events (
+                machine_id VARCHAR NOT NULL, head_id SMALLINT NOT NULL,
+                ts TIMESTAMP, cap_seq BIGINT NOT NULL, app_torque REAL,
+                status REAL, delta INTEGER, is_fault BOOLEAN,
+                aggregated BOOLEAN, is_reset BOOLEAN,
+                UNIQUE (machine_id, head_id, cap_seq)))sql");
+        con.Query("INSERT INTO cap_events VALUES "
+                  "('MCC1',1,'2026-02-01 00:00:01',101,2.0,0.0,1,false,false,false)");
+    }
+    EXPECT_THROW(mas::DuckDbEventStore store(path, "MCC1"), std::runtime_error);
+    removeDb(path);
+}
+
+TEST(DuckDbEventStore, PathContainingASingleQuoteWorks) {
+    // ATTACH and COPY splice the path into a SQL string literal and DuckDB has
+    // no binding for either, so an unescaped quote ends the literal early.
+    const std::string src = "t_store_o'brien_src.duckdb";
+    const std::string dst = "t_store_o'brien_dst.duckdb";
+    const std::string pq = "t_store_o'brien.parquet";
+    removeDb(src); removeDb(dst); std::remove(pq.c_str());
+    {
+        mas::DuckDbEventStore s(src, "MCC1");
+        std::vector<mas::CapEvent> b = {ev(1, "2026-02-01T00:00:01.000", 101)};
+        s.write(b);
+        EXPECT_NO_THROW(s.export_parquet(pq));
+    }
+    mas::DuckDbEventStore d(dst, "MCC1");
+    EXPECT_NO_THROW(d.merge_from(src));
+    EXPECT_EQ(d.count(), 1);
+    removeDb(src); removeDb(dst); std::remove(pq.c_str());
 }
 
 } // namespace

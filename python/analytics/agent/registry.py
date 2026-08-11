@@ -76,8 +76,10 @@ TOOLS = {
         ),
         ToolSpec(
             "idle_periods", idle_periods,
-            "Machine idle state: sustained runs of No-Load cycles per head, longer "
-            "than a threshold. Answers 'when was the machine idle', 'how much idle time'.",
+            "Sustained runs of No-Load cycles per head, longer than a threshold: "
+            "the head cycles but applies no cap. NOT machine downtime -- a stopped "
+            "machine advances no counter, so it emits no events at all and cannot "
+            "appear here. Answers 'how much no-load cycling', 'which head idles'.",
             {"period": _PERIOD,
              "min_seconds": {"type": ["integer", "null"],
                              "description": "minimum run length in seconds; null = config default"}},

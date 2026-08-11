@@ -10,7 +10,7 @@
     },
     "rationale": "Rolling mean/sigma of torque per head, with Mann-Kendall drift.",
     "status": "ok",
-    "rows_scanned": 11908148,
+    "rows_scanned": 31647915,
     "message": ""
   },
   {
@@ -24,7 +24,7 @@
     },
     "rationale": "Whether quality moved with torque, or independently of it.",
     "status": "ok",
-    "rows_scanned": 11908148,
+    "rows_scanned": 31647915,
     "message": ""
   },
   {
@@ -37,7 +37,7 @@
     },
     "rationale": "Variability ranking, to separate a drifting head from a noisy one.",
     "status": "ok",
-    "rows_scanned": 11902090,
+    "rows_scanned": 31634351,
     "message": ""
   },
   {
@@ -49,7 +49,7 @@
     },
     "rationale": "Which head is out of step with the rest of the machine.",
     "status": "ok",
-    "rows_scanned": 11908148,
+    "rows_scanned": 31647915,
     "message": ""
   }
 ]

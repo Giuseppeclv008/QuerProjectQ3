@@ -198,10 +198,25 @@ DispatchSummary run_coordinator(const std::vector<WorkItem>& items,
         }
     }
 
+    // Shutdown. One STOP per live worker is not enough: the work socket is
+    // anonymous PUSH, which round-robins across *connected pipes*, and a worker
+    // tombstoned for silence may well still be alive with its pipe attached —
+    // that is precisely why its items get re-dispatched. It then absorbs a STOP
+    // meant for someone else, and the live worker that missed out sits out its
+    // whole idle-exit budget (60 ticks, ~60 s) before returning.
+    //
+    // So send one per live worker plus one per tombstoned worker. A surplus STOP
+    // is free: a genuinely dead peer has no pipe and its frames are dropped at
+    // the socket's linger. The `live > 0` guard is load-bearing — sending into a
+    // PUSH socket with no peers blocks for the send timeout, which is why the
+    // abort path leaves the loop without stopping anyone.
+    int live = 0, tombstoned = 0;
     for (const auto& [id, w] : registry) {
-        if (w.alive) work.send(make_stop());
+        (w.alive ? live : tombstoned)++;
         (void)id;
     }
+    if (live > 0)
+        for (int i = 0; i < live + tombstoned; ++i) work.send(make_stop());
     return s;
 }
 

@@ -10,6 +10,7 @@ it is non-parametric, makes no assumption that the walk is linear or the noise
 Gaussian, and is deterministic. tau = +1 means every day rose on the previous;
 -1 means every day fell.
 """
+import numpy as np
 import pandas as pd
 
 from analytics.result import ToolResult
@@ -19,20 +20,32 @@ from analytics.store import connect, scope_clause
 _SIGNALS = ("torque", "success_rate")
 _BUCKETS = {"day": "DAY", "hour": "HOUR"}
 DRIFT_TAU = 0.5     # |tau| at or above this counts as drifting
+_TAU_CHUNK = 512    # rows per block; bounds the temporary at ~chunk*n*8 bytes
 
 
 def mann_kendall_tau(values):
-    """Kendall's tau-a: (concordant - discordant) / (n*(n-1)/2). Range [-1, 1]."""
+    """Kendall's tau-a: (concordant - discordant) / (n*(n-1)/2). Range [-1, 1].
+
+    This was a doubly-nested Python loop. With by="day" over a month n is ~28 and
+    it never mattered, but by="hour" is exposed to the model in the tool registry
+    and three months of hourly buckets is n ~ 2,160 per head: ~2.3M comparisons
+    times 36 heads, roughly 84M interpreter iterations for one natural-language
+    question, with no cap and no timeout.
+
+    Same arithmetic, vectorised. Blocked over rows rather than materialising the
+    whole n x n sign matrix, so peak memory stays near 9 MB at n = 2,160 instead
+    of 37 MB and grows linearly in n rather than quadratically.
+    """
     n = len(values)
     if n < 2:
         return 0.0
-    s = 0
-    for i in range(n - 1):
-        for j in range(i + 1, n):
-            if values[j] > values[i]:
-                s += 1
-            elif values[j] < values[i]:
-                s -= 1
+    v = np.asarray(values, dtype=np.float64)
+    cols = np.arange(n)
+    s = 0.0
+    for start in range(0, n - 1, _TAU_CHUNK):
+        rows = np.arange(start, min(start + _TAU_CHUNK, n - 1))
+        block = np.sign(v[None, :] - v[rows, None])          # (k, n)
+        s += float(block[cols[None, :] > rows[:, None]].sum())
     return s / (n * (n - 1) / 2)
 
 
