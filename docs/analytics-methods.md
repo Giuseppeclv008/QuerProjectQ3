@@ -8,7 +8,7 @@ raises: a gap in the data is a `status` on the result, not an exception. Nothing
 below the CLI propagates an error, because a report generated unattended must
 still land on disk saying what it could not answer.
 
-All measured figures below come from `events_3mo.duckdb` — 20,347,822 rows,
+All measured figures below come from `events_3mo.duckdb` — 55,132,433 rows,
 machine `MCC`, 36 heads, 2026-02-01 → 2026-04-30.
 
 ---
@@ -47,17 +47,18 @@ have status 65 — the other 16 are status 9, No InTorque.
 
 | status | torque > 0 | count | share | decoded |
 |---|---|---:|---:|---|
-| 0 | yes | 11,902,090 | 58.4932% | clean capping operation |
-| 2 | no | 8,433,525 | 41.4468% | No Load — the idle cycle |
-| 0 | no | 6,148 | 0.0302% | clean, but no load applied |
-| 2 | yes | 5,452 | 0.0268% | No Load **with** torque |
-| 65 | yes | 585 | 0.0029% | Bad Closure + reject |
-| 9 | yes | 15 | 0.0001% | No InTorque + reject |
-| 4 | yes | 6 | 0.0000% | No Closure, not rejected |
-| 4 | no | 1 | 0.0000% | No Closure, not rejected |
+| 0 | yes | 31,655,161 | 57.4166% | clean capping operation |
+| 2 | no | 23,447,151 | 42.5288% | No Load — the idle cycle |
+| 0 | no | 16,552 | 0.0300% | clean, but no load applied |
+| 2 | yes | 12,461 | 0.0226% | No Load **with** torque |
+| 65 | yes | 1,071 | 0.0019% | Bad Closure + reject |
+| 9 | yes | 24 | 0.0000% | No InTorque + reject |
+| 4 | yes | 10 | 0.0000% | No Closure, not rejected |
+| 4 | no | 2 | 0.0000% | No Closure, not rejected |
+| 65 | no | 1 | 0.0000% | Bad Closure, no torque |
 
-585 + 15 = **600 rejected closures** over three months, which is exactly what
-`CAST(status AS BIGINT) % 2 = 1` returns. The bitmask reading is confirmed by
+1,071 + 24 + 1 = **1,096 rejected closures** over three months, which is exactly
+what `CAST(status AS BIGINT) % 2 <> 0` returns. The bitmask reading is confirmed by
 the data, not merely consistent with it.
 
 **No Load with torque (5,452 rows) is not a contradiction.** No Load means the
@@ -109,7 +110,7 @@ catastrophically failing head when nothing was ever capped. It is omitted.
 `status = 0` nor a reject carries no pass/fail verdict — the 5,452 No-Load-with-
 torque and 6 No-Closure rows above. They are excluded from the ratio, so
 `successful + failed` can be less than the total. The report states the
-difference explicitly; on February that is 2,927 closures out of 6,672,649, and
+difference explicitly; on February that is 5,580 closures out of 14,824,304, and
 without saying so the printed counts visibly fail to add up.
 
 **Degenerate case:** a group with no verdicts at all yields `success_rate =

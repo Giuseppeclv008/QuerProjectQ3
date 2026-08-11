@@ -328,11 +328,12 @@ rejection that was not a Bad Closure. Measured on the three-month store:
 
 | period | successful | rejects (`status == 65`) | rejects (reject bit) |
 |---|---:|---:|---:|
-| 2026-02 | 6,669,339 | 371 | **383** |
-| 2026-02..2026-04 | 11,902,090 | 585 | **600** |
+| 2026-02 | 14,817,976 | 732 | **748** |
+| 2026-02..2026-04 | 31,655,161 | 1,071 | **1,096** |
 
-The bitmask reading is confirmed by the data, not assumed: 585 closures at
-status 65 plus 15 at status 9 is exactly the 600 the odd-status rule returns.
+The bitmask reading is confirmed by the data, not assumed: 1,071 closures at
+status 65, plus 24 at status 9 and 1 at status 65 with no torque, is exactly the
+1,096 the odd-status rule returns.
 
 A closure that is neither `status == 0` nor a reject carries **no pass/fail
 verdict** — 5,452 No-Load-with-torque rows over three months — and is excluded

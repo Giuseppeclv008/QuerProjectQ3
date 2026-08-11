@@ -67,8 +67,10 @@ measured on `events_3mo.duckdb` (55,132,433 rows, machine `MCC`, 36 heads,
   oracle-exact**.
 - Resilience shown, not claimed: worker SIGKILL mid-run and coordinator death
   with an orphan worker both recover (chaos E2E).
-- **Headline finding: the merge is the bottleneck.** A 35–54 s unification cost
-  caps end-to-end speedup at ~1.15× no matter how many workers are added.
+- **Headline finding: the merge is the bottleneck.** A 63–65 s unification cost
+  caps end-to-end speedup at **1.11×** no matter how many workers are added —
+  and it is *flat* in N, because it now only moves rows. Under the old key it
+  grew with store count, and that growth was the defect doing work.
 - Show the speedup chart. Name the fix (partitioned Parquet or a
   concurrent-writer store) as roadmap, not as done.
 

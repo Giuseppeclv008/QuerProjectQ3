@@ -24,7 +24,7 @@ Da sapere a memoria, indipendentemente dal ruolo. Chiunque deve poter rispondere
 | Una chiusura si **ricostruisce dal delta del contatore per testa** | `README.md` § Core Domain |
 | `status` è **bitmask**, non enum: reject ⇔ status dispari (`status % 2 = 1`) | `README.md` § Status Semantics |
 | Store unico `cap_events` in DuckDB, chiave `UNIQUE(machine_id, head_id, cap_seq)` | `README.md` § Database Design |
-| 20.347.822 eventi su 3 mesi · 600 reject · head 29 = 75 reject | outline slide 6, 10 |
+| 55.132.433 eventi su 3 mesi · 1.096 reject · head 29 = 117 reject | outline slide 6, 10 |
 | Invariante finale: **il modello sceglie le analisi, l'SQL produce ogni numero** | `docs/agent-decision-flow.md` |
 
 Slide 1–3 e 13: script condiviso, chiunque le può dire.
@@ -54,7 +54,7 @@ Slide 1–3 e 13: script condiviso, chiunque le può dire.
 - Perché l'estrattore stateful resta accanto a `extract_flat`: il flat serve come **oracolo** del port GPU, non come sostituto.
 - Idempotenza: `INSERT OR IGNORE` + chiave UNIQUE ⇒ rilanciare un day-file non raddoppia mai.
 - PIMPL su `DuckDbEventStore`: `duckdb.hpp` non entra in nessun'altra TU.
-- Bitmask: `65 = 64+1` (Bad Closure + reject), `9 = 8+1` (No InTorque + reject). La vecchia regola `status == 65` **sottocontava**: febbraio 383 reject, non 371.
+- Bitmask: `65 = 64+1` (Bad Closure + reject), `9 = 8+1` (No InTorque + reject). La vecchia regola `status == 65` **sottocontava**: febbraio 748 reject, non 732.
 - Il tasso di successo **esclude i cicli No-Load**: una testa che ha solo ciclato a vuoto ha fatto zero capping, non 0%.
 - Parsing float correttamente arrotondato ovunque: pandas e un parse GPU naïf sbagliano di 1 ulp su valori tipo `2.002`.
 
@@ -64,7 +64,7 @@ Slide 1–3 e 13: script condiviso, chiunque le può dire.
 |---|---|
 | Perché non usate una colonna "cap applicato"? | Non esiste. Il PLC pubblica stato; l'evento è ricostruito dal delta contatore. |
 | Cosa succede se il contatore si azzera? | Ramo reset: un evento `reset=true, delta=0`. Nel mese reale il reset a metà giorno 16 fa rigiocare cap_seq già visti — la UNIQUE li dedupa (21.872.663 processati → 14.372.237 righe distinte su 28 giorni). |
-| Come sapete che il bitmask è giusto? | Confermato dai dati: 585 + 15 = 600 reject, esattamente ciò che ritorna la regola "dispari". |
+| Come sapete che il bitmask è giusto? | Confermato dai dati: 1.071 + 24 + 1 = 1.096 reject, esattamente ciò che ritorna la regola "dispari". |
 | Come provate che la GPU non sbaglia? | `mas_cuda_clean --verify` fa il differenziale bitwise contro `extract_flat`, esce non-zero e stampa i primi 10 eventi divergenti con tutti e 9 i campi. |
 
 ---
@@ -100,12 +100,12 @@ Slide 1–3 e 13: script condiviso, chiunque le può dire.
 
 | | tempo |
 |---|---|
-| mono-1T | 87,5 s |
-| MAS N=8 | 78,0 s totale (clean 27,0 s + **merge 50,8 s**) |
-| MAS N=16 | 75,7 s (clean 25,0 s) |
+| mono-1T | 101,0 s |
+| MAS N=8 | 92,6 s totale (clean 29,8 s + **merge 62,8 s**) |
+| MAS N=16 | 91,2 s (clean 27,1 s + merge 64,0 s) |
 
-- La **fase clean scala bene**: 87,5 s → 27,0 s = **3,2×** (N=16: 3,5×).
-- Il **merge no**: 35–54 s, cresce col numero di store. End-to-end il MAS si ferma a **1,12–1,16×**.
+- La **fase clean scala bene**: 101,0 s → 27,1 s = **3,73×**.
+- Il **merge no**: 63–65 s, e a differenza di prima è *piatto* in N. End-to-end il MAS si ferma a **1,11×**. Il branch `perf/merge-set-based` lo porta a 22,8 s misurati in isolamento (2,89×).
 - mono-MT non batte mai davvero mono-1T a scala mensile (meglio 1,01× a T=4; T=2 è più lento).
 - Sweep: 1/7/28 giorni × architetture × 3 ripetizioni = **81/81 run oracle-exact**.
 - Test: **90 C++** (14 file GTest) + **229 Python**. In `MAS_BENCH_ONLY=ON` restano 34 test C++ — esclusi per design, non skippati.
@@ -147,7 +147,7 @@ Slide 1–3 e 13: script condiviso, chiunque le può dire.
 - Dettaglio Anthropic: structured outputs richiede `additionalProperties: false` e tutte le property in `required` ⇒ gli argomenti sono un unico oggetto piatto con l'unione dei parametri e i non usati a `null`; `plan.effective_args()` li scarta, e validazione/esecuzione/scelta figure leggono lo step **attraverso quella stessa funzione**, così non possono discordare.
 - I 3 verbi `report` **non contengono modello**: piano fisso in `router.py`. Sono il path riproducibile della demo, il fallback offline e il riferimento contro cui si controlla il path agentico.
 - Politica di fallimento: problema di **config** ⇒ exit 2 prima di qualsiasi lavoro; buco di **analisi** ⇒ report che nomina il buco.
-- Il finding (slide 10, la presenta P1, ma i numeri escono dai tuoi tool): 99,9943% a livello macchina nasconde head 29 con 75 reject su 600, contro media per testa 16,7 e 37 della seconda peggiore.
+- Il finding (slide 10, la presenta P1, ma i numeri escono dai tuoi tool): 99,9950% a livello macchina nasconde head 29 con 117 reject su 1.095, contro media per testa 30,4 e 78 della seconda peggiore (head 35).
 - **Il non-trovato conta**: nessuna testa supera la soglia Mann-Kendall su coppia o success rate; tutte e 36 correlano > 0,9999 sulla coppia media. Una versione precedente nominava sempre una "testa meno correlata" — aritmetica vera, conclusione falsa.
 
 ### Domande probabili
