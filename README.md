@@ -698,7 +698,8 @@ killed mid-run. Wall clock ~57 s (30 s death threshold dominates).
 ### Prerequisites
 
 - **CMake** ≥ 3.16
-- **C++20** compiler (clang 14+, gcc 12+, MSVC 2022+)
+- **C++20** compiler (clang 14+, gcc 12+) on macOS or Linux x86-64 — the DuckDB
+  prebuilt asset is fetched for those two platforms only (see `CMakeLists.txt`)
 - **Java** (for rendering PlantUML diagrams, optional)
 - **Python 3** (for validation oracle and benchmark, optional)
 
@@ -711,7 +712,7 @@ All C++ dependencies are fetched automatically via CMake `FetchContent`:
 
 ```bash
 cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j$(nproc)
+cmake --build build --parallel
 ```
 
 ### Run Tests
@@ -936,7 +937,7 @@ Python tests** for the analytics tier.
 
 ```bash
 cd build && ctest --output-on-failure     # 80 C++ tests
-cd python && ../.venv/bin/python -m pytest -q   # 230 Python tests (1 skips without the rebuilt store)
+cd python && ../.venv/bin/python -m pytest -q   # 230 Python tests (5 need the rebuilt store and skip without it)
 ```
 
 | Test File | What It Tests |
