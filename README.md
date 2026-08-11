@@ -241,7 +241,7 @@ organized by layer.
 │           ├── render.py                   # The six mandated sections + tool-call trace
 │           ├── plots.py                    # Five matplotlib figures, driven only by ToolResults
 │           └── export.py                   # Self-contained HTML; best-effort PDF
-│   └── tests/                              # 226 tests incl. golden report + mocked-LLM agent
+│   └── tests/                              # 230 tests incl. golden report + mocked-LLM agent
 │
 ├── scripts/
 │   ├── arol                                # WP4 entry point: arol report kpi --period 2026-02
@@ -931,12 +931,12 @@ it, `--pdf` logs how to install it and writes Markdown and HTML as normal.
 
 ## Testing
 
-The project has **80 C++ unit tests** across 11 Google Test files, plus **226
+The project has **80 C++ unit tests** across 11 Google Test files, plus **230
 Python tests** for the analytics tier.
 
 ```bash
 cd build && ctest --output-on-failure     # 80 C++ tests
-cd python && ../.venv/bin/python -m pytest -q   # 226 Python tests
+cd python && ../.venv/bin/python -m pytest -q   # 230 Python tests (1 skips without the rebuilt store)
 ```
 
 | Test File | What It Tests |

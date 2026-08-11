@@ -170,6 +170,14 @@ measured on `events_3mo.duckdb` (55,132,433 rows, machine `MCC`, 36 heads,
 - That is the actionable finding, and the headline rate hides it completely.
   99.9950% and 99.9781% look like the same number until you count rejects per
   head.
+- **If asked "and head 35?"** — which is the natural question once 78 is on the
+  slide. First-order Poisson check on a per-head mean of 30.4 (sigma ~5.5):
+  head 29 sits ~15.7 sigma above the machine mean, which is not arguable. Head
+  29 against head 35 is 117 vs 78, a difference of 39 against a combined sigma
+  of sqrt(117+78) ~ 14, so **~2.8 sigma**. The defensible claim is that 29 and
+  35 are *both* outliers against the machine, that 29 is the worse of the two,
+  and that the gap between them is real but not overwhelming. Assumes
+  independent uniform rates — a reasonable first approximation, not a model.
 - **Equally important: what we did *not* find.** No head exceeds the Mann-Kendall
   drift threshold on torque or on success rate over three months, and all 36
   heads correlate above 0.9999 on mean torque. The machine is stable; head 29 is
