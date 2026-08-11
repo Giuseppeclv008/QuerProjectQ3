@@ -14,7 +14,7 @@ from analytics.result import ToolResult
 from analytics.store import connect, scope_clause
 from analytics.tools.overview import ASSUMPTION
 
-_BUCKETS = {"hour": ("HOUR", 1.0), "day": ("DAY", 24.0)}
+_BUCKETS = {"hour": "HOUR", "day": "DAY"}
 
 
 def capping_speed(cfg, period=None, bucket="hour"):
@@ -23,13 +23,22 @@ def capping_speed(cfg, period=None, bucket="hour"):
             "capping_speed", f"bucket must be one of {sorted(_BUCKETS)}, got {bucket!r}",
             period=period,
         )
-    unit, hours_per_bucket = _BUCKETS[bucket]
+    unit = _BUCKETS[bucket]
 
     con = connect(cfg)
     where, params = scope_clause(cfg, period)
 
+    # The denominator is the number of hours in the bucket that actually saw a
+    # closure, not the bucket's calendar length. With bucket="day" the old code
+    # divided by a fixed 24.0, so the KPI report's headline "pieces/hour" was
+    # really pieces-per-day over 24 -- while idle_periods reported 7,486 idle
+    # head-hours in the same month. Counting active hours makes the number what
+    # its name says, and AROL define production speed as bottles closed per unit
+    # time (material/various.txt), so pieces_per_second is reported too.
     rows = con.execute(f"""
-        SELECT DATE_TRUNC('{unit}', ts) AS bucket_start, COUNT(*) AS caps
+        SELECT DATE_TRUNC('{unit}', ts) AS bucket_start,
+               COUNT(*) AS caps,
+               COUNT(DISTINCT DATE_TRUNC('HOUR', ts)) AS active_hours
         FROM cap_events
         WHERE app_torque > 0 AND {where}
         GROUP BY 1 ORDER BY 1
@@ -41,7 +50,9 @@ def capping_speed(cfg, period=None, bucket="hour"):
         )
 
     buckets = [
-        {"bucket_start": r[0], "caps": r[1], "pieces_per_hour": r[1] / hours_per_bucket}
+        {"bucket_start": r[0], "caps": r[1], "active_hours": r[2],
+         "pieces_per_hour": r[1] / r[2] if r[2] else 0.0,
+         "pieces_per_second": (r[1] / r[2] / 3600.0) if r[2] else 0.0}
         for r in rows
     ]
     total = sum(b["caps"] for b in buckets)
@@ -50,12 +61,17 @@ def capping_speed(cfg, period=None, bucket="hour"):
         {
             "buckets": buckets,
             "mean_pieces_per_hour": sum(b["pieces_per_hour"] for b in buckets) / len(buckets),
+            "mean_pieces_per_second":
+                sum(b["pieces_per_second"] for b in buckets) / len(buckets),
         },
         period=period, rows_scanned=total,
         filters=[f"bucket={bucket}", "app_torque > 0 (only real caps produce pieces)"],
         assumptions=[
             ASSUMPTION,
-            "mean_pieces_per_hour is the mean over active buckets only; buckets with "
-            "zero capping operations are not emitted, so idle hours/days do not lower it",
+            "rate = closures / hours that actually saw a closure in the bucket, not "
+            "/ the bucket's calendar length; a day with 10 productive hours is not "
+            "divided by 24",
+            "buckets with zero capping operations are never emitted, so a fully "
+            "idle hour or day does not pull the mean down",
         ],
     )

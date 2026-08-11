@@ -193,7 +193,7 @@ organized by layer.
 │           ├── worker_main.cpp             # → mas_worker
 │           └── merge_main.cpp              # → mas_merge
 │
-├── tests/                                  # Google Test unit tests (63 tests)
+├── tests/                                  # Google Test unit tests (80 tests)
 │   ├── test_cap_event_extractor.cpp
 │   ├── test_csv_raw_reader.cpp
 │   ├── test_pipeline.cpp
@@ -241,7 +241,7 @@ organized by layer.
 │           ├── render.py                   # The six mandated sections + tool-call trace
 │           ├── plots.py                    # Five matplotlib figures, driven only by ToolResults
 │           └── export.py                   # Self-contained HTML; best-effort PDF
-│   └── tests/                              # 207 tests incl. golden report + mocked-LLM agent
+│   └── tests/                              # 226 tests incl. golden report + mocked-LLM agent
 │
 ├── scripts/
 │   ├── arol                                # WP4 entry point: arol report kpi --period 2026-02
@@ -898,12 +898,12 @@ it, `--pdf` logs how to install it and writes Markdown and HTML as normal.
 
 ## Testing
 
-The project has **73 C++ unit tests** across 11 Google Test files, plus **206
+The project has **80 C++ unit tests** across 11 Google Test files, plus **226
 Python tests** for the analytics tier.
 
 ```bash
-cd build && ctest --output-on-failure     # 73 C++ tests
-cd python && ../.venv/bin/python -m pytest -q   # 206 Python tests
+cd build && ctest --output-on-failure     # 80 C++ tests
+cd python && ../.venv/bin/python -m pytest -q   # 226 Python tests
 ```
 
 | Test File | What It Tests |

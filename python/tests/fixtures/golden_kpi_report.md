@@ -25,7 +25,7 @@ Capping KPI report for 2026-02.
 - **Scope.** 6 capping operations across heads 1-3, from 2026-02-01 00:00:00 to 2026-02-01 00:00:40. 2 no-load cycles are excluded from every rate below.
 - **Success rate.** 66.6667% (4 successful, 2 rejected). Lowest head: 2.
 - **Weakest head.** 2 at 33.3333% over 3 capping operations.
-- **Throughput.** 0.25 pieces/hour, averaged over 1 active bucket.
+- **Throughput.** 6 pieces/hour, averaged over 1 active bucket.
 
 ### Success Rate Per Head
 
@@ -44,7 +44,8 @@ Capping KPI report for 2026-02.
 - `capping_speed`: 6 rows scanned; filters: bucket=day, app_torque > 0 (only real caps produce pieces)
 - `idle_periods`: **insufficient_data** — no idle periods of >= 300s in period '2026-02'
 - **Assumption.** a capping operation is a closure with torque > 0; no-load cycles (status 2, torque 0) are excluded from success denominators.
-- **Assumption.** mean_pieces_per_hour is the mean over active buckets only; buckets with zero capping operations are not emitted, so idle hours/days do not lower it.
+- **Assumption.** buckets with zero capping operations are never emitted, so a fully idle hour or day does not pull the mean down.
+- **Assumption.** rate = closures / hours that actually saw a closure in the bucket, not / the bucket's calendar length; a day with 10 productive hours is not divided by 24.
 
 ## Next checks
 

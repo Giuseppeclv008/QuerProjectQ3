@@ -4,7 +4,9 @@
 
 int main(int argc, char** argv) {
     if (argc < 4) {
-        std::cerr << "usage: mas_merge <dst.duckdb> <machine_id> <src1.duckdb> [src2.duckdb ...]\n";
+        std::cerr << "usage: mas_merge <dst.duckdb> <machine_id> <src1.duckdb> [src2.duckdb ...]\n"
+                     "  <machine_id> labels rows the destination writes itself. It does NOT\n"
+                     "  relabel merged rows: merge_from copies each source's own machine_id.\n";
         return 2;
     }
     try {
@@ -24,6 +26,12 @@ int main(int argc, char** argv) {
         }
         std::cerr << "merged " << merged << " stores (" << skipped
                   << " skipped); dst holds " << dst.count() << " rows\n";
+        // The machine_id argument only labels rows this destination writes
+        // itself; merge_from carries each source's own value across. Passing a
+        // different id looked like reassigning the machine and silently did
+        // nothing — chaos_e2e.sh passes MCC777eda… while its workers wrote MCC.
+        std::cerr << "note: merged rows keep their source machine_id; '" << argv[2]
+                  << "' labels only rows this destination writes itself\n";
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";
         return 1;

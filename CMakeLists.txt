@@ -48,6 +48,13 @@ else()
   # real download and fill in, mirroring the APPLE branch above.
   set(DUCKDB_SHA256 "")
 endif()
+if(NOT DUCKDB_SHA256)
+  message(WARNING
+    "DuckDB asset ${DUCKDB_ASSET} is downloaded WITHOUT hash verification. "
+    "The macOS asset is pinned; this platform's is not, because it has never "
+    "been fetched here. Run `shasum -a 256` on the downloaded zip and fill in "
+    "DUCKDB_SHA256 in CMakeLists.txt.")
+endif()
 if(DUCKDB_SHA256)
   FetchContent_Declare(duckdb_prebuilt
     URL https://github.com/duckdb/duckdb/releases/download/v1.2.2/${DUCKDB_ASSET}

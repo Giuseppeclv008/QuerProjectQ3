@@ -393,3 +393,104 @@ verifier.
 228 passed (Python), output pristine. C++ 73/73. 18 new tests, all against
 injected fake clients — the suite still makes no network call and needs no
 daemon.
+
+## 2026-08-11 — Event identity: the counter key was discarding real closures
+
+Supersedes the "replay dedup" reading recorded in the 2026-07-10 entry above.
+That entry states days 16-24 "replay cap_seq ranges from days 1-15" and that
+`UNIQUE(machine_id, head_id, cap_seq)` "dedupes replays identically for every
+architecture". The replay hypothesis was never tested. It is false.
+
+### The measurement that settles it
+
+For head 1, every day-17 closure whose `cap_seq` also appears on days 1-15,
+compare the torque of the two rows:
+
+```
+head 1, days 01-15: 302,339 distinct cap_seq
+head 1, day 17:      23,851 events
+  colliding cap_seq:            23,851
+    identical torque:            5,130   (a true replay would be all of these)
+    DIFFERENT torque:           18,721   (distinct physical closures)
+```
+
+Sample collisions:
+
+```
+cap_seq 124817: 2026-02-01T21:37:15 τ=1.997  vs  2026-02-16T16:00:03 τ=2.000
+cap_seq 124818: 2026-02-01T21:37:18 τ=2.002  vs  2026-02-16T16:00:06 τ=2.000
+cap_seq 124819: 2026-02-01T21:37:20 τ=2.000  vs  2026-02-16T16:00:08 τ=2.002
+```
+
+The 5,130 "identical" are coincidence — torque clusters near 2.0 with three
+decimals. Day 17 produced 858,651 events across 36 heads against a February
+mean of ~781k/day: a normal production day, not a retransmission. The PLC's
+Count register reset mid-day-16 and climbed again through ranges it had already
+used.
+
+### What it cost
+
+| scope | events extracted | rows persisted | discarded |
+|---|---:|---:|---:|
+| February, 28 files | 21,872,663 | 14,372,237 | 34% |
+| three months, 89 files | 55,132,433 | 20,347,822 | 63% |
+| February *inside* the three-month store | — | 10,450,551 | a further 3.9M |
+
+The last row is the sharpest: February holds 14,372,237 rows when built alone
+and 10,450,551 inside the three-month store. 3.9M February closures were
+evicted by March/April rows reusing their counter values, and because
+`INSERT OR IGNORE` keeps whichever row arrives first, which side survived was
+decided by thread scheduling and merge order. Same input, same count, different
+contents.
+
+### Why no gate caught it
+
+`oracle_union.py` counted distinct `(head_id, cap_seq)` — exactly the quantity
+the defect leaves stable. It was written to reproduce the store's behaviour
+rather than to check it, so 81 of 81 benchmark runs reported "oracle-exact"
+throughout.
+
+`oracle.py` could not have helped either: it still classified rejects as
+`status == 65`, three plans after the C++ moved to the bitmask, and nothing
+noticed because `validate_real.py` compared only event *counts* — and `is_fault`
+does not change how many events there are. The correction the project is
+proudest of had no independent oracle at all.
+
+### The fix
+
+Identity is now `(machine_id, head_id, ts)`. A head closes at most once per poll
+— caps missed between polls arrive as one event with `delta > 1` — so a
+timestamp names the observation. Verified on the pool: 86,399 rows and 86,399
+distinct timestamps per day-file, and the 28 files are contiguous and
+non-overlapping (`2026-01-31T16:00:00` … `2026-02-28T15:59:59`, each starting
+one second after the previous ends). Reprocessing a file still deduplicates
+exactly, so §10 idempotency holds, and the MAS still does not need to see files
+in timestamp order. Stores written under the old key are refused at open rather
+than silently reused.
+
+`oracle_union.py` now counts distinct `(head_id, ts)`. `validate_real.py`
+compares all nine fields. Its first run found a second defect: `CsvEventStore`
+wrote 6 significant digits, so raw cells like `2.0020000000000002` were exported
+as `2.002`.
+
+### Cross-check, 2026-02-01
+
+```
+oracle events: 765711 (rows skipped: 0)
+cpp events:    765711
+MATCH: 765711 events, all 9 fields
+```
+
+This is the first time `is_reject` has been checked against an independent
+oracle on real data.
+
+### Still open
+
+- **The three committed reports in `docs/reports/` were generated from the old
+  store and every number in them is computed on the residue.** They must be
+  regenerated after `scripts/build_store.sh` rebuilds `events_3mo.duckdb` under
+  the new key. Expect February's `rows scanned` to rise from 10,450,551 toward
+  ~21.9M, and the derived KPIs to move with it.
+- Throughput in those reports is also wrong for a second reason: `capping_speed`
+  divided a day's closures by a flat 24 h. It now divides by the hours that
+  actually saw a closure. On the golden fixture that is 0.25 → 6 pieces/hour.
