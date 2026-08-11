@@ -2,33 +2,33 @@
 
 | arch | n_workers | threads | files | clean_s | merge_s | total_s | events_per_s | peak_rss_mb | cpu_pct |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| mas | 1 | 1 | 1 | 3.424 | 2.081 | 5.503 | 139144 | 222.1 | 169.8 |
-| mas | 1 | 1 | 7 | 16.993 | 10.606 | 27.595 | 141367 | 663.2 | 173.2 |
-| mas | 1 | 1 | 28 | 91.337 | 65.194 | 156.404 | 139847 | 2693.6 | 183.8 |
-| mas | 2 | 1 | 1 | 3.393 | 2.079 | 5.472 | 139933 | 246.4 | 170.1 |
-| mas | 2 | 1 | 7 | 9.36 | 10.568 | 19.928 | 195756 | 582 | 337.9 |
-| mas | 2 | 1 | 28 | 53.813 | 63.035 | 117.583 | 186019 | 2216.4 | 331.3 |
-| mas | 4 | 1 | 1 | 3.404 | 2.105 | 5.493 | 139398 | 295.9 | 170.6 |
-| mas | 4 | 1 | 7 | 7.816 | 10.817 | 18.658 | 209080 | 651.2 | 469.3 |
-| mas | 4 | 1 | 28 | 38.144 | 63.323 | 101.072 | 216407 | 1745.5 | 651.6 |
-| mas | 8 | 1 | 1 | 3.392 | 2.073 | 5.501 | 139195 | 399.3 | 174.9 |
-| mas | 8 | 1 | 7 | 5.712 | 10.646 | 16.32 | 239033 | 869.7 | 707.3 |
-| mas | 8 | 1 | 28 | 29.758 | 62.848 | 92.606 | 236191 | 1611.1 | 825.7 |
-| mas | 16 | 1 | 1 | 3.472 | 2.107 | 5.552 | 137916 | 602 | 178.1 |
-| mas | 16 | 1 | 7 | 5.742 | 10.635 | 16.397 | 237910 | 1055 | 701.2 |
-| mas | 16 | 1 | 28 | 27.072 | 64.038 | 91.222 | 239774 | 2196.2 | 938 |
-| mono-1T | 0 | 1 | 1 | 3.431 | 0 | 3.431 | 223174 | 80.4 | 113.7 |
-| mono-1T | 0 | 1 | 7 | 18.251 | 0 | 18.251 | 213743 | 103.6 | 117.8 |
-| mono-1T | 0 | 1 | 28 | 100.979 | 0 | 100.979 | 216606 | 229.6 | 117.2 |
-| mono-MT | 0 | 2 | 1 | 3.489 | 2.242 | 5.813 | 131724 | 133.9 | 111.1 |
-| mono-MT | 0 | 2 | 7 | 10.164 | 11.366 | 21.529 | 181198 | 320.1 | 160.1 |
-| mono-MT | 0 | 2 | 28 | 55.689 | 70.55 | 127.352 | 171750 | 1527.8 | 158.4 |
-| mono-MT | 0 | 4 | 1 | 3.48 | 2.215 | 5.696 | 134430 | 144 | 109.7 |
-| mono-MT | 0 | 4 | 7 | 7.058 | 11.592 | 18.65 | 209170 | 249 | 241.3 |
-| mono-MT | 0 | 4 | 28 | 37.903 | 68.508 | 106.097 | 206157 | 915.3 | 265.9 |
-| mono-MT | 0 | 8 | 1 | 3.442 | 2.172 | 5.614 | 136393 | 151 | 110.9 |
-| mono-MT | 0 | 8 | 7 | 6.975 | 11.808 | 18.652 | 209147 | 341.5 | 276.6 |
-| mono-MT | 0 | 8 | 28 | 31.409 | 67.829 | 99.43 | 219980 | 735.7 | 278.9 |
+| mas | 1 | 1 | 1 | 3.515 | 2.2 | 5.715 | 133983 | 222.3 | 177.9 |
+| mas | 1 | 1 | 7 | 18.528 | 11.146 | 29.677 | 131449 | 665.6 | 176.8 |
+| mas | 1 | 1 | 28 | 98.144 | 70.554 | 168.613 | 129721 | 2818.9 | 185.1 |
+| mas | 2 | 1 | 1 | 3.474 | 0.912 | 4.386 | 174581 | 289.7 | 140.8 |
+| mas | 2 | 1 | 7 | 12.206 | 4.216 | 16.422 | 237548 | 1055.5 | 277.5 |
+| mas | 2 | 1 | 28 | 72.263 | 29.281 | 100.642 | 217331 | 3662.4 | 289.8 |
+| mas | 4 | 1 | 1 | 3.531 | 0.964 | 4.495 | 170347 | 340.2 | 150.9 |
+| mas | 4 | 1 | 7 | 10.808 | 4.435 | 15.243 | 255922 | 1194.7 | 419.9 |
+| mas | 4 | 1 | 28 | 43.699 | 26.87 | 69.389 | 315218 | 4384.4 | 520.5 |
+| mas | 8 | 1 | 1 | 3.581 | 0.984 | 4.579 | 167222 | 445.3 | 152.7 |
+| mas | 8 | 1 | 7 | 8.251 | 4.437 | 12.695 | 307288 | 1424.3 | 611.8 |
+| mas | 8 | 1 | 28 | 32.635 | 25.456 | 58.091 | 376524 | 4849.2 | 708 |
+| mas | 16 | 1 | 1 | 3.614 | 0.953 | 4.567 | 167662 | 652.7 | 158.6 |
+| mas | 16 | 1 | 7 | 8.357 | 4.168 | 12.652 | 308332 | 1632.7 | 606.2 |
+| mas | 16 | 1 | 28 | 29.275 | 25.367 | 55.394 | 394856 | 5688.4 | 814.1 |
+| mono-1T | 0 | 1 | 1 | 3.573 | 0 | 3.573 | 214305 | 80 | 103.6 |
+| mono-1T | 0 | 1 | 7 | 18.469 | 0 | 18.469 | 211220 | 108.7 | 111 |
+| mono-1T | 0 | 1 | 28 | 101.814 | 0 | 101.814 | 214830 | 224.4 | 113 |
+| mono-MT | 0 | 2 | 1 | 3.584 | 0.88 | 4.468 | 171377 | 212.7 | 113.2 |
+| mono-MT | 0 | 2 | 7 | 10.398 | 4.576 | 14.967 | 260641 | 829.8 | 198 |
+| mono-MT | 0 | 2 | 28 | 71.465 | 31.391 | 102.856 | 212653 | 3419.9 | 213.7 |
+| mono-MT | 0 | 4 | 1 | 3.451 | 0.929 | 4.365 | 175421 | 195.4 | 112.8 |
+| mono-MT | 0 | 4 | 7 | 7.508 | 4.398 | 11.842 | 329422 | 844.3 | 328.1 |
+| mono-MT | 0 | 4 | 28 | 54.065 | 32.561 | 85.895 | 254644 | 3605.4 | 367.5 |
+| mono-MT | 0 | 8 | 1 | 3.448 | 1.017 | 4.463 | 171569 | 231.8 | 115 |
+| mono-MT | 0 | 8 | 7 | 7.204 | 4.387 | 11.591 | 336556 | 894.4 | 405.7 |
+| mono-MT | 0 | 8 | 28 | 43.315 | 32.447 | 76.263 | 286806 | 3789.5 | 452.3 |
 
 Caveats: laptop thermals (no fan control), median-of-3, N=16 on 8 cores is a deliberate oversubscription point, merge phase reported separately; mono-MT uses a std::thread atomic-counter pool (dynamic load balancing, slightly fairer than PUSH/PULL round-robin).
 
@@ -106,3 +106,53 @@ Caveats: laptop thermals (no fan control), median-of-3, N=16 on 8 cores is a del
   and spliced in. The monolith block finished before any rebuild and the MAS
   28-day block ran after the binaries were restored; neither was affected. The
   superseded file is kept as `bench/results.csv.contaminated`.
+
+### merge_all: measured end to end (2026-08-11, branch `perf/merge-set-based`)
+
+The table above is this branch's sweep. The comparison is against `main`'s, which
+is the same harness and the same binaries but for `merge_all`.
+
+**Validity gate first.** `mono-1T` writes straight to the destination and has no
+merge phase, so `merge_all` cannot reach it: 101.0 s → 101.8 s, **+0.8%**. Had it
+moved, something other than the change under test did, and none of the rest would
+be worth quoting.
+
+28-day medians:
+
+| arch | merge before | merge after | total before | total after | vs `mono-1T` |
+|---|---:|---:|---:|---:|---:|
+| mono-1T | — | — | 101.0 | 101.8 | 1.00x |
+| mono-MT T=8 | 67.8 | 32.4 | 99.4 | 76.3 | 1.34x |
+| mas N=8 | 62.8 | 25.5 | 92.6 | 58.1 | 1.75x |
+| mas N=16 | 64.0 | 25.4 | 91.2 | **55.4** | **1.84x** |
+
+**The scaling wall moved: 1.11x → 1.84x** against the sequential baseline.
+
+Three things the projections got wrong, recorded because they were written down
+before the measurement:
+
+- **2.89x on the merge was the best case, not the case.** That A/B merged 8
+  sources in isolation. In the sweep the merge improves ~2.1x consistently
+  (mono-MT 2.09-2.25x, MAS 2.15-2.52x). Extrapolating the most favourable
+  configuration to all of them was the error.
+- **`mas N=1` gains nothing, by construction.** `merge_all` returns to
+  `merge_from` for a single source, so its 0.92x is the same code path measured
+  twice, not a regression.
+- **The architectures do not converge.** A projection assuming a flat 22.8 s
+  merge everywhere put mono-MT T=8 and MAS N=16 within ~4 s. Measured, the gap is
+  20.9 s, because MAS's merge benefits more (25.4 s) than mono-MT's (32.4 s).
+
+**1.84x is a lower bound.** `clean_s` came out higher on this branch than on
+`main` for every parallel configuration (+7% to +34%, unevenly). `merge_all` does
+not touch the clean phase, and MAS `clean_s` is documented above as including
+worker spawn, ZMQ connect and the registration wait — a jittery component. So the
+new totals carry inflated clean time; with clean at `main`'s levels the ratio
+would be higher, not lower. The inflation is unexplained and is the reason the
+figure is presented as a floor.
+
+**Measurement caveat.** The first attempt at this sweep was killed by SIGTERM at
+65 of 81 rows, mid-MAS. The monolith block had completed and no binary changed
+during it, so those 36 rows were kept and the MAS block was re-run through the
+same harness (`run_bench.sh --only mas`). The two blocks therefore come from
+different sessions on the same machine — the same limitation already noted for
+the 30 re-measured rows in the previous sweep.
