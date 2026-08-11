@@ -1,6 +1,7 @@
 #include "mas/domain/Pipeline.hpp"
 #include "mas/store/EventStore.hpp"
 #include "mas/store/DuckDbEventStore.hpp"
+#include "mas/store/CsvRawReader.hpp"
 #include <gtest/gtest.h>
 #include <cstdio>
 #include <fstream>
@@ -9,6 +10,19 @@
 #include <vector>
 
 namespace {
+
+// The reader now validates the header, so fixtures must carry the real AROL
+// column names instead of 108 placeholder "c" columns. Built from the reader's
+// own expected_header() so the two can never drift apart.
+std::string realHeader() {
+    const auto cols = mas::CsvRawReader::expected_header();
+    std::string h;
+    for (std::size_t i = 0; i < cols.size(); ++i) {
+        if (i) h += ",";
+        h += cols[i];
+    }
+    return h;
+}
 
 void writeFile(const std::string& path, const std::string& body) {
     std::ofstream o(path);
@@ -38,8 +52,7 @@ size_t countDataLines(const std::string& path) {
 
 TEST(Pipeline, CleanFileEmitsOneEventPerIncrement) {
     const std::string in = "pipe_in.csv", out = "pipe_out.csv";
-    std::string header = "timestamp";
-    for (int i = 0; i < 108; ++i) header += ",c";
+    std::string header = realHeader();
 
     std::ostringstream body;
     body << header << "\n";
@@ -65,8 +78,7 @@ TEST(Pipeline, CleanFileReturnsMinusOneOnMissingInput) {
 
 TEST(Pipeline, CleanFileReturnsMinusTwoOnUnwritableOutput) {
     const std::string in = "pipe_in_unwritable.csv";
-    std::string header = "timestamp";
-    for (int i = 0; i < 108; ++i) header += ",c";
+    std::string header = realHeader();
     std::ostringstream body;
     body << header << "\n" << rawLine("t0", 100) << "\n" << rawLine("t1", 101) << "\n";
     writeFile(in, body.str());
@@ -84,8 +96,7 @@ struct FakeEventStore : mas::IEventStore {
 
 TEST(Pipeline, CleanFileWritesEventsToInjectedStore) {
     const std::string in = "pipe_in_seam.csv";
-    std::string header = "timestamp";
-    for (int i = 0; i < 108; ++i) header += ",c";
+    std::string header = realHeader();
     std::ostringstream body;
     body << header << "\n";
     body << rawLine("t0", 100) << "\n";   // seed
@@ -114,8 +125,7 @@ TEST(Pipeline, CleanFileIntoDuckDbTwiceIsIdempotent) {
     std::remove(db.c_str());
     std::remove((db + ".wal").c_str());
 
-    std::string header = "timestamp";
-    for (int i = 0; i < 108; ++i) header += ",c";
+    std::string header = realHeader();
     std::ostringstream body;
     body << header << "\n";
     body << rawLine("2026-02-01T00:00:00.000", 100) << "\n";   // seed

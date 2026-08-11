@@ -6,6 +6,19 @@
 
 namespace {
 
+// The reader now validates the header, so fixtures must carry the real AROL
+// column names instead of 108 placeholder "c" columns. Built from the reader's
+// own expected_header() so the two can never drift apart.
+std::string realHeader() {
+    const auto cols = mas::CsvRawReader::expected_header();
+    std::string h;
+    for (std::size_t i = 0; i < cols.size(); ++i) {
+        if (i) h += ",";
+        h += cols[i];
+    }
+    return h;
+}
+
 void writeFile(const std::string& path, const std::string& body) {
     std::ofstream o(path);
     o << body;
@@ -21,10 +34,7 @@ std::string fullRow(const std::string& ts, const std::string& badField = "") {
 }
 
 TEST(CsvRawReader, ParsesTimestampAndPerHeadColumns) {
-    std::string header = "timestamp";
-    for (int i = 0; i < 36; ++i) header += ",H Count";
-    for (int i = 0; i < 36; ++i) header += ",H AppTorque";
-    for (int i = 0; i < 36; ++i) header += ",H Status";
+    std::string header = realHeader();
 
     std::string row = "2026-02-01T10:00:00.000";
     for (int i = 0; i < 36; ++i) row += (i == 0) ? ",100.0" : ",0.0";   // counts
@@ -47,8 +57,7 @@ TEST(CsvRawReader, ParsesTimestampAndPerHeadColumns) {
 }
 
 TEST(CsvRawReader, SkipsMalformedAndShortRows) {
-    std::string header = "timestamp";
-    for (int i = 0; i < 108; ++i) header += ",c";
+    std::string header = realHeader();
     const std::string body = header + "\n"
         + "t-short,1.0,2.0\n"                    // too few fields
         + fullRow("t-bad", "abc") + "\n"         // malformed numeric cell
@@ -71,6 +80,48 @@ TEST(CsvRawReader, MissingFileNotOpenAndNextFalse) {
     mas::RawRow r;
     EXPECT_FALSE(reader.next(r));
     EXPECT_EQ(reader.skipped(), 0u);
+}
+
+
+TEST(CsvRawReader, RejectsAHeaderThatIsNotTheArolLayout) {
+    // A pool delivered with a different column order used to be parsed as if it
+    // were this one — the header was read and discarded — so Count columns would
+    // be read as torques with nothing downstream able to notice.
+    const std::string path = "t_raw_bad_header.csv";
+    writeFile(path, "timestamp,nope,alsonope\n2026-02-01T00:00:00.000,1,2\n");
+    mas::CsvRawReader r(path);
+    EXPECT_FALSE(r.is_open());
+    EXPECT_NE(r.header_error().find("3 columns, expected 109"), std::string::npos)
+        << "error was: " << r.header_error();
+    mas::RawRow row;
+    EXPECT_FALSE(r.next(row));
+    std::remove(path.c_str());
+}
+
+TEST(CsvRawReader, RejectsRightColumnCountWithWrongNames) {
+    // The dangerous case: 109 columns, so any shape-only check passes, but the
+    // layout is the brief's slide-4 interleaved order rather than the grouped
+    // one actually delivered. Counts would be read as torques at full speed.
+    const std::string path = "t_raw_swapped_header.csv";
+    auto cols = mas::CsvRawReader::expected_header();
+    std::swap(cols[1], cols[37]);   // "H01 Count" <-> "H01 AppTorque"
+    std::string h;
+    for (std::size_t i = 0; i < cols.size(); ++i) { if (i) h += ","; h += cols[i]; }
+    writeFile(path, h + "\n");
+    mas::CsvRawReader r(path);
+    EXPECT_FALSE(r.is_open());
+    EXPECT_NE(r.header_error().find("column 1"), std::string::npos)
+        << "error was: " << r.header_error();
+    std::remove(path.c_str());
+}
+
+TEST(CsvRawReader, AcceptsTheRealArolHeader) {
+    const std::string path = "t_raw_good_header.csv";
+    writeFile(path, realHeader() + "\n");
+    mas::CsvRawReader r(path);
+    EXPECT_TRUE(r.is_open());
+    EXPECT_TRUE(r.header_error().empty()) << r.header_error();
+    std::remove(path.c_str());
 }
 
 } // namespace
