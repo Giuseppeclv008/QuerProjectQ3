@@ -75,6 +75,7 @@ add_library(mas_core
   core/src/store/CsvRawReader.cpp
   core/src/store/CsvEventStore.cpp
   core/src/store/DuckDbEventStore.cpp
+  core/src/store/ParquetEventStore.cpp
   core/src/domain/Pipeline.cpp
   core/src/agent/Message.cpp
   core/src/agent/CleaningWorker.cpp
@@ -114,6 +115,7 @@ add_executable(unit_tests
   tests/test_pipeline.cpp
   tests/test_duckdb_smoke.cpp
   tests/test_duckdb_event_store.cpp
+  tests/test_parquet_event_store.cpp
   tests/test_zmq_smoke.cpp
   tests/test_message.cpp
   tests/test_zmq_transport.cpp
