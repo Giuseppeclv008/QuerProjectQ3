@@ -14,7 +14,11 @@ import numpy as np
 import pandas as pd
 
 NUM_HEADS = 36
-FAULT_CODES = {65.0}   # matches oracle.py exactly -- see the note in extract()
+# Bit 0 of the AROL status bitmask, matching oracle.is_reject and
+# mas::is_reject. This file was written while oracle.py still tested
+# `status in {65.0}`; that rule was corrected and this one was not, so
+# status 9 (No InTorque) read as clean here. The merge that brought the
+# corrected oracle onto this branch is what surfaced it.
 
 EXPECTED_HEADER = (
     ["timestamp"]
@@ -83,12 +87,11 @@ def extract(path):
     is_reset = d < 0
     out_delta = np.where(is_reset, 0, d)
 
-    # oracle.py tests `status in FAULT_CODES` (i.e. == 65.0), NOT the C++
-    # is_reject() bitmask. This mirrors oracle.py so the differential test is
-    # exact; the C++ tuple is not the comparison target here.
+    # `% 2 != 0`, not `== 1`: Python floors and C++ truncates, so a negative
+    # status gives 1 here and -1 there. Comparing against zero agrees in both.
     return [
         (int(heads[k]) + 1, ts[rows[k] + 1], int(cur[k]), float(tq[k]), float(st[k]),
-         int(out_delta[k]), bool(st[k] in FAULT_CODES), bool(out_delta[k] > 1),
+         int(out_delta[k]), bool(int(st[k]) % 2 != 0), bool(out_delta[k] > 1),
          bool(is_reset[k]))
         for k in range(rows.size)
     ]

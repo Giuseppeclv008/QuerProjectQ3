@@ -180,3 +180,48 @@ during it, so those 36 rows were kept and the MAS block was re-run through the
 same harness (`run_bench.sh --only mas`). The two blocks therefore come from
 different sessions on the same machine — the same limitation already noted for
 the 30 re-measured rows in the previous sweep.
+
+### What the CUDA speedup is worth end to end (Amdahl, measured)
+
+The clean-phase numbers are large and the end-to-end number is not, and the gap
+between them is the finding.
+
+28-day medians on the Windows target box (RTX 4070 Laptop, CUDA 13.3):
+
+| arch | clean 28d | vs CUDA |
+|---|---:|---:|
+| **cuda** | **1.82 s** | — |
+| cpp-MT (8 threads) | 7.68 s | 4.2x |
+| cpp-1T | 46.77 s | 25.7x |
+| py-numpy | 91.00 s | 50x |
+
+`mono-1T` end to end is **230.45 s** against 46.51 s of clean, so persistence
+costs **183.9 s — 79.8% of wall-clock**. Substituting a faster clean leaves that
+untouched:
+
+| | clean + store | e2e vs mono-1T |
+|---|---:|---:|
+| cpp-1T | 46.8 + 183.9 = 230.7 s | 1.00x |
+| cpp-MT 8T | 7.7 + 183.9 = 191.6 s | 1.20x |
+| cuda | 1.8 + 183.9 = 185.8 s | **1.24x** |
+
+**CUDA against the 8-thread C++ already in the project: 4.2x on the clean phase
+becomes 1.03x end to end.** Three percent.
+
+This is Amdahl applied honestly. Speeding a phase that is ~20% of the total by
+25x yields at most 1.25x, and 1.24x is what the sweep measures. The stage
+breakdown says the same thing from inside: of CUDA's 1.82 s, **1.17 s is disk
+read and ~0.29 s is GPU compute**. The kernel stopped being the bottleneck
+before the pipeline did.
+
+**The defensible claim is not "the GPU makes cleaning faster" — it is that
+cleaning has stopped being the problem.** Three independent paths were measured
+— multithreaded CPU, distributed MAS, GPU — and all three land on the same
+place: the cost is persistence, not transformation. `merge_all` attacked it from
+one side (the merge phase, 1.11x to 1.84x); CUDA proved it from the other, by
+driving compute to 0.29 s and moving the total only to 1.24x.
+
+That is a stronger result than a factor of four, because it says where to work
+next instead of celebrating a number. It also settles the question the kernel
+was written to answer: **how much headroom was left in the clean phase? Almost
+none, and it is now measured rather than assumed.**
