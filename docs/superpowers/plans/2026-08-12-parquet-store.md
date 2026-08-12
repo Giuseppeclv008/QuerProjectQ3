@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- **DuckDB stays the default.** `--format` defaults to `duckdb`; every existing command must behave exactly as it does today when the flag is absent. 102 C++ tests and 236 Python tests stay green throughout.
+- **DuckDB stays the default.** `--format` defaults to `duckdb`; every existing command must behave exactly as it does today when the flag is absent. 85 C++ tests and 230 Python tests stay green throughout (225 pass, 5 skip without the rebuilt store).
 - **No tool changes.** The eight files in `python/analytics/tools/` contain 15 occurrences of `FROM cap_events` and none may be edited. That property is what makes the comparison honest: same SQL, two backends.
 - **The benchmark must be able to say Parquet loses.** Spec §9.5. A comparison with one possible outcome is not a comparison.
 - Event schema is unchanged: `machine_id, head_id, ts, cap_seq, app_torque, status, delta, is_fault, aggregated, is_reset`. Ten columns, same order, same types as `DuckDbEventStore`'s table.
@@ -90,7 +90,7 @@ comment from the anonymous namespace, and add to the includes:
 - [ ] **Step 3: Build and run the suite**
 
 Run: `cmake --build build --parallel && ./build/unit_tests 2>&1 | tail -3`
-Expected: `[  PASSED  ] 102 tests.` — pure move, no behaviour change. The existing
+Expected: `[  PASSED  ] 85 tests.` — pure move, no behaviour change. The existing
 `DuckDbEventStore.PathContainingASingleQuoteWorks` test proves the move was clean.
 
 - [ ] **Step 4: Commit**
@@ -419,7 +419,7 @@ Expected: PASS, 5 tests.
 - [ ] **Step 6: Confirm nothing regressed**
 
 Run: `./build/unit_tests 2>&1 | tail -3`
-Expected: `[  PASSED  ] 107 tests.` (102 + 5)
+Expected: `[  PASSED  ] 90 tests.` (85 + 5)
 
 - [ ] **Step 7: Commit**
 
@@ -571,28 +571,135 @@ and skip the merge entirely under `parquet` — there is nothing to merge:
             }
 ```
 
-- [ ] **Step 4: `worker_main.cpp`**
+- [ ] **Step 4: Extract `BeatingStore` so the parquet path can keep its heartbeat**
 
-Parse the flag, and construct the store inside the clean callback rather than once:
+`CleaningWorker` wraps the injected store in a `BeatingStore` so a worker keeps
+beating while `clean_file` runs — the coordinator declares a worker dead after
+30 s of silence. A parquet lambda that builds its own store bypasses that
+decorator and reintroduces the silence the decorator exists to prevent.
+
+Move the class out of `CleaningWorker.cpp`'s anonymous namespace into
+`core/include/mas/store/BeatingStore.hpp`, verbatim apart from the namespace:
+
+```cpp
+#pragma once
+#include "mas/store/EventStore.hpp"
+#include <chrono>
+#include <functional>
+#include <span>
+#include <utility>
+
+namespace mas {
+
+// Beats while a file is being cleaned. Decorating the store rather than
+// spawning a thread is deliberate: ZeroMQ sockets are not thread-safe, so
+// beating from a second thread on the same PUSH socket would be a data race.
+// clean_file() writes every 8,192 events, which on a real day-file is roughly
+// every 30 ms.
+class BeatingStore : public IEventStore {
+public:
+    BeatingStore(IEventStore& inner, std::function<void()> beat,
+                 std::chrono::milliseconds every)
+        : inner_(inner), beat_(std::move(beat)), every_(every),
+          last_(std::chrono::steady_clock::now()) {}
+
+    void write(std::span<const CapEvent> events) override {
+        inner_.write(events);
+        const auto now = std::chrono::steady_clock::now();
+        if (now - last_ >= every_) {
+            last_ = now;
+            beat_();
+        }
+    }
+
+private:
+    IEventStore& inner_;
+    std::function<void()> beat_;
+    std::chrono::milliseconds every_;
+    std::chrono::steady_clock::time_point last_;
+};
+
+} // namespace mas
+```
+
+In `core/src/agent/CleaningWorker.cpp`, delete the class from the anonymous
+namespace and `#include "mas/store/BeatingStore.hpp"` instead.
+
+- [ ] **Step 5: Give `CleanFn` the beat callback**
+
+In `core/include/mas/agent/CleaningWorker.hpp`:
+
+```cpp
+    // The beat callback is passed so a clean_fn that supplies its own store --
+    // the parquet path does -- can decorate it too. Without it that path is
+    // silent for the whole file and the coordinator tombstones a live worker.
+    using CleanFn = std::function<long long(const std::string&, IEventStore&,
+                                            const std::function<void()>&)>;
+```
+
+In `CleaningWorker.cpp`, pass it:
+
+```cpp
+        BeatingStore beating(store_, [this] { beat(); }, kBeatEvery);
+        const long long events = clean_fn_(item->in_path, beating,
+                                           [this] { beat(); });
+```
+
+Update every existing `CleanFn` lambda in `tests/test_cleaning_worker.cpp` to
+take the third parameter and ignore it, e.g.
+`[&](const std::string& p, mas::IEventStore& s, const std::function<void()>&) { ... }`.
+
+- [ ] **Step 6: `worker_main.cpp`**
+
+Parse the flag as in Step 2, then:
 
 ```cpp
         mas::CleaningWorker worker(work, results, heartbeats, store, worker_id,
-            [&](const std::string& path, mas::IEventStore& s) {
+            [&](const std::string& path, mas::IEventStore& s,
+                const std::function<void()>& beat) {
                 if (!parquet) return mas::clean_file(path, s);
                 mas::ParquetEventStore pq(mas::parquet_path_for(out, path), machine);
-                const long long n = mas::clean_file(path, pq);
+                // Same decorator the worker applies to its injected store, so
+                // the parquet path is not silent for the length of a file.
+                mas::BeatingStore beating(pq, beat, mas::CleaningWorker::kBeatEvery);
+                const long long n = mas::clean_file(path, beating);
                 pq.close();
                 return n;
             });
 ```
 
-Note the injected `s` is deliberately unused on the parquet path: the worker's
-heartbeat decorator wraps it, so under `--format parquet` the in-progress
-heartbeat is lost. Accept it for now and record it — the benchmark runs
-`mono`, not the MAS, and fixing it means threading the decorator through
-`ParquetEventStore` too.
+- [ ] **Step 7: Prove the heartbeat survives the parquet path**
 
-- [ ] **Step 5: Verify by hand on one real day-file**
+Add to `tests/test_cleaning_worker.cpp`:
+
+```cpp
+TEST(CleaningWorker, CleanFnReceivesABeatCallbackItCanUse) {
+    // The parquet path supplies its own store, so it must be handed the beat
+    // to decorate it with. If CleanFn stops carrying one, that path goes
+    // silent for a whole file and the coordinator tombstones a live worker.
+    FakeSource work;
+    FakeSink results, hbs;
+    NullStore store;
+    work.queue.push_back(mas::encode(mas::WorkItem{"d1.csv"}));
+    int beats_from_fn = 0;
+    mas::CleaningWorker w(work, results, hbs, store, "w1",
+        [&](const std::string&, mas::IEventStore&,
+            const std::function<void()>& beat) {
+            beat();
+            ++beats_from_fn;
+            return 5LL;
+        });
+    w.run();
+    EXPECT_EQ(beats_from_fn, 1);
+    EXPECT_GE(hbs.sent.size(), 3u);   // hello + the fn's beat + post-result
+}
+```
+
+Match `FakeSource`, `FakeSink` and `NullStore` to whatever the file already
+uses — read the top of `tests/test_cleaning_worker.cpp` first and reuse its
+existing fixtures rather than adding new ones.
+
+- [ ] **Step 8: Verify by hand on one real day-file**
 
 Run:
 ```bash
@@ -606,17 +713,19 @@ print(duckdb.sql(\"SELECT COUNT(*) FROM read_parquet('/tmp/pq/*.parquet')\").fet
 Expected: `765711` — the same count `clean` produces into DuckDB, and the same
 `oracle.py` reports.
 
-- [ ] **Step 6: Confirm the default path is untouched**
+- [ ] **Step 9: Confirm the default path is untouched**
 
 Run: `./build/unit_tests 2>&1 | tail -3`
-Expected: `[  PASSED  ] 107 tests.`
+Expected: `[  PASSED  ] 90 tests.`
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
 git add core/src/apps/clean_main.cpp core/src/apps/monolith_main.cpp \
         core/src/apps/worker_main.cpp core/include/mas/store/ParquetEventStore.hpp \
-        core/src/store/ParquetEventStore.cpp
+        core/src/store/ParquetEventStore.cpp core/include/mas/store/BeatingStore.hpp \
+        core/include/mas/agent/CleaningWorker.hpp core/src/agent/CleaningWorker.cpp \
+        tests/test_cleaning_worker.cpp
 git commit -m "feat(apps): --format parquet, one store per input file
 
 The store is constructed inside the loop rather than once per run: write()
@@ -785,7 +894,7 @@ Run:
 git diff --name-only python/analytics/tools/ | wc -l   # must print 0
 cd python && ../.venv/bin/python -m pytest -q 2>&1 | tail -2
 ```
-Expected: `0`, then `245 passed, 5 skipped` (236 + 9).
+Expected: `0`, then `234 passed, 5 skipped` (225 + 9).
 
 - [ ] **Step 7: Commit**
 
@@ -992,7 +1101,7 @@ Run:
 ./build/unit_tests 2>&1 | tail -3
 cd python && ../.venv/bin/python -m pytest -q 2>&1 | tail -2
 ```
-Expected: `[  PASSED  ] 107 tests.` and `245 passed, 5 skipped`.
+Expected: `[  PASSED  ] 90 tests.` and `234 passed, 5 skipped`.
 
 - [ ] **Step 7: Commit**
 
@@ -1011,9 +1120,9 @@ git commit -m "bench: what the Parquet backend costs on write and on read"
 creation, empty file), Task 4 (empty directory). §6 T1–T5 → Task 2; T6 → Task 4.
 §7 write and read → Task 5, run in Task 6. §9 success criteria → Tasks 2, 4, 5, 6.
 
-**Known gap, recorded rather than hidden.** Task 3 Step 4 loses the in-progress
-heartbeat on the MAS parquet path, because `CleaningWorker` wraps the injected
-store and the parquet path constructs its own. The benchmark uses `mono`, so it
-does not bite, and fixing it means threading the decorator into
-`ParquetEventStore`. Left undone deliberately; if the MAS ever runs with
-`--format parquet` against a live coordinator, this must be fixed first.
+**Resolved before execution.** An earlier draft of Task 3 let the MAS parquet
+path lose its in-progress heartbeat, on the grounds that the benchmark uses
+`mono`. That was the wrong trade: a path that tombstones live workers after 30 s
+is one somebody uses by accident, and "it is documented" has never stopped
+anyone. Steps 4-7 extract `BeatingStore` into a header and give `CleanFn` the
+beat callback, so the parquet path decorates its own store the same way.
