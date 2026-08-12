@@ -119,8 +119,11 @@ int main(int argc, char** argv) {
             const auto tm = std::chrono::steady_clock::now();
             {
                 mas::DuckDbEventStore store(out, machine);
+                std::vector<std::string> sources;
+                sources.reserve(static_cast<std::size_t>(threads));
                 for (int t = 0; t < threads; ++t)
-                    store.merge_from(thread_store(out, t));
+                    sources.push_back(thread_store(out, t));
+                store.merge_all(sources);
                 rows = store.count();
             }   // close the destination before deleting its sources
             // The per-thread stores used to survive the run. Since the store

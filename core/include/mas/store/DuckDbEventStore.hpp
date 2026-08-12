@@ -2,11 +2,12 @@
 #include "mas/store/EventStore.hpp"
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace mas {
 
 // DuckDB-backed cap_events store (spec §6 schema + is_reset column).
-// Idempotent: UNIQUE(machine_id, head_id, cap_seq) + INSERT OR IGNORE,
+// Idempotent: UNIQUE(machine_id, head_id, ts) + INSERT OR IGNORE,
 // so reprocessing any day-file is safe (spec §10). Single-writer only
 // (multi-process concurrency is spec §14 Q4, a later plan).
 class DuckDbEventStore : public IEventStore {
@@ -29,6 +30,25 @@ public:
     // Precondition: the source store must be closed/checkpointed before the
     // call — ATTACH READ_ONLY may not see another connection's unflushed WAL.
     void merge_from(const std::string& other_db_path);
+
+    // Merge many source stores in one statement.
+    //
+    // merge_from() called N times does N sequential INSERT OR IGNORE passes,
+    // each probing the UNIQUE index once per row against a destination that
+    // keeps growing. At month scale that is ~22M index probes to find, almost
+    // always, nothing: day-files are contiguous and non-overlapping, so two
+    // different files cannot produce the same (machine_id, head_id, ts) and the
+    // sources are disjoint by construction.
+    //
+    // Almost always, not always: a worker declared dead while still working has
+    // its file re-dispatched, so the same file can land in two stores. Those
+    // rows are byte-identical (same input, same extraction), so one hash-based
+    // DISTINCT over the union settles it in a single pass instead of per-row.
+    //
+    // Same preconditions as merge_from: every source must be closed and
+    // checkpointed. Falls back to repeated merge_from when the destination
+    // already holds rows, which the bulk path is not designed for.
+    void merge_all(const std::vector<std::string>& other_db_paths);
 
 private:
     struct Impl;

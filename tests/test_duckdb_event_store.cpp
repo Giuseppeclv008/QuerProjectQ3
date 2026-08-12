@@ -344,4 +344,106 @@ TEST(DuckDbEventStore, PathContainingASingleQuoteWorks) {
     removeDb(src); removeDb(dst); std::remove(pq.c_str());
 }
 
+
+// --- merge_all: one set-based pass instead of N index-probing passes ---
+
+TEST(DuckDbEventStore, MergeAllUnionsDisjointSources) {
+    const std::string a = "t_ma_a.duckdb", b = "t_ma_b.duckdb", dst = "t_ma_dst.duckdb";
+    removeDb(a); removeDb(b); removeDb(dst);
+    {
+        mas::DuckDbEventStore sa(a, "MCC1");
+        std::vector<mas::CapEvent> ba = {ev(1, tsAtSecond(1), 101), ev(1, tsAtSecond(2), 102)};
+        sa.write(ba);
+        mas::DuckDbEventStore sb(b, "MCC1");
+        std::vector<mas::CapEvent> bb = {ev(2, tsAtSecond(3), 55), ev(2, tsAtSecond(4), 56)};
+        sb.write(bb);
+    }
+    mas::DuckDbEventStore d(dst, "MCC1");
+    d.merge_all({a, b});
+    EXPECT_EQ(d.count(), 4);
+    removeDb(a); removeDb(b); removeDb(dst);
+}
+
+TEST(DuckDbEventStore, MergeAllCollapsesARedispatchedFile) {
+    // A worker declared dead while still working has its file re-dispatched, so
+    // the same events land in two stores. They agree in every column.
+    const std::string a = "t_ma_dup_a.duckdb", b = "t_ma_dup_b.duckdb",
+                      dst = "t_ma_dup_dst.duckdb";
+    removeDb(a); removeDb(b); removeDb(dst);
+    std::vector<mas::CapEvent> same = {ev(1, tsAtSecond(1), 101), ev(1, tsAtSecond(2), 102)};
+    {
+        mas::DuckDbEventStore sa(a, "MCC1"); sa.write(same);
+        mas::DuckDbEventStore sb(b, "MCC1"); sb.write(same);
+    }
+    mas::DuckDbEventStore d(dst, "MCC1");
+    d.merge_all({a, b});
+    EXPECT_EQ(d.count(), 2);
+    removeDb(a); removeDb(b); removeDb(dst);
+}
+
+TEST(DuckDbEventStore, MergeAllAgreesWithRepeatedMergeFrom) {
+    // The differential that makes the optimisation safe to adopt: same sources,
+    // same rows, whichever path ran.
+    const std::string a = "t_ma_eq_a.duckdb", b = "t_ma_eq_b.duckdb",
+                      c = "t_ma_eq_c.duckdb";
+    const std::string d1 = "t_ma_eq_d1.duckdb", d2 = "t_ma_eq_d2.duckdb";
+    for (const auto& p : {a, b, c, d1, d2}) removeDb(p);
+    {
+        mas::DuckDbEventStore sa(a, "MCC1");
+        std::vector<mas::CapEvent> ba = {ev(1, tsAtSecond(1), 1), ev(1, tsAtSecond(2), 2)};
+        sa.write(ba);
+        mas::DuckDbEventStore sb(b, "MCC1");
+        std::vector<mas::CapEvent> bb = {ev(1, tsAtSecond(2), 2),   // overlaps a
+                                         ev(2, tsAtSecond(3), 3)};
+        sb.write(bb);
+        mas::DuckDbEventStore sc(c, "MCC1");
+        std::vector<mas::CapEvent> bc = {ev(3, tsAtSecond(4), 4)};
+        sc.write(bc);
+    }
+    long long via_all = 0, via_each = 0;
+    { mas::DuckDbEventStore d(d1, "MCC1"); d.merge_all({a, b, c}); via_all = d.count(); }
+    { mas::DuckDbEventStore d(d2, "MCC1");
+      d.merge_from(a); d.merge_from(b); d.merge_from(c); via_each = d.count(); }
+    EXPECT_EQ(via_all, via_each);
+    EXPECT_EQ(via_all, 4);
+
+    for (const auto& p : {a, b, c, d1, d2}) removeDb(p);
+}
+
+TEST(DuckDbEventStore, MergeAllFallsBackWhenDestinationIsNotEmpty) {
+    const std::string a = "t_ma_fb_a.duckdb", dst = "t_ma_fb_dst.duckdb";
+    removeDb(a); removeDb(dst);
+    {
+        mas::DuckDbEventStore sa(a, "MCC1");
+        std::vector<mas::CapEvent> ba = {ev(1, tsAtSecond(5), 5)};
+        sa.write(ba);
+    }
+    mas::DuckDbEventStore d(dst, "MCC1");
+    std::vector<mas::CapEvent> pre = {ev(1, tsAtSecond(1), 1)};
+    d.write(pre);                       // destination already holds a row
+    d.merge_all({a, a});                // same source twice: must still dedupe
+    EXPECT_EQ(d.count(), 2);
+    removeDb(a); removeDb(dst);
+}
+
+TEST(DuckDbEventStore, MergeAllIsIdempotentOnRerun) {
+    const std::string a = "t_ma_idem_a.duckdb", b = "t_ma_idem_b.duckdb",
+                      dst = "t_ma_idem_dst.duckdb";
+    removeDb(a); removeDb(b); removeDb(dst);
+    {
+        mas::DuckDbEventStore sa(a, "MCC1");
+        std::vector<mas::CapEvent> ba = {ev(1, tsAtSecond(1), 1)};
+        sa.write(ba);
+        mas::DuckDbEventStore sb(b, "MCC1");
+        std::vector<mas::CapEvent> bb = {ev(2, tsAtSecond(2), 2)};
+        sb.write(bb);
+    }
+    mas::DuckDbEventStore d(dst, "MCC1");
+    d.merge_all({a, b});
+    EXPECT_EQ(d.count(), 2);
+    d.merge_all({a, b});                // second run takes the fallback path
+    EXPECT_EQ(d.count(), 2);            // spec §10 idempotency still holds
+    removeDb(a); removeDb(b); removeDb(dst);
+}
+
 } // namespace

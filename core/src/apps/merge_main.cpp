@@ -1,6 +1,8 @@
 #include "mas/store/DuckDbEventStore.hpp"
 #include <exception>
 #include <iostream>
+#include <string>
+#include <vector>
 
 int main(int argc, char** argv) {
     if (argc < 4) {
@@ -12,16 +14,33 @@ int main(int argc, char** argv) {
     try {
         mas::DuckDbEventStore dst(argv[1], argv[2]);
         int merged = 0, skipped = 0;
-        for (int i = 3; i < argc; ++i) {
-            // A crashed worker's store may be unreadable; the resilience
-            // design writes it off (its items were re-dispatched), so a
-            // failed source is skipped loudly instead of aborting the merge.
-            try {
-                dst.merge_from(argv[i]);
-                ++merged;
-            } catch (const std::exception& e) {
-                std::cerr << "skip " << argv[i] << ": " << e.what() << "\n";
-                ++skipped;
+
+        std::vector<std::string> sources(argv + 3, argv + argc);
+
+        // Fast path first: merge_all does one set-based pass over every source
+        // instead of N INSERT OR IGNORE passes each probing the UNIQUE index
+        // per row. It is a single statement, so an unreadable source aborts the
+        // whole thing without inserting anything — which would throw away the
+        // resilience guarantee that a crashed worker's store is skipped, not
+        // fatal (its items were re-dispatched). Hence the fallback, which
+        // starts from the same empty destination the bulk path left behind.
+        //
+        // Probing each source first was the obvious alternative and is wrong:
+        // opening one through DuckDbEventStore writes to it.
+        try {
+            dst.merge_all(sources);
+            merged = static_cast<int>(sources.size());
+        } catch (const std::exception& e) {
+            std::cerr << "bulk merge failed (" << e.what()
+                      << "); retrying one source at a time\n";
+            for (const auto& src : sources) {
+                try {
+                    dst.merge_from(src);
+                    ++merged;
+                } catch (const std::exception& inner) {
+                    std::cerr << "skip " << src << ": " << inner.what() << "\n";
+                    ++skipped;
+                }
             }
         }
         std::cerr << "merged " << merged << " stores (" << skipped
