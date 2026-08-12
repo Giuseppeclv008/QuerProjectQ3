@@ -174,3 +174,135 @@ cheaper vehicle at like-for-like N on this box.
   2026-08-13. The 2.89× like-for-like merge comparison stands as measured — it
   alternated binaries within one session — and its effect is visible here as
   the 6.2× N=1-fallback delta above.
+- The two series are not a controlled comparison. Same machine and same
+  harness, but the disk was in a different state (2.6 GB freed before this run)
+  and it is a laptop without fan control. Shape — how it scales with N, where
+  the wall sits — is reliable; absolute seconds across the two runs are
+  indicative.
+- The 30 MAS rows at volumes 1 and 7 were re-measured separately: during the
+  first pass `build/` was rebuilt underneath the running sweep while preparing
+  `perf/merge-set-based`, so some of those runs may have exercised the
+  set-based merge. They were re-run through the same harness with the restored
+  binaries (`run_bench.sh --only mas --volumes "1 7"`, added for this purpose)
+  and spliced in. The monolith block finished before any rebuild and the MAS
+  28-day block ran after the binaries were restored; neither was affected. The
+  superseded file is kept as `bench/results.csv.contaminated`.
+
+### merge_all: measured end to end (2026-08-11, branch `perf/merge-set-based`)
+
+The table above is this branch's sweep. The comparison is against `main`'s, which
+is the same harness and the same binaries but for `merge_all`.
+
+**Validity gate first.** `mono-1T` writes straight to the destination and has no
+merge phase, so `merge_all` cannot reach it: 101.0 s → 101.8 s, **+0.8%**. Had it
+moved, something other than the change under test did, and none of the rest would
+be worth quoting.
+
+28-day medians:
+
+| arch | merge before | merge after | total before | total after | vs `mono-1T` |
+|---|---:|---:|---:|---:|---:|
+| mono-1T | — | — | 101.0 | 101.8 | 1.00x |
+| mono-MT T=8 | 67.8 | 32.4 | 99.4 | 76.3 | 1.34x |
+| mas N=8 | 62.8 | 25.5 | 92.6 | 58.1 | 1.75x |
+| mas N=16 | 64.0 | 25.4 | 91.2 | **55.4** | **1.84x** |
+
+**The scaling wall moved: 1.11x → 1.84x** against the sequential baseline.
+
+Three things the projections got wrong, recorded because they were written down
+before the measurement:
+
+- **2.89x on the merge was the best case, not the case.** That A/B merged 8
+  sources in isolation. In the sweep the merge improves ~2.1x consistently
+  (mono-MT 2.09-2.25x, MAS 2.15-2.52x). Extrapolating the most favourable
+  configuration to all of them was the error.
+- **`mas N=1` gains nothing, by construction.** `merge_all` returns to
+  `merge_from` for a single source, so its 0.92x is the same code path measured
+  twice, not a regression.
+- **The architectures do not converge.** ~~A projection assuming a flat 22.8 s
+  merge everywhere put mono-MT T=8 and MAS N=16 within ~4 s. Measured, the gap is
+  20.9 s, because MAS's merge benefits more (25.4 s) than mono-MT's (32.4 s).~~
+  **[WITHDRAWN 2026-08-13 — see below.]** Interleaved on the same machine the gap
+  is −2.1 s and its sign flips round to round. Both this claim and the ~4 s
+  projection it corrected were reading noise.
+
+**~~1.84x is a lower bound.~~ Superseded 2026-08-13: it is a number with tens of
+percent of uncertainty.** The original reasoning ran: `clean_s` came out higher
+on this branch than on `main` for every parallel configuration (+7% to +34%,
+unevenly) and for none of mono-1T, `merge_all` cannot touch the clean phase, so
+the totals carry inflated clean time and the true ratio can only be higher.
+
+That inference does not hold, and an interleaved A/B says why. Four rounds of
+mono-1T, mono-MT T=8 and MAS N=16 over the same 28 day-files, one binary set,
+twenty minutes: mono-1T's `clean_s` spread 3% while mono-MT spread 21% and MAS
+53%, both climbing round on round. This is a `Mac14,2` — a MacBook Air M2, with
+**no fan**. A parallel configuration's `clean_s` here records when in the sweep it
+ran, not how fast it is, and the sign of the difference between two sweeps is set
+by run order rather than by the code under test. Nothing was inflated *by the
+branch*; the two sweeps sampled different points on a thermal curve.
+
+The same effect explains the 20.9 s gap withdrawn above. Per the measurement
+caveat below, mono-MT's rows come from the tail of a long hot run and MAS's from
+a fresh session after the SIGTERM — and mono-MT's recorded `clean_s` of 43.31 is
+correspondingly high against 33.9 interleaved, MAS's 29.27 correspondingly low
+against 38.8. The caveat was recorded; the conclusion was drawn across it anyway.
+
+Full measurement in [`docs/validation-log.md`](../validation-log.md), entry
+2026-08-13. What survives: every correctness result, `merge_all`'s 2.89x on its
+own benchmark, the structural finding that merge cost stopped growing with source
+count, and mono-1T's timings. What does not: any end-to-end ratio quoted to three
+significant figures, and any comparison between two parallel architectures
+measured in different sessions. Read the table below as shape, not as seconds,
+until the sweep is repeated on hardware with active cooling.
+
+**Measurement caveat.** The first attempt at this sweep was killed by SIGTERM at
+65 of 81 rows, mid-MAS. The monolith block had completed and no binary changed
+during it, so those 36 rows were kept and the MAS block was re-run through the
+same harness (`run_bench.sh --only mas`). The two blocks therefore come from
+different sessions on the same machine — the same limitation already noted for
+the 30 re-measured rows in the previous sweep.
+
+### What the CUDA speedup is worth end to end (Amdahl, measured)
+
+The clean-phase numbers are large and the end-to-end number is not, and the gap
+between them is the finding.
+
+28-day medians on the Windows target box (RTX 4070 Laptop, CUDA 13.3):
+
+| arch | clean 28d | vs CUDA |
+|---|---:|---:|
+| **cuda** | **1.82 s** | — |
+| cpp-MT (8 threads) | 7.68 s | 4.2x |
+| cpp-1T | 46.77 s | 25.7x |
+| py-numpy | 91.00 s | 50x |
+
+`mono-1T` end to end is **230.45 s** against 46.51 s of clean, so persistence
+costs **183.9 s — 79.8% of wall-clock**. Substituting a faster clean leaves that
+untouched:
+
+| | clean + store | e2e vs mono-1T |
+|---|---:|---:|
+| cpp-1T | 46.8 + 183.9 = 230.7 s | 1.00x |
+| cpp-MT 8T | 7.7 + 183.9 = 191.6 s | 1.20x |
+| cuda | 1.8 + 183.9 = 185.8 s | **1.24x** |
+
+**CUDA against the 8-thread C++ already in the project: 4.2x on the clean phase
+becomes 1.03x end to end.** Three percent.
+
+This is Amdahl applied honestly. Speeding a phase that is ~20% of the total by
+25x yields at most 1.25x, and 1.24x is what the sweep measures. The stage
+breakdown says the same thing from inside: of CUDA's 1.82 s, **1.17 s is disk
+read and ~0.29 s is GPU compute**. The kernel stopped being the bottleneck
+before the pipeline did.
+
+**The defensible claim is not "the GPU makes cleaning faster" — it is that
+cleaning has stopped being the problem.** Three independent paths were measured
+— multithreaded CPU, distributed MAS, GPU — and all three land on the same
+place: the cost is persistence, not transformation. `merge_all` attacked it from
+one side (the merge phase, 1.11x to 1.84x); CUDA proved it from the other, by
+driving compute to 0.29 s and moving the total only to 1.24x.
+
+That is a stronger result than a factor of four, because it says where to work
+next instead of celebrating a number. It also settles the question the kernel
+was written to answer: **how much headroom was left in the clean phase? Almost
+none, and it is now measured rather than assumed.**

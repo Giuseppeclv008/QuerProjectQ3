@@ -210,7 +210,7 @@ organized by layer.
 │           ├── bench_cpu_main.cpp          # → bench_cpu       (store-free contender)
 │           └── cuda_clean_main.cpp         # → mas_cuda_clean  (GPU contender, --verify)
 │
-├── tests/                                  # Google Test unit tests (14 files, 90 tests)
+├── tests/                                  # Google Test unit tests (15 files, 102 tests)
 │   ├── test_cap_event.cpp
 │   ├── test_cap_event_extractor.cpp
 │   ├── test_cap_event_extractor_flat.cpp   # The GPU precondition, proved against the stateful one
@@ -264,7 +264,7 @@ organized by layer.
 │           ├── render.py                   # The six mandated sections + tool-call trace
 │           ├── plots.py                    # Five matplotlib figures, driven only by ToolResults
 │           └── export.py                   # Self-contained HTML; best-effort PDF
-│   └── tests/                              # 229 tests incl. golden report + mocked-LLM agent
+│   └── tests/                              # 236 tests incl. golden report + mocked-LLM agent
 │
 ├── scripts/
 │   ├── arol                                # WP4 entry point: arol report kpi --period 2026-02
@@ -1209,14 +1209,14 @@ it, `--pdf` logs how to install it and writes Markdown and HTML as normal.
 
 ## Testing
 
-The project has **90 C++ unit tests** across 14 Google Test files, plus **229
+The project has **102 C++ unit tests** across 15 Google Test files, plus **236
 Python tests** for the analytics tier. Both counts are asserted by
 `python/tests/test_readme_counts.py`, so adding a test and forgetting this
 paragraph fails the suite rather than quietly dating it.
 
 ```bash
-cd build && ctest --output-on-failure           # 90 C++ tests
-cd python && ../.venv/bin/python -m pytest -q   # 229 Python tests
+cd build && ctest --output-on-failure           # 102 C++ tests
+cd python && ../.venv/bin/python -m pytest -q   # 236 Python tests (5 need the rebuilt store and skip without it)
 ```
 
 Under `-DMAS_BENCH_ONLY=ON` the C++ suite is the 34 tests that need neither

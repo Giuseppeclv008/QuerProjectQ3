@@ -39,4 +39,4 @@ venv/
 .DS_Store
 
 # Personal files
-pers_*
+pers_*/build-verify/
