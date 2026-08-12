@@ -1,4 +1,5 @@
 #include "mas/store/DuckDbEventStore.hpp"
+#include "mas/store/SqlQuote.hpp"
 #include <duckdb.hpp>
 #include <stdexcept>
 #include <vector>
@@ -26,20 +27,6 @@ auto queryOrThrow(duckdb::Connection& con, const std::string& sql) {
     auto res = con.Query(sql);
     if (res->HasError()) throw std::runtime_error(res->GetError());
     return res;
-}
-
-// ATTACH and COPY take a path as a SQL string literal, and DuckDB has no
-// parameter binding for either. Doubling embedded quotes is the escape SQL
-// defines; without it a path like /tmp/o'brien/store.duckdb terminates the
-// literal early and the statement fails with a parse error nobody can read.
-std::string sql_quote(const std::string& s) {
-    std::string out;
-    out.reserve(s.size());
-    for (const char c : s) {
-        out.push_back(c);
-        if (c == '\'') out.push_back('\'');
-    }
-    return out;
 }
 
 } // namespace
