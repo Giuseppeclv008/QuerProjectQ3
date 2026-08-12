@@ -514,7 +514,26 @@ Parse the same flag at the top of `main` (identical block to Step 2, adjusting t
 usage string). Then in the `threads == 1` branch, replace the single-store loop
 with a per-file store when `parquet` is set:
 
+The 1T branch currently reads exactly this:
+
 ```cpp
+        if (threads == 1) {
+            // Baseline arch "mono-1T": one store, one file after another.
+            mas::DuckDbEventStore store(out, machine);
+            for (const auto& f : files) {
+                const long long n = mas::clean_file(f, store);
+                if (n < 0) { std::cerr << "error: cannot clean " << f << "\n"; return 1; }
+                events += n;
+            }
+            clean_s = seconds_since(t0);
+            rows = store.count();
+        } else {
+```
+
+Replace its opening so the parquet case comes first:
+
+```cpp
+        if (threads == 1) {
             if (parquet) {
                 // A store per input file, not per run: IEventStore::write()
                 // never learns that a file is finished, so a shared store
@@ -529,7 +548,7 @@ with a per-file store when `parquet` is set:
                 }
                 clean_s = seconds_since(t0);
                 rows = events;
-            } else if (no_store) {
+            } else {
 ```
 
 In the MT branch, replace the per-thread `DuckDbEventStore local(...)` with a
