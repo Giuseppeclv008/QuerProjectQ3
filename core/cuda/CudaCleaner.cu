@@ -99,7 +99,11 @@ __global__ void flag_newlines(const char* buf, size_t n, unsigned char* flags,
 // efficiency loss lands in single-digit milliseconds. Spec §5.5.
 // row_flags[r]: bit 0 = a torque/status cell was parse-inexact (host patches
 // the affected events from the raw line); bit 1 = a Count cell was (fatal:
-// event existence and cap_seq derive from counts, no after-the-fact repair).
+// event existence and cap_seq derive from counts, no after-the-fact repair);
+// bit 2 = the row does not have the expected column count (fatal: the CPU
+// readers skip such a row, but a missing field here would read as 0.0 and
+// fabricate a reset plus an aggregated event against the neighbouring rows --
+// the one failure mode worse than losing the row).
 __global__ void parse_rows(const char* buf, const unsigned long long* nl,
                            unsigned int n_rows, double* count, double* torque,
                            double* status, char* ts_out, unsigned char* row_flags) {
@@ -113,6 +117,23 @@ __global__ void parse_rows(const char* buf, const unsigned long long* nl,
     const char* p = buf + nl[r] + 1;
     const char* e = buf + nl[r + 1];
     while (e > p && (e[-1] == '\r' || e[-1] == '\n')) --e;
+
+    // Column-count guard before any parsing: past the last comma, every
+    // remaining field would parse from an empty range, and parse_num returns
+    // 0.0 for an empty range without raising inexact.
+    int cols = (p < e) ? 1 : 0;
+    for (const char* s = p; s < e; ++s)
+        if (*s == ',') ++cols;
+    if (cols != 1 + 3 * NUM_HEADS) {
+        for (int i = 0; i < TS_LEN; ++i)
+            ts_out[static_cast<size_t>(r) * TS_LEN + i] = '\0';
+        for (int h = 0; h < NUM_HEADS; ++h) {
+            const size_t idx = static_cast<size_t>(r) * NUM_HEADS + h;
+            count[idx] = 0.0; torque[idx] = 0.0; status[idx] = 0.0;
+        }
+        row_flags[r] = 4u;
+        return;
+    }
 
     const char* q = p;
     while (q < e && *q != ',') ++q;
@@ -365,7 +386,7 @@ bool cuda_clean_file(const std::string& path, std::vector<CapEvent>& out,
                        cudaMemcpyDeviceToHost), "D2H nl");
     times.d2h_s = t.stop();
 
-    for (unsigned int r = 0; r < n_rows; ++r)
+    for (unsigned int r = 0; r < n_rows; ++r) {
         if (host_flags[r] & 2u) {
             error = path + ": data row " + std::to_string(r + 1) +
                     " has a Count cell with a mantissa beyond 2^53; cap_seq and "
@@ -375,6 +396,16 @@ bool cuda_clean_file(const std::string& path, std::vector<CapEvent>& out,
             cleanup();
             return false;
         }
+        if (host_flags[r] & 4u) {
+            error = path + ": data row " + std::to_string(r + 1) +
+                    " does not have the expected 109 columns. The CPU readers "
+                    "skip such a row; the GPU pipeline would instead read the "
+                    "missing fields as 0.0 and fabricate a counter reset, so "
+                    "it refuses the file";
+            cleanup();
+            return false;
+        }
+    }
 
     // ---- S7: host materialize -----------------------------------------------
     // Rows flagged parse-inexact get their event payloads re-read from the raw
