@@ -923,3 +923,84 @@ Remaining gaps, deliberate: the 5 real-data Python analytics tests still skip
 (`events_3mo.duckdb` not built on this box — `scripts/build_store.sh`, ~5 min,
 any time it is wanted); the ZeroMQ runtime stays off on Windows by design
 (spec §2 non-goal).
+
+## 2026-08-13 — Review of the CUDA branch: the CUDA clean window was smaller than everyone else's
+
+A line-by-line review of `feat/cuda-cleaning-bench` (35 files, +6k lines)
+against the tree and the raw CSVs. Three findings correct entries above; the
+rest are closed in code on the branch. The numbers below were established on
+the M3 (no GPU), so everything GPU-timed awaits the re-run.
+
+### The headline correction: `clean_s` for CUDA measured less work
+
+Supersedes the CUDA numbers in the 2026-08-10 "CUDA numbers closed" entry, and
+the ratios derived from them. The seven stage timers all stop before the host
+loop that materializes the `CapEvent` vector — the "materialize events in
+memory" half of spec §6.1's definition of `clean` mode — and before
+`check_header`, the 58 MB `cudaHostAlloc` and every `cudaMalloc`.
+`cuda_clean_main` summed exactly those seven timers; every other contender
+times its whole per-file work.
+
+Two independent measurements put the untimed part at roughly the size of the
+timed one:
+
+- A host-side replica of the materialize loop (same per-event `std::string`
+  timestamp, same reserve+push_back) on the M3: 0.059 s at 765,711 events,
+  1.775 s at 21,872,663 — against recorded CUDA `clean_s` of 0.059 s and
+  1.821 s at the same volumes.
+- The recorded 28-day CUDA row itself: `cpu_pct=469%` on a 1.805 s window is
+  8.5 s of process CPU; the cpp-1T row alongside reads 98%.
+
+So the published clean-phase ratios halve, roughly: 4.2x over cpp-MT → ~2x,
+25.7x over cpp-1T → ~13x. The end-to-end conclusion survives almost unmoved
+(~1.24x → ~1.23x over mono-1T), because persistence dominates — the branch's
+own finding, which never depended on the flattered number.
+
+Fixed on the branch: an eighth `materialize_s` stage (host clock — it is CPU
+work), included in `clean_s` and in the stages line; the driver records the
+process wall clock as `total_s` for the cuda and cpp rows as it always did for
+mono; `docs/bench/results.md` re-states the tables as median [min–max] with
+the window correction marked as an estimate until the re-run.
+
+### The GPU parser was the only contender that fabricated data on short rows
+
+`parse_rows` indexed rows by newline only; a row whose fields end early parsed
+every remaining field from an empty range, and `parse_num` returns 0.0 for an
+empty range without raising `inexact`. A truncated row therefore became a row
+of zeros: a fabricated reset against the previous row and a fabricated
+aggregated event against the next, silently, where `CsvRawReader`,
+`CapEventExtractorFlat`'s loader and `oracle.py` all skip the row. The pool is
+clean, so nothing bites today; the kernel now counts columns per row and the
+host refuses the file on a mismatch, the same treatment as the 2^53 Count
+case. `clean_vectorized.py` had the mirror-image defect (pandas raises on a
+malformed cell, NaN-pads a short row) and now delegates dirty input to
+`oracle.extract`; two differential tests pin both cases.
+
+### Corrections to entries above
+
+- **"bench-only 34/34, full 50/50"** (2026-08-10 entry): not reproducible from
+  the tree — no CMake configuration of this branch yields 34 or 50. Measured
+  here today: bench-only is **37 tests** (35 pass + 2 that skip without the
+  pool; 37/37 with it). The full-build counts on Windows should be re-recorded
+  by the re-run.
+- **"28 day-files is roughly two hours of interpreted loop"** (pre-sweep CUDA
+  entry, and spec §6.3): the branch's own 1-day measurement says 2.686 s, so
+  the month is ~75 s per repeat — two orders of magnitude off. The
+  extrapolation machinery this estimate justified is removed; `py-naive` now
+  runs measured at every volume, and the two extrapolated rows in the
+  committed CSV are filtered out of the plots until the re-run replaces the
+  file.
+- **Line endings** (spec §4 said LF): the pool is CRLF on every row, header
+  included, inside the zips — 86,400 CR against 86,400 LF per day-file. The
+  trailing-`\r` strip in the two new parsers is load-bearing, not defensive;
+  `CsvRawReader` survives via `stod` stopping at the `\r`. Spec corrected in
+  place with a dated note.
+
+### What must be re-measured on the RTX box
+
+One sweep, corrected timers: CUDA rows with `materialize_s` included and wall
+`total_s`; `merge_s` recorded for mono-MT (the driver used to hardcode 0.000
+— the 28-day mono-MT merge is ~150 s of measured work that read as zero);
+py-naive measured at 7 and 28 day-files; the full-build C++ suite count. Until
+then, every GPU number above is a shape, not a measurement — the same reading
+the 2026-08-13 M2 entry already established for the parallel CPU rows.
