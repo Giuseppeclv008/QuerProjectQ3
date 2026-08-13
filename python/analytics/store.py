@@ -4,11 +4,47 @@ The toolkit never writes to the event store -- the C++ MAS owns it. Head count
 is DISCOVERED, never assumed: our machine has 36 heads but the brief's example
 dataset has 48, and WP5 requires the solution to generalise (spec §3.5).
 """
+import os
+
 import duckdb
 
 
 def connect(cfg):
-    return duckdb.connect(cfg.store_path, read_only=True)
+    """A read-only connection whose `cap_events` is the configured store.
+
+    A directory means a Parquet store: `cap_events` becomes a view over its
+    files, deduplicated on the event identity. The eight tools cannot tell the
+    difference — none of their `FROM cap_events` change, which is what makes a
+    comparison between the two backends a comparison of storage rather than of
+    two different queries.
+    """
+    if not os.path.isdir(cfg.store_path):
+        return duckdb.connect(cfg.store_path, read_only=True)
+
+    glob = os.path.join(cfg.store_path, "*.parquet")
+    import glob as _glob
+    if not _glob.glob(glob):
+        raise ValueError(
+            f"{cfg.store_path} is a directory with no .parquet files in it; "
+            "build one with `clean --format parquet` or point store_path at a "
+            ".duckdb file")
+    con = duckdb.connect(":memory:")
+    # DISTINCT ON is what replaces the UNIQUE constraint the DuckDB backend
+    # enforces at write time. On disjoint files it removes nothing and still
+    # costs a hash aggregation on every query — the price of moving the dedup
+    # to the read side, and the reason bench/read_bench.py exists.
+    # The trailing ORDER BY is not cosmetic: without it DISTINCT ON's row order
+    # is whatever the parquet scan happens to produce, and floating-point sums
+    # (STDDEV_SAMP, AVG) are not associative -- summing in a different order
+    # than the DuckDB-native table scan changes the result in the last bit.
+    # Ordering by the same columns the DuckDB backend returns rows in
+    # (insertion/chronological order) keeps both backends bit-identical.
+    con.execute(
+        "CREATE VIEW cap_events AS "
+        "SELECT DISTINCT ON (machine_id, head_id, ts) * "
+        f"FROM read_parquet('{glob}') "
+        "ORDER BY machine_id, head_id, ts")
+    return con
 
 
 def discover_heads(con, cfg):

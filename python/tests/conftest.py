@@ -61,6 +61,23 @@ def tiny_cfg(tiny_store):
 
 
 @pytest.fixture
+def tiny_store_parquet(tmp_path, tiny_store):
+    """The tiny store's rows, written out as Parquet.
+
+    Built from the DuckDB fixture rather than duplicated, so the two backends
+    are provably reading the same events and a parity failure means a backend
+    defect rather than a fixture that drifted.
+    """
+    out = tmp_path / "tiny_parquet"
+    out.mkdir()
+    con = duckdb.connect(tiny_store, read_only=True)
+    con.execute(
+        f"COPY (SELECT * FROM cap_events) TO '{out / 'part-0.parquet'}' (FORMAT PARQUET)")
+    con.close()
+    return str(out)
+
+
+@pytest.fixture
 def reject_without_load_store(tmp_path):
     """A store where a rejected closure carries no load.
 
