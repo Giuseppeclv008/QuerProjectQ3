@@ -170,23 +170,37 @@ set_target_properties(bench_cpu_exe PROPERTIES OUTPUT_NAME bench_cpu)
 if(MAS_ENABLE_CUDA)
   find_package(CUDAToolkit REQUIRED)
   enable_language(CUDA)
-  add_executable(cuda_clean_exe core/cuda/CudaCleaner.cu core/src/apps/cuda_clean_main.cpp)
-  target_link_libraries(cuda_clean_exe PRIVATE mas_clean_core CUDA::cudart)
-  target_include_directories(cuda_clean_exe PRIVATE core/cuda)
+  # The kernels live in their own library because two binaries need them:
+  # mas_cuda_clean (the benchmark contender) and, in the full build,
+  # mas_monolith's --engine=cuda path.
+  add_library(mas_cuda_cleaner STATIC core/cuda/CudaCleaner.cu)
+  target_include_directories(mas_cuda_cleaner PUBLIC core/cuda)
+  target_link_libraries(mas_cuda_cleaner PUBLIC mas_clean_core CUDA::cudart)
   if(MSVC)
     # CUDA >= 13 ships CCCL, which refuses cl.exe's traditional preprocessor
     # (fatal C1189 in cccl/cuda/std/__cccl/preprocessor.h). Host-side flag for
     # the .cu compilation only; the plain C++ TUs never include CUB.
-    target_compile_options(cuda_clean_exe PRIVATE
+    target_compile_options(mas_cuda_cleaner PRIVATE
       $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/Zc:preprocessor>)
   endif()
-  set_target_properties(cuda_clean_exe PROPERTIES OUTPUT_NAME mas_cuda_clean)
   # CUDA_ARCHITECTURES native needs CMake >= 3.24 and the target machine's
   # version is unknown, so fall back to an explicit list covering Pascal..Ada.
   if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.24)
-    set_target_properties(cuda_clean_exe PROPERTIES CUDA_ARCHITECTURES native)
+    set_target_properties(mas_cuda_cleaner PROPERTIES CUDA_ARCHITECTURES native)
   else()
-    set_target_properties(cuda_clean_exe PROPERTIES CUDA_ARCHITECTURES "60;70;75;80;86;89")
+    set_target_properties(mas_cuda_cleaner PROPERTIES CUDA_ARCHITECTURES "60;70;75;80;86;89")
+  endif()
+
+  add_executable(cuda_clean_exe core/src/apps/cuda_clean_main.cpp)
+  target_link_libraries(cuda_clean_exe PRIVATE mas_cuda_cleaner)
+  set_target_properties(cuda_clean_exe PROPERTIES OUTPUT_NAME mas_cuda_clean)
+
+  if(NOT MAS_BENCH_ONLY)
+    # The monolith gains the runtime engine switch only when the kernels were
+    # compiled in; without this define --engine=cuda refuses with the rebuild
+    # remedy instead of silently cleaning on the CPU.
+    target_compile_definitions(monolith_exe PRIVATE MAS_CUDA_ENABLED=1)
+    target_link_libraries(monolith_exe PRIVATE mas_cuda_cleaner)
   endif()
 endif()
 

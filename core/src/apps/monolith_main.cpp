@@ -1,7 +1,11 @@
 #include "mas/domain/Pipeline.hpp"
 #include "mas/store/DuckDbEventStore.hpp"
 #include "mas/store/EventStore.hpp"
+#include "mas/util/engine.hpp"
 #include "mas/util/platform_metrics.hpp"
+#if MAS_CUDA_ENABLED
+#include "CudaCleaner.hpp"
+#endif
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -47,15 +51,43 @@ private:
     long long n_ = 0;
 };
 
+// The GPU path exists in this binary only when CMake compiled it in
+// (MAS_ENABLE_CUDA); the flag below mirrors that so resolve_engine can refuse
+// --engine=cuda on a build that never had the kernels.
+#if MAS_CUDA_ENABLED
+constexpr bool kCudaCompiled = true;
+#else
+constexpr bool kCudaCompiled = false;
+#endif
+
 } // namespace
 
 int main(int argc, char** argv) {
     mas::metrics_init();
     int argi = 1;
     bool no_store = false;
-    if (argi < argc && std::string(argv[argi]) == "--no-store") { no_store = true; ++argi; }
+    mas::Engine engine = mas::Engine::Cpu;
+    while (argi < argc && std::string(argv[argi]).rfind("--", 0) == 0) {
+        const std::string arg = argv[argi];
+        if (arg == "--no-store") {
+            no_store = true;
+        } else if (arg.rfind("--engine=", 0) == 0) {
+            auto choice = mas::parse_engine(arg.substr(9));
+            if (choice.ok) choice = mas::resolve_engine(choice.engine, kCudaCompiled);
+            if (!choice.ok) {
+                std::cerr << "error: " << choice.error << "\n";
+                return 2;
+            }
+            engine = choice.engine;
+        } else {
+            std::cerr << "unknown flag " << arg << "\n";
+            return 2;
+        }
+        ++argi;
+    }
     if (argc - argi < 4) {
-        std::cerr << "usage: mas_monolith [--no-store] <out.duckdb> <machine_id> "
+        std::cerr << "usage: mas_monolith [--no-store] [--engine=cpu|cuda] "
+                     "<out.duckdb> <machine_id> "
                      "<threads> <day1.csv> [day2.csv ...]\n";
         return 2;
     }
@@ -76,8 +108,37 @@ int main(int argc, char** argv) {
                      "(the MT path merges per-thread stores)\n";
         return 2;
     }
+    if (engine == mas::Engine::Cuda && threads != 1) {
+        std::cerr << "error: --engine=cuda requires threads = 1 "
+                     "(the thread pool parallelizes CPU cleaning; the GPU "
+                     "path is one device fed file by file)\n";
+        return 2;
+    }
     std::vector<std::string> files;
     for (int i = argi; i < argc; ++i) files.emplace_back(argv[i]);
+
+    // Cleans one day-file into `store` with the selected engine and returns
+    // the event count, or -1 after printing the error. The GPU branch refuses
+    // to exist in a non-CUDA build rather than fall back: the summary line
+    // below stamps the engine, and a stamp that could silently mean "cpu
+    // actually" would make it worthless.
+    const auto clean_into = [&](const std::string& f,
+                                mas::IEventStore& store) -> long long {
+#if MAS_CUDA_ENABLED
+        if (engine == mas::Engine::Cuda) {
+            std::vector<mas::CapEvent> events;
+            mas::CudaStageTimes t;
+            std::string error;
+            if (!mas::cuda_clean_file(f, events, t, error)) {
+                std::cerr << "error: " << error << "\n";
+                return -1;
+            }
+            store.write(events);
+            return static_cast<long long>(events.size());
+        }
+#endif
+        return mas::clean_file(f, store);
+    };
 
     try {
         const auto t0 = std::chrono::steady_clock::now();
@@ -90,7 +151,7 @@ int main(int argc, char** argv) {
             if (no_store) {
                 NullEventStore store;
                 for (const auto& f : files) {
-                    const long long n = mas::clean_file(f, store);
+                    const long long n = clean_into(f, store);
                     if (n < 0) {
                         std::cerr << "error: cannot clean " << f << "\n";
                         return 1;
@@ -110,7 +171,7 @@ int main(int argc, char** argv) {
             } else {
                 mas::DuckDbEventStore store(out, machine);
                 for (const auto& f : files) {
-                    const long long n = mas::clean_file(f, store);
+                    const long long n = clean_into(f, store);
                     if (n < 0) {
                         std::cerr << "error: cannot clean " << f << "\n";
                         return 1;
@@ -189,11 +250,15 @@ int main(int argc, char** argv) {
             for (int t = 0; t < threads; ++t) remove_store(thread_store(out, t));
         }
 
+        // The engine stamp rides the summary line so a pasted log can never
+        // detach the numbers from the engine that produced them. Appended
+        // last: run_bench.sh and run_bench_cuda.py match their fields by
+        // substring, so a suffix is invisible to both.
         std::cerr << "monolith: " << files.size() << " files, " << events
                   << " events, clean " << std::fixed << std::setprecision(3)
                   << clean_s << " s, merge " << merge_s << " s, total "
                   << (clean_s + merge_s) << " s, store holds " << rows
-                  << " rows\n";
+                  << " rows, engine " << mas::engine_name(engine) << "\n";
         std::cerr << mas::metrics_line("clean", mas::read_metrics()) << "\n";
         return 0;
     } catch (const std::exception& e) {
