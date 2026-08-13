@@ -267,76 +267,96 @@ the 30 re-measured rows in the previous sweep.
 The clean-phase numbers are large and the end-to-end number is not, and the gap
 between them is the finding.
 
-**Correction (2026-08-13, review): the recorded CUDA `clean_s` measures less
+**Correction (2026-08-13, review): the recorded CUDA `clean_s` measured less
 work than every other contender's.** The seven stage timers stopped before the
 loop that materializes the `CapEvent` vector — the "materialize events in
 memory" half of spec §6.1's clean mode — and before `check_header`, the pinned
-allocation and every `cudaMalloc`. A host-side replica of the materialize loop
-costs about as much as the entire recorded number at both 1 and 28 day-files,
-and the recorded rows agree: the 28-day CUDA row carries 8.5 s of process CPU
-against 1.8 s of reported clean. The code now times an eighth `materialize_s`
-stage and reports the process wall clock alongside; **the CUDA rows below are
-best read as roughly half the comparable number** until the sweep is re-run
-with the corrected timers. The CPU and Python rows measure their whole work
-and stand as recorded.
+allocation and every `cudaMalloc`. The code now times an eighth
+`materialize_s` stage and reports the process wall clock alongside.
+Re-measured the same day on the RTX box (below), the correction turned out
+*larger* than the review's "roughly half" estimate: at 28 day-files the
+materialize loop alone is 4.64 s against 1.80 s for the seven original stages
+— the untimed part was ~72% of the corrected number, not ~50%. (The seven
+stages still summing to 1.80 s also says the old 1.82 s recording was
+accurate for what it measured; it measured about a quarter of the phase.) The
+CPU and Python rows always measured their whole work.
 
-28-day results on the Windows target box (RTX 4070 Laptop, CUDA 13.3) — median
-of 3, with the min–max spread, because n=3 on a fanless-adjacent laptop does
-not support three significant figures (the same lesson the entry above records
-for the M2):
+28-day results on the Windows target box (RTX 4070 Laptop, CUDA 13.3), sweep
+of 2026-08-13 with the corrected timers — median of 3, with the min–max
+spread, because n=3 on a laptop does not support three significant figures
+(the same lesson the entry above records for the M2):
 
-| arch | clean 28d, median [min–max] | vs CUDA as recorded | vs CUDA, window-corrected (est.) |
-|---|---:|---:|---:|
-| **cuda** | **1.82 s** [1.81–3.89] | — | ~3.6 s |
-| cpp-MT (8 threads) | 7.68 s [7.62–7.73] | 4.2x | **~2x** |
-| cpp-1T | 46.77 s [46.60–47.11] | 25.7x | **~13x** |
-| py-numpy | 91.00 s [89.79–91.50] | 50x | ~25x |
+| arch | clean 28d, median [min–max] | vs CUDA |
+|---|---:|---:|
+| **cuda** | **6.43 s** [6.33–8.34] | — |
+| cpp-MT (8 threads) | 8.21 s [8.12–8.32] | 1.3x |
+| cpp-1T | 46.26 s [45.91–46.57] | 7.2x |
+| py-naive | 74.64 s [74.32–76.31] | 11.6x |
+| py-numpy | 85.82 s [84.53–86.99] | 13.4x |
 
-The CUDA spread is itself the caveat in miniature: repeat 1 measured 3.89 s —
-2.15× the other two repeats (cold file cache, plus `--verify`'s CPU load in
-the same process) — so the median sits one outlier away from doubling.
+(py-naive is measured at every volume now that the extrapolation machinery is
+gone — and the estimate that machinery was built on measured true: "~75 s per
+28-day repeat" came out 74.6 s median.)
 
-`mono-1T` end to end is **230.5 s** [225.3–231.2] against 46.5 s of clean, so
-persistence costs **~184 s — around 80% of wall-clock**. Substituting a faster
-clean leaves that untouched:
+Repeat 1 is still the caveat in miniature: its `clean_s` reads 8.34 s (cold
+file cache) and its *wall* reads 58.9 s, because `--verify` runs the full CPU
+differential in the same process on the first repeat. The median absorbs
+both; the spread is why the interval is published. The CUDA context and
+allocations sit outside `clean_s` and inside the wall clock, where spec §6.1
+puts them: total 8.43 s median against 6.43 s clean.
+
+`mono-1T` end to end is **257.6 s** [254.5–266.6] against 45.5 s of
+store-free clean, so persistence costs **~212 s — around 82% of wall-clock**.
+Substituting a faster clean leaves that untouched:
 
 | | clean + store | e2e vs mono-1T |
 |---|---:|---:|
-| cpp-1T | 46.8 + 184 = 230.7 s | 1.00x |
-| cpp-MT 8T | 7.7 + 184 = 191.6 s | 1.20x |
-| cuda (window-corrected est.) | ~3.6 + 184 = ~187.5 s | **~1.23x** |
+| cpp-1T | 46.3 + 212.1 = 258.4 s | 1.00x |
+| cpp-MT 8T | 8.2 + 212.1 = 220.3 s | 1.17x |
+| cuda | 6.4 + 212.1 = 218.5 s | **1.18x** |
 
-**CUDA against the 8-thread C++ already in the project: ~2x on the clean phase
-becomes ~1.02x end to end.** The measurement-window correction halves the
-clean-phase ratios and moves the end-to-end conclusion by one point — which is
-the point: the conclusion never depended on the flattered number.
+**CUDA against the 8-thread C++ already in the project: 1.3x on the clean
+phase becomes ~1.01x end to end.** The measurement-window correction shrank
+the clean-phase ratios by more than the review's halving estimate (cpp-MT
+~2x estimated, 1.3x measured; cpp-1T ~13x estimated, 7.2x measured) and moved
+the end-to-end number from ~1.23x to a measured 1.18x — which is the point:
+the conclusion never depended on the flattered number.
 
-This is Amdahl applied honestly. Speeding a phase that is ~20% of the total
-even by 13x yields at most ~1.25x, and ~1.23x is the estimate. The stage
-breakdown (pre-correction, so read it as shape) says the same thing from
-inside: of the recorded 1.82 s, 1.17 s is disk read and ~0.29 s is GPU
-compute. The kernel stopped being the bottleneck before the pipeline did.
+This is Amdahl applied honestly. Speeding a phase that is ~18% of the total
+by 7.2x yields 1.18x, and 1.18x is what is measured. The stage breakdown, now
+with nothing left outside it, says the same thing from inside: of the 6.43 s,
+4.64 s is host-side event materialization, 1.20 s is disk read, 0.32 s is
+PCIe transfer both ways, and ~0.29 s is GPU compute (index + parse + delta +
+compact — the pre-correction "~0.29 s" estimate of the kernels' cost held
+exactly). The kernel stopped being the bottleneck before the pipeline did —
+and, measured, so did the rest of the GPU path: what remains is a
+single-threaded, allocation-bound host loop.
 
 **The defensible claim is not "the GPU makes cleaning faster" — it is that
 cleaning has stopped being the problem.** Three independent paths were measured
 — multithreaded CPU, distributed MAS, GPU — and all three land on the same
 place: the cost is persistence, not transformation. `merge_all` attacked it
 from one side (2.89x on the merge in isolation); CUDA proved it from the
-other, by driving GPU compute to ~0.29 s and moving the total only to ~1.23x.
+other, by driving GPU compute to ~0.29 s and moving the total only to 1.18x.
+The re-run also put a measured number where a hardcoded zero had been:
+mono-MT's 28-day merge is 58.7 s [57.7–62.5], not the 0.000 the driver used
+to write — and not the ~150 s the review guessed while flagging the hardcode.
 
-Two qualifications the first version of this section did not carry:
+Two qualifications this section keeps:
 
 - The clean-phase ratios are also a statement about the CPU baseline.
   `cpp-1T` parses at ~35 MB/s because `CsvRawReader` builds an
   `std::istringstream` per row and calls `std::stod` 108 times per row; a
   `std::from_chars` parser over the same buffer would plausibly close much of
-  the gap on its own. "~13x over C++ 1T" measures the distance between a tuned
+  the gap on its own. "7.2x over C++ 1T" measures the distance between a tuned
   GPU pipeline and an untuned CPU parser — which strengthens, not weakens, the
   persistence conclusion: with a competent CPU parser the clean phase shrinks
-  further below the store cost.
-- Every number in this section is n=3 on a laptop. The re-run with the
-  corrected timers (tracked in the validation log) is what turns the
-  window-corrected column from an estimate into a measurement.
+  further below the store cost. And the same reading now applies to the GPU
+  row itself: 72% of its clean time is a single-threaded host loop building
+  strings.
+- Every number in this section is n=3 on a laptop with ordinary desktop
+  background load. The intervals are the honest resolution; the medians are
+  the claim.
 
 It also settles the question the kernel was written to answer: **how much
 headroom was left in the clean phase? Almost none, and that is now measured
