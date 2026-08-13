@@ -5,6 +5,8 @@ which backend they are reading, because `connect()` presents both as a table
 named `cap_events`. A difference in results is therefore a defect in one
 backend, not a difference in how it was queried.
 """
+import math
+
 import pytest
 
 from analytics.config import Config
@@ -14,6 +16,38 @@ from analytics.tools.overview import overview
 from analytics.tools.speed import capping_speed
 from analytics.tools.success import success_rates
 from analytics.tools.torque import torque_stats
+
+
+def values_close(a, b, rel_tol=1e-6, abs_tol=1e-9):
+    """Compare tool `.values` trees: exact everywhere except floats.
+
+    Counts, ids, strings and bools have no source of nondeterminism between
+    the two backends and must still match exactly -- a tolerance there would
+    hide real defects. Floats are different: DuckDB's STDDEV_SAMP/AVG/etc.
+    run as a parallel partial-aggregate/combine once a table is large enough
+    to parallelise, and combine order is not tied to scan order, so the two
+    backends are not guaranteed bit-identical on float aggregates at
+    production scale even with a deterministic ORDER BY on the Parquet view
+    (see the comment on `connect()` in analytics/store.py). This project's
+    tiny fixture happens to run single-threaded on both backends, so exact
+    equality would pass here regardless -- the tolerance is what keeps this
+    test meaningful once the fixture (or production data) is large enough to
+    parallelise.
+    """
+    if isinstance(a, dict) and isinstance(b, dict):
+        return a.keys() == b.keys() and all(
+            values_close(a[k], b[k], rel_tol, abs_tol) for k in a
+        )
+    if isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
+        return len(a) == len(b) and all(
+            values_close(x, y, rel_tol, abs_tol) for x, y in zip(a, b)
+        )
+    if isinstance(a, float) or isinstance(b, float):
+        if a is None or b is None:
+            return a == b
+        return math.isclose(a, b, rel_tol=rel_tol, abs_tol=abs_tol)
+    return a == b
+
 
 TOOLS = [
     ("overview", lambda c: overview(c, period="2026-02")),
@@ -31,7 +65,9 @@ def test_both_backends_agree(name, call, tiny_store, tiny_store_parquet):
     duck = call(Config(store_path=tiny_store, machine_id="MCC"))
     pq = call(Config(store_path=tiny_store_parquet, machine_id="MCC"))
     assert duck.status == pq.status, f"{name}: status differs"
-    assert duck.values == pq.values, f"{name}: values differ"
+    assert values_close(duck.values, pq.values), (
+        f"{name}: values differ beyond float tolerance\nduck={duck.values!r}\npq={pq.values!r}"
+    )
 
 
 def test_parquet_view_deduplicates_a_redispatched_file(tmp_path, tiny_store_parquet):

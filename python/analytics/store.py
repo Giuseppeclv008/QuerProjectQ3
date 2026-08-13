@@ -30,15 +30,39 @@ def connect(cfg):
             ".duckdb file")
     con = duckdb.connect(":memory:")
     # DISTINCT ON is what replaces the UNIQUE constraint the DuckDB backend
-    # enforces at write time. On disjoint files it removes nothing and still
-    # costs a hash aggregation on every query — the price of moving the dedup
-    # to the read side, and the reason bench/read_bench.py exists.
-    # The trailing ORDER BY is not cosmetic: without it DISTINCT ON's row order
-    # is whatever the parquet scan happens to produce, and floating-point sums
-    # (STDDEV_SAMP, AVG) are not associative -- summing in a different order
-    # than the DuckDB-native table scan changes the result in the last bit.
-    # Ordering by the same columns the DuckDB backend returns rows in
-    # (insertion/chronological order) keeps both backends bit-identical.
+    # enforces at write time. On disjoint files it removes nothing but still
+    # costs a full sort of the corpus on every query -- see the ORDER BY note
+    # below -- the price of moving the dedup to the read side, and the reason
+    # bench/read_bench.py exists.
+    #
+    # The trailing ORDER BY is load-bearing for correctness, not just
+    # numerics: DuckDB implements a bare DISTINCT ON as HASH_GROUP_BY with
+    # first(), so without an explicit ORDER BY, *which* row of a duplicate
+    # group survives is genuinely undefined (this is documented Postgres
+    # DISTINCT ON behaviour too, which DuckDB's syntax mirrors). Ordering by
+    # (machine_id, head_id, ts) makes "first" mean "earliest by event
+    # identity", so a redispatched file's duplicate rows resolve the same way
+    # every time.
+    #
+    # What it does NOT guarantee: bit-identical floating-point aggregates
+    # against the DuckDB-native backend. STDDEV_SAMP/AVG/etc. still run as a
+    # parallel partial-aggregate/combine once DuckDB parallelises the scan
+    # (its default 8 threads, triggered by table size), and combine order is
+    # not tied to scan order -- ORDER BY sorts the rows fed to DISTINCT ON,
+    # not the order the aggregate's partial results are merged in. On this
+    # project's 8-row test fixture both backends happen to run single-
+    # threaded, so results are bit-identical there, but that is an artifact
+    # of fixture size, not a property this view provides. At production row
+    # counts, expect float aggregates to agree only to a relative tolerance,
+    # not exactly -- see test_backend_parity.py's comparison helper.
+    #
+    # Cost: EXPLAIN shows this ORDER BY adds a full ORDER_BY operator on top
+    # of the HASH_GROUP_BY, not just "a hash aggregation" -- an O(n log n)
+    # sort of the whole matched corpus, on every query, regardless of the
+    # period filter (predicate/period pushdown does not reach past the sort).
+    # Measured ~4x slower than the unordered view on a 2M-row table (0.123s
+    # vs 0.031s). This is a real, non-trivial cost that the read-performance
+    # benchmark (bench/read_bench.py, and Tasks 5-6) must account for.
     con.execute(
         "CREATE VIEW cap_events AS "
         "SELECT DISTINCT ON (machine_id, head_id, ts) * "
