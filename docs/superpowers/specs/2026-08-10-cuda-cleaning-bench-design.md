@@ -170,7 +170,7 @@ Confirmed by reading the real pool at
 | Size | ~57.7 MB per day-file |
 | Timestamp | `2026-02-21T16:00:00.000` — fixed 23 chars, no quoting |
 | Numerics | plain decimal, no quoting, no exponent, no thousands separator |
-| Line endings | **LF** (verified with `od -c` on the extracted pool) |
+| Line endings | **CRLF** — every row, header included (86,400 `\r` against 86,400 `\n` per day-file, and the zip members carry the `\r` themselves; the original "LF, verified with `od -c`" entry was wrong) |
 
 > **Correction (2026-08-10, first run on the target box).** "Plain decimal"
 > hid a wrong implicit premise: ~2% of AppTorque cells (66,553 on day 1; none
@@ -189,14 +189,23 @@ correct. The CUDA parser hard-codes the grouped slices and **validates the heade
 row at startup**, failing loudly on mismatch rather than silently misreading
 (§9, T5).
 
-**CRLF defence.** The pool is LF, and `zipfile`/`unzip` extraction preserves bytes,
-so the data path is safe. The risk is a Windows `git clone` with `core.autocrlf=true`
-rewriting committed fixture CSVs, which would leave a `\r` on the last field of every
-row. Two mitigations, both cheap: a `.gitattributes` pinning `*.csv` and `*.sh` to
-LF, and a trailing-`\r` strip in the CUDA row-index kernel and in
-`CapEventExtractorFlat`. (`CsvRawReader` already survives this by accident —
-`std::stod("0\r")` parses and stops at the `\r` rather than throwing — but the new
-parsers must not rely on that.)
+**CRLF handling.**
+
+> **Correction (2026-08-13, review).** This paragraph originally opened with
+> "The pool is LF, so the data path is safe" and treated CRLF as a
+> hypothetical introduced by `core.autocrlf`. The premise is inverted: the
+> pool is CRLF on every row, inside the zips, so CRLF is the normal condition
+> of the data path, not a risk to it.
+
+The trailing-`\r` strip in the CUDA row-index kernel and in
+`CapEventExtractorFlat` is therefore load-bearing on 100% of the pool, not a
+defensive extra. `CsvRawReader`, the production reader, strips the `\r` only
+on the header line (`splitCsv`); on data rows it relies on `std::stod("0.0\r")`
+parsing and stopping at the `\r` — which works, on every row of every file it
+has ever read, but by the parser's stopping rule rather than by design. The
+`.gitattributes` pinning `*.csv` fixtures still matters for the *committed*
+fixtures, which are LF and must stay byte-stable across a Windows clone; the
+CRLF-equivalence tests (T8) are what tie the two shapes together.
 
 ## 5. Components
 
