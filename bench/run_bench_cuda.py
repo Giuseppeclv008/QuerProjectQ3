@@ -22,6 +22,10 @@ import zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PY_DIR = os.path.join(ROOT, "python")
+# One header + 86,399 data rows is the pool's day-file shape (validated on
+# every extracted month). rows_per_s is computed from this constant, not from
+# the rows each run actually read -- runs on a different pool would need it
+# re-derived.
 ROWS_PER_DAY = 86399
 REPEATS = 3
 VOLUMES = (1, 7, 28)
@@ -166,6 +170,10 @@ def oracle_union(files):
 
 def emit(writer, arch, mode, threads, nfiles, rep, clean_s, total_s, events,
          rss, cpu_s, merge_s=0.0, note=""):
+    """total_s is the whole run: the process wall clock where one is measured
+    (cpp, cuda, mono), the in-process loop time for the Python contenders,
+    which have no separate wall. rows_per_s, events_per_s and cpu_pct all
+    divide by it -- one denominator, one meaning, every row."""
     writer.writerow({
         "arch": arch, "mode": mode, "n_workers": 0, "threads": threads,
         "files": nfiles, "repeat": rep,
@@ -237,13 +245,15 @@ def main():
     for v, n in oracle.items():
         print(f"  {v:2d} day-file(s): {n} rows")
 
-    with open(RESULTS, "w", newline="") as fh:
+    # Both files under one with: die() raises SystemExit, and an sys.exit
+    # mid-sweep used to leave results_cuda_stages.csv open and unflushed.
+    with open(RESULTS, "w", newline="") as fh, \
+         open(STAGES, "w", newline="") as stage_fh:
         for line in provenance():
             fh.write(line + "\n")
         w = csv.DictWriter(fh, fieldnames=FIELDS)
         w.writeheader()
 
-        stage_fh = open(STAGES, "w", newline="")
         sw = csv.DictWriter(stage_fh, fieldnames=STAGE_FIELDS)
         sw.writeheader()
 
@@ -323,7 +333,6 @@ def main():
                                 os.remove(stale)
                         print(f"done: {arch} [{mode}] v={v}d rep={rep} clean={clean_s:.3f}s")
 
-        stage_fh.close()
 
     print(f"\nsweep complete\n  {RESULTS}\n  {STAGES}")
     print("\nPaste both files back. Summary:")

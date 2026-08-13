@@ -1,5 +1,11 @@
 # CUDA Cleaning Pipeline & Portable Three-Way Benchmark — Implementation Plan
 
+> **Status: executed.** Every phase below is implemented and committed on
+> `feat/cuda-cleaning-bench`; the sweep ran on the Windows RTX box on
+> 2026-08-10 (see `docs/validation-log.md`). The boxes were never ticked
+> during execution, so an unchecked box here means "not tracked", not "not
+> done".
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add a CUDA implementation of the cap-event cleaning transform and a dependency-free benchmark that measures Python, C++, and CUDA on one machine — buildable and runnable unattended on Windows, Linux, or macOS.

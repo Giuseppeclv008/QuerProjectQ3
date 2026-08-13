@@ -83,8 +83,12 @@ if (Test-Path $toolset) {
     $deadline = (Get-Date).AddMinutes(45)
     while ((Get-Date) -lt $deadline) {
         Start-Sleep -Seconds 15
-        $busy = Get-Process -Name "setup", "vs_installer*", "vs_installershell*",
-                            "vs_installerservice*" -ErrorAction SilentlyContinue
+        # "setup" is filtered by path: any unrelated setup.exe on the box
+        # would otherwise hold this poll open until the 45-min deadline.
+        $busy = @(Get-Process -Name "vs_installer*", "vs_installershell*",
+                              "vs_installerservice*" -ErrorAction SilentlyContinue)
+        $busy += @(Get-Process -Name "setup" -ErrorAction SilentlyContinue |
+                   Where-Object { $_.Path -like "*Microsoft Visual Studio*" })
         if (-not $busy) {
             if (Test-Path $toolset) { break }
             throw ("The VS Installer exited but no MSVC toolset appeared -- check " +
@@ -105,10 +109,18 @@ if (Test-Path $toolset) {
 if ((Get-Command nvcc -ErrorAction SilentlyContinue) -or (Test-Path $cudaRoot)) {
     Write-Host "CUDA Toolkit already present, skipping the CUDA step."
 } else {
-    Write-Host "Installing the CUDA Toolkit via winget (~3.5 GB)..."
-    winget install --id Nvidia.CUDA -e --accept-source-agreements --accept-package-agreements
+    # Pinned: the measured box built with CUDA Toolkit 13.3 (nvcc V13.3.73),
+    # and this script exists to reproduce that toolchain, not to track
+    # NVIDIA's latest -- the branch already ate three build breaks from a
+    # CUDA major. If winget rejects the pin, `winget search Nvidia.CUDA
+    # --versions` lists what it has; take the 13.3 line.
+    $cudaWingetVersion = "13.3"
+    Write-Host "Installing the CUDA Toolkit $cudaWingetVersion via winget (~3.5 GB)..."
+    winget install --id Nvidia.CUDA --version $cudaWingetVersion -e --accept-source-agreements --accept-package-agreements
     if ($LASTEXITCODE -ne 0) {
-        throw "winget failed ($LASTEXITCODE). Manual fallback: https://developer.nvidia.com/cuda-downloads"
+        throw ("winget failed ($LASTEXITCODE). If the pinned version string is the problem, " +
+               "run `winget search Nvidia.CUDA --versions` and use the 13.3 entry; " +
+               "manual fallback: https://developer.nvidia.com/cuda-downloads (13.3)")
     }
 }
 

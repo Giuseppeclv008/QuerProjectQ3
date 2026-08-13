@@ -84,6 +84,12 @@ def extract(path):
     if (np.isnan(count_f).any() or np.isnan(torque).any()
             or np.isnan(status).any() or pd.isna(ts).any()):
         return oracle.extract(path)
+    # np.rint rounds half to even; C++ llround (CapEventExtractor, the GPU)
+    # rounds half away from zero, and oracle.py's round() is half-to-even like
+    # this one. The conventions only part on a Count cell exactly halfway
+    # between integers, and Counts are integral by contract -- if one ever is
+    # not, the C++ side is the one that differs, and --verify/the differential
+    # tests are what would surface it.
     count = np.rint(count_f).astype(np.int64)
 
     # Spec §3: last_count_[h] after row i is always count[i][h], so the whole
