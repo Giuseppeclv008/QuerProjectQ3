@@ -11,6 +11,7 @@ telemetry_*/
 
 # Build
 /build/
+/build-bench/
 /build-plan/
 cmake-build-*/
 *.o
