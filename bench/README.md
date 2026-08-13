@@ -29,14 +29,20 @@ back.
 ## Adding the `e2e` rows
 
 `MAS_BENCH_ONLY=ON` builds no DuckDB, so there is no store to write and no `e2e`
-mode. For those rows, configure the full build as well:
+mode. For those rows, configure the full build as well — and pass
+`-DMAS_BENCH_ONLY=OFF` explicitly: it is a cached option, so reconfiguring the
+same build directory without mentioning it keeps the cached ON, silently builds
+no `mas_monolith`, and the driver skips every `e2e` row. (The same cache holds
+`MAS_ENABLE_ZMQ=OFF` after a bench-only configure; state it too if you want the
+agent runtime back later.)
 
 ```
-cmake -S . -B build -DMAS_ENABLE_CUDA=ON -DMAS_ENABLE_ZMQ=OFF
+cmake -S . -B build -DMAS_BENCH_ONLY=OFF -DMAS_ENABLE_CUDA=ON -DMAS_ENABLE_ZMQ=OFF
 cmake --build build --config Release
 ```
 
-The driver picks up `mas_monolith` automatically and adds the `e2e` rows.
+The driver picks up `mas_monolith` automatically and adds the `e2e` rows; if it
+still cannot find it, it says so at startup.
 
 ## If it fails
 
