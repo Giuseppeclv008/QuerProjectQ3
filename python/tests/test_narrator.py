@@ -99,10 +99,10 @@ def test_the_numbers_in_the_report_come_from_the_tools_whatever_the_model_says(
 
 
 def test_a_huge_result_list_does_not_become_a_huge_prompt(tiny_cfg):
-    """On the real store `anomalies` returns 678,325 deviation hits. Serialising
-    them in full builds a multi-megabyte prompt no request can carry, so `ask`
-    would fail on every question about real data -- silently, via the template
-    fallback."""
+    """On the real store `anomalies` returns 1,612,634 deviation hits on February
+    alone. Serialising them in full builds a multi-megabyte prompt no request can
+    carry, so `ask` would fail on every question about real data -- silently, via
+    the template fallback."""
     from analytics.agent.executor import Execution
     from analytics.agent.plan import Plan, PlanStep
     from analytics.result import ToolResult

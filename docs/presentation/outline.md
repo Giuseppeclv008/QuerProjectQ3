@@ -190,7 +190,9 @@ measured on `events_3mo.duckdb` (55,132,433 rows, machine `MCC`, 36 heads,
 
 ## 11. Engineering
 
-- **201 Python tests, 73 C++ tests**, all green; test output pristine.
+- **232 Python tests, 85 C++ tests**, all green; test output pristine. Both
+  counts are asserted against the sources by `test_readme_counts.py`, so the
+  slide cannot drift from the suite.
 - **Golden-report regression**: a fixed store and a fixed plan must render
   byte-identical Markdown, so a change in any tool's SQL shows up as a diff in a
   committed file instead of a silent shift in a number nobody re-read.
@@ -212,8 +214,8 @@ measured on `events_3mo.duckdb` (55,132,433 rows, machine `MCC`, 36 heads,
   machine; no 48-head data exists to test against. Known limit, roadmap item.
 - **CSV ingestion only.** The store already exports Parquet; reading JSON or
   Parquet input is a reader sibling, not agent work.
-- **~0.03% of closures carry statuses we decode but have not seen AROL confirm** —
-  5,452 No-Load-with-torque and 7 No-Closure rows. We treat them as carrying no
+- **~0.02% of closures carry statuses we decode but have not seen AROL confirm** —
+  12,461 No-Load-with-torque and 12 No-Closure rows. We treat them as carrying no
   pass/fail verdict and exclude them from the rate rather than guessing.
 - **The live-API `ask` path is not covered by the committed evidence.** Every
   planner and narrator test injects a fake client by design, and no API key was
