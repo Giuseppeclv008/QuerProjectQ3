@@ -42,7 +42,10 @@ cmake --build build --config Release
 ```
 
 The driver picks up `mas_monolith` automatically and adds the `e2e` rows; if it
-still cannot find it, it says so at startup.
+still cannot find it, it says so at startup. Those rows run the monolith's
+default `--engine=cpu`; the CUDA numbers come from `mas_cuda_clean`, not from
+`mas_monolith --engine=cuda`, so the contenders stay separate binaries here
+even though the full build's monolith can now select the GPU cleaner itself.
 
 ## If it fails
 

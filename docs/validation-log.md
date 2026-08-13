@@ -1180,3 +1180,47 @@ sweep, and the four plots regenerated from the new `bench/results.csv`. The
 2026-08-13 interleaved A/B above stands as the M2 measurement that made this
 resweep necessary, and its "until then" closes here. The M2's like-for-like
 merge A/B (65.9 → 22.8 s, 2.89x) remains valid as measured.
+
+## 2026-08-13 — The CUDA branch lands on main, and the engine becomes a flag
+
+**HEAD:** `6fe1d9b` (`main`, via PR #11). `feat/cuda-cleaning-bench` was
+rebased onto `main` — 49 commits, linear, no merge commit — and `main`
+fast-forwarded to the result, so the SHAs on `main` are the ones verified
+here. The branch had solved Windows support once (`MAS_BENCH_ONLY` and the
+option matrix) and `main`'s PR #12 had solved it again flat; the rebase kept
+the option-matrix shape and re-applied the two pieces only `main` had, inside
+the guards that preserve the bench-only build's no-download property:
+`win_time_exe` under plain `WIN32` (it needs neither DuckDB nor libzmq) and
+the libzmq DLL copy under `MAS_ENABLE_ZMQ AND WIN32`. The Windows DuckDB
+asset hash, pinned independently and identically on both sides, is pinned
+once now. `win_time.cpp` stays deliberately: it is what timed this morning's
+resweep through `bench/run_bench.sh`, and the self-reported `metrics:` lines
+cover only the binaries the Python driver runs. One timing mechanism per
+harness; collapsing to one harness is an open item, not a merge-time edit.
+
+**The engine is now explicit.** `mas_monolith --engine=cpu|cuda` (default
+`cpu`) selects the cleaner at runtime; `MAS_ENABLE_CUDA` still decides at
+configure time whether the kernels exist in the binary at all. A request the
+binary cannot honor — `--engine=cuda` without the kernels compiled in, or a
+CUDA failure at runtime — aborts naming the remedy; there is no fallback,
+and the summary line now ends in `engine cpu|cuda` so a pasted log cannot
+detach a number from its engine. The policy lives in
+`core/include/mas/util/engine.hpp` as pure functions, tested from builds
+that have no GPU (eight tests, including cuda-without-support asserting on
+the remedy text).
+
+Measured this session, on the M3: bench-only **45/45** (pool present, the
+two data tests ran), full **110/110**, full with `MAS_ENABLE_ZMQ=OFF`
+**70/70** — the Windows session's 62 plus the eight new, first time that
+count is confirmed off-Windows. Python **235 passed, 5 skipped**, including
+the README-count assertions after 102 → 110 and 37 → 45. The monolith ran a
+real day-file under default, `--engine=cpu`, `--no-store` and T=2: same
+765,711 events, `engine cpu` stamped, and both harnesses' field parsers
+verified against the suffixed line.
+
+**What is not verified here:** everything `nvcc`. The `mas_cuda_cleaner`
+library split, the MSVC `/Zc:preprocessor` flag on it, and the monolith's
+`#if MAS_CUDA_ENABLED` block have never met a CUDA toolchain — the block is
+syntax-checked with the define forced on, never linked, never run. The first
+`-DMAS_ENABLE_CUDA=ON` configure on the RTX box decides whether those three
+survive contact; until then `--engine=cuda` is verified only in refusal.
