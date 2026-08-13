@@ -1004,3 +1004,76 @@ One sweep, corrected timers: CUDA rows with `materialize_s` included and wall
 py-naive measured at 7 and 28 day-files; the full-build C++ suite count. Until
 then, every GPU number above is a shape, not a measurement — the same reading
 the 2026-08-13 M2 entry already established for the parallel CPU rows.
+
+## 2026-08-13 — Re-run on the RTX box with the corrected timers: the estimates become measurements
+
+Supersedes the numeric estimates in the "Review of the CUDA branch" entry
+above (~2x / ~13x / ~1.23x, and its "roughly half" reading of the recorded
+CUDA rows); the review's finding about *what* was mistimed stands. Same box
+as 2026-08-10: RTX 4070 Laptop 8 GB (driver 592.82), MSVC 14.41, CUDA 13.3,
+mains power, fans free, ordinary desktop background load. Branch tip
+`622c4d2`; `bench/run_bench_cuda.py`, volumes 1/7/28 × 3 repeats.
+
+Operational note, recorded because it cost one sweep: the first run died
+mid-flight when a concurrent session on the same machine checked out a
+different branch under it (`main` does not carry
+`python/clean_vectorized.py`, so the py-numpy contender vanished from disk
+between two subprocess launches). Everything below comes from a second, clean
+run executed in a dedicated git worktree of `feat/cuda-cleaning-bench`, with
+binaries rebuilt and all three suites re-run inside that worktree while the
+main checkout stayed with the other session.
+
+Suite counts on the worktree that produced the swept binaries — the counts
+the review entry said must replace the unreproducible "34/34, full 50/50":
+bench-only **37/37 pass** (pool present, via junction next to the binary);
+full build with ZMQ off **62/62 pass**; Python **235 passed + 5 skipped =
+240 collected**.
+
+Gates, all green: `--verify` passed at repeat 1 — its CPU differential is
+visible as wall, not clean (repeat-1 CUDA `total_s` 58.9 s against 8.4 s
+`clean_s`, repeats 2–3 ~8.3 s total); event counts identical across every
+arch at every volume (765,711 / 3,901,017 / 21,872,663) and every e2e
+configuration landed exactly on the oracle_union counts; `materialize_s`
+populated in the stages CSV; mono-MT `merge_s` > 0; no `extrapolated` rows.
+One expected asymmetry, recorded so the next reader does not chase it:
+`bench_cpu`'s `total_s` equals its `clean_s` to the millisecond in every row.
+That is two clocks over the same span — the store-free binary does nothing
+outside its clean loop — not a missing wall measurement (its `metrics:` line
+parses; rss and cpu% are populated).
+
+28-day medians [min–max], clean mode, corrected timers:
+
+| arch | clean_s | vs cuda |
+|---|---:|---:|
+| cuda | 6.43 [6.33–8.34] | — |
+| cpp-MT 8T | 8.21 [8.12–8.32] | 1.3x |
+| cpp-1T | 46.26 [45.91–46.57] | 7.2x |
+| py-naive | 74.64 [74.32–76.31] | 11.6x |
+| py-numpy | 85.82 [84.53–86.99] | 13.4x |
+
+The correction is larger than the review estimated. Materialize alone is
+4.64 s at 28 days — 72% of the corrected clean, not "roughly half" — while
+the seven original stages still sum to 1.80 s: the old 1.82 s recording was
+accurate for what it measured, and it measured about a quarter of the phase.
+The M3 host-side replica (1.775 s) underestimated this box's materialize
+loop by 2.6x — MSVC's allocator and the per-event string build price the
+same code differently, which is exactly why the entry above refused to let
+the replica stand in for the measurement. Ratio corrections, estimate →
+measured: cpp-MT ~2x → 1.3x; cpp-1T ~13x → 7.2x; py-naive "~75 s per 28-day
+repeat" → 74.6 s [74.3–76.3] (that one held).
+
+End to end at 28 days: mono-1T 257.6 s [254.5–266.6] against 45.5 s
+store-free clean → persistence 212.1 s, 82% of wall. cuda clean + store =
+218.5 s → **1.18x** vs mono-1T (review estimate ~1.23x); cpp-MT 220.3 s →
+1.17x; CUDA over cpp-MT end to end ~1.01x. mono-MT e2e 108.4 s [107.1–111.6]
+with `merge_s` **58.7 s [57.7–62.5] measured** — the hardcoded 0.000 is gone,
+and the "~150 s" this entry's predecessor guessed for the hidden merge was
+itself off by 2.6x. Guesses go in brackets; sweeps get re-run.
+
+CUDA stage medians at 28 days (s): read 1.199, h2d 0.179, index 0.060,
+parse 0.165, delta 0.021, compact 0.041, d2h 0.137, materialize 4.636. GPU
+compute is 0.287 s — the pre-correction "~0.29 s" reading of the kernels held
+exactly. Context and allocations stay outside `clean_s` and inside the wall
+(8.43 s median total against 6.43 clean), which is where spec §6.1 puts them.
+`docs/bench/results.md`, the README benchmark table, the roadmap line and the
+three `cuda_*.png` plots now carry these measured numbers.
