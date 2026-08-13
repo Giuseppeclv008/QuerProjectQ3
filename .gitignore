@@ -12,7 +12,9 @@ telemetry_*/
 # Build
 /build/
 /build-bench/
+/build-full/
 /build-plan/
+/build-sweep/
 cmake-build-*/
 *.o
 *.obj
