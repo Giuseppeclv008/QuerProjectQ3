@@ -8,9 +8,13 @@
 
 namespace {
 
-// The exact loop bench_cpu_main.cpp runs per file. Duplicated here on purpose:
-// the test asserts the loop's behaviour, so it must not import the binary's
-// internals and assert against itself.
+// The reader+extractor pipeline bench_cpu_main.cpp's cleanOne runs per file.
+// Not the exact loop: cleanOne counts events and clears its vector every 8192
+// (it only needs the count), and the binary spreads files over a thread pool.
+// Neither changes which events a file yields -- this test pins that the
+// *events* agree with load_columns + extract_flat, field for field.
+// Duplicated here on purpose: the test asserts the pipeline's behaviour, so it
+// must not import the binary's internals and assert against itself.
 std::vector<mas::CapEvent> cleanInMemory(const std::string& path) {
     mas::CsvRawReader reader(path);
     std::vector<mas::CapEvent> out;
@@ -46,6 +50,13 @@ TEST(BenchCpuParity, MatchesLoadColumnsPlusFlatOnARealDayFile) {
         EXPECT_EQ(streamed[i].ts, flat[i].ts);
         EXPECT_EQ(streamed[i].cap_seq, flat[i].cap_seq);
         EXPECT_DOUBLE_EQ(streamed[i].app_torque, flat[i].app_torque);
+        // status/is_fault/aggregated were the omitted fields -- and is_fault
+        // is precisely the one that stayed wrong in oracle.py for months
+        // because the only cross-check compared event counts, which is_fault
+        // does not change.
+        EXPECT_EQ(streamed[i].status, flat[i].status);
+        EXPECT_EQ(streamed[i].is_fault, flat[i].is_fault);
+        EXPECT_EQ(streamed[i].aggregated, flat[i].aggregated);
         EXPECT_EQ(streamed[i].delta, flat[i].delta);
         EXPECT_EQ(streamed[i].reset, flat[i].reset);
     }
