@@ -210,7 +210,7 @@ organized by layer.
 │           ├── bench_cpu_main.cpp          # → bench_cpu       (store-free contender)
 │           └── cuda_clean_main.cpp         # → mas_cuda_clean  (GPU contender, --verify)
 │
-├── tests/                                  # Google Test unit tests (15 files, 102 tests)
+├── tests/                                  # Google Test unit tests (15 files, 110 tests)
 │   ├── test_cap_event.cpp
 │   ├── test_cap_event_extractor.cpp
 │   ├── test_cap_event_extractor_flat.cpp   # The GPU precondition, proved against the stateful one
@@ -971,7 +971,7 @@ cmake --build build --parallel
 | `MAS_BUILD_TESTS` | `ON` | Build the GoogleTest suite. `OFF` drops the last dependency that needs network. |
 
 The default triple (`OFF, ON, OFF, ON`) is the build this project has always
-had: **102 tests green**. With `MAS_BENCH_ONLY=ON` the suite is the 37 tests that
+had: **110 tests green**. With `MAS_BENCH_ONLY=ON` the suite is the 45 tests that
 need neither DuckDB nor ZeroMQ; with `MAS_BUILD_TESTS=OFF` on top of that,
 `_deps/` is never created at all — nothing is downloaded:
 
@@ -1221,19 +1221,19 @@ it, `--pdf` logs how to install it and writes Markdown and HTML as normal.
 
 ## Testing
 
-The project has **102 C++ unit tests** across 14 Google Test files, plus **240
+The project has **110 C++ unit tests** across 15 Google Test files, plus **240
 Python tests** for the analytics tier. Both counts are asserted by
 `python/tests/test_readme_counts.py`, so adding a test and forgetting this
 paragraph fails the suite rather than quietly dating it.
 
 ```bash
-cd build && ctest --output-on-failure           # 102 C++ tests
+cd build && ctest --output-on-failure           # 110 C++ tests
 cd python && ../.venv/bin/python -m pytest -q   # 240 Python tests (5 need the rebuilt store and skip without it)
 ```
 
-Under `-DMAS_BENCH_ONLY=ON` the C++ suite is the 37 tests that need neither
+Under `-DMAS_BENCH_ONLY=ON` the C++ suite is the 45 tests that need neither
 DuckDB nor ZeroMQ — the rest are excluded by design, not skipped. (Two of the
-37 skip without the extracted pool beside the binary.)
+45 skip without the extracted pool beside the binary.)
 
 | Test File | What It Tests |
 |-----------|---------------|

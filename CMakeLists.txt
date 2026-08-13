@@ -212,7 +212,8 @@ if(MAS_BUILD_TESTS)
     tests/test_cap_event_extractor_flat.cpp
     tests/test_platform_metrics.cpp
     tests/test_csv_raw_reader.cpp
-    tests/test_bench_cpu_parity.cpp)
+    tests/test_bench_cpu_parity.cpp
+    tests/test_engine_select.cpp)
   set(MAS_TEST_LIBS mas_clean_core GTest::gtest_main)
   if(NOT MAS_BENCH_ONLY)
     list(APPEND MAS_TEST_SOURCES
