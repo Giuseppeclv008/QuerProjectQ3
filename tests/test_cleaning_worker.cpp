@@ -155,6 +155,11 @@ TEST(CleaningWorker, CleanFnReceivesABeatCallbackItCanUse) {
     mas::test::FakeSink results, hbs;
     FakeStore store;
     work.queue.push_back(mas::encode(mas::WorkItem{"d1.csv"}));
+    // STOP right after the one item: run() terminates deterministically
+    // instead of idling out through kIdleExitTicks empty-tick beats, which
+    // would pad hbs.sent and hide a clean_fn that ignores the beat callback
+    // it's handed.
+    work.queue.push_back(mas::make_stop());
     int beats_from_fn = 0;
     mas::CleaningWorker w(work, results, hbs, store, "w1",
         [&](const std::string&, mas::IEventStore&,
@@ -165,7 +170,10 @@ TEST(CleaningWorker, CleanFnReceivesABeatCallbackItCanUse) {
         });
     w.run();
     EXPECT_EQ(beats_from_fn, 1);
-    EXPECT_GE(hbs.sent.size(), 3u);   // hello + the fn's beat + post-result
+    // hello + the fn's beat + the post-result beat -- exact, not a lower
+    // bound, so a clean_fn that swallows the callback instead of calling it
+    // makes this fail rather than pass on idle-tick beats alone.
+    EXPECT_EQ(hbs.sent.size(), 3u);
 }
 
 } // namespace
