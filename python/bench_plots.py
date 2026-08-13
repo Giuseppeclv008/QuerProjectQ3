@@ -146,6 +146,11 @@ def render_cuda(results_csv, stages_csv, out_dir):
     """Three plots for the CUDA sweep (spec §6.6)."""
     os.makedirs(out_dir, exist_ok=True)
     df = pd.read_csv(results_csv, comment="#")
+    # Estimated rows are not measurements and must not be plotted as if they
+    # were. The driver no longer writes them, but committed CSVs from before
+    # the change still carry them.
+    if "note" in df.columns:
+        df = df[df["note"].fillna("") != "extrapolated"]
     med = (df.groupby(["arch", "mode", "files"])["clean_s"]
              .median().reset_index())
 
