@@ -262,47 +262,82 @@ same harness (`run_bench.sh --only mas`). The two blocks therefore come from
 different sessions on the same machine — the same limitation already noted for
 the 30 re-measured rows in the previous sweep.
 
-### What the CUDA speedup is worth end to end (Amdahl, measured)
+### What the CUDA speedup is worth end to end (Amdahl)
 
 The clean-phase numbers are large and the end-to-end number is not, and the gap
 between them is the finding.
 
-28-day medians on the Windows target box (RTX 4070 Laptop, CUDA 13.3):
+**Correction (2026-08-13, review): the recorded CUDA `clean_s` measures less
+work than every other contender's.** The seven stage timers stopped before the
+loop that materializes the `CapEvent` vector — the "materialize events in
+memory" half of spec §6.1's clean mode — and before `check_header`, the pinned
+allocation and every `cudaMalloc`. A host-side replica of the materialize loop
+costs about as much as the entire recorded number at both 1 and 28 day-files,
+and the recorded rows agree: the 28-day CUDA row carries 8.5 s of process CPU
+against 1.8 s of reported clean. The code now times an eighth `materialize_s`
+stage and reports the process wall clock alongside; **the CUDA rows below are
+best read as roughly half the comparable number** until the sweep is re-run
+with the corrected timers. The CPU and Python rows measure their whole work
+and stand as recorded.
 
-| arch | clean 28d | vs CUDA |
-|---|---:|---:|
-| **cuda** | **1.82 s** | — |
-| cpp-MT (8 threads) | 7.68 s | 4.2x |
-| cpp-1T | 46.77 s | 25.7x |
-| py-numpy | 91.00 s | 50x |
+28-day results on the Windows target box (RTX 4070 Laptop, CUDA 13.3) — median
+of 3, with the min–max spread, because n=3 on a fanless-adjacent laptop does
+not support three significant figures (the same lesson the entry above records
+for the M2):
 
-`mono-1T` end to end is **230.45 s** against 46.51 s of clean, so persistence
-costs **183.9 s — 79.8% of wall-clock**. Substituting a faster clean leaves that
-untouched:
+| arch | clean 28d, median [min–max] | vs CUDA as recorded | vs CUDA, window-corrected (est.) |
+|---|---:|---:|---:|
+| **cuda** | **1.82 s** [1.81–3.89] | — | ~3.6 s |
+| cpp-MT (8 threads) | 7.68 s [7.62–7.73] | 4.2x | **~2x** |
+| cpp-1T | 46.77 s [46.60–47.11] | 25.7x | **~13x** |
+| py-numpy | 91.00 s [89.79–91.50] | 50x | ~25x |
+
+The CUDA spread is itself the caveat in miniature: repeat 1 measured 3.89 s —
+2.15× the other two repeats (cold file cache, plus `--verify`'s CPU load in
+the same process) — so the median sits one outlier away from doubling.
+
+`mono-1T` end to end is **230.5 s** [225.3–231.2] against 46.5 s of clean, so
+persistence costs **~184 s — around 80% of wall-clock**. Substituting a faster
+clean leaves that untouched:
 
 | | clean + store | e2e vs mono-1T |
 |---|---:|---:|
-| cpp-1T | 46.8 + 183.9 = 230.7 s | 1.00x |
-| cpp-MT 8T | 7.7 + 183.9 = 191.6 s | 1.20x |
-| cuda | 1.8 + 183.9 = 185.8 s | **1.24x** |
+| cpp-1T | 46.8 + 184 = 230.7 s | 1.00x |
+| cpp-MT 8T | 7.7 + 184 = 191.6 s | 1.20x |
+| cuda (window-corrected est.) | ~3.6 + 184 = ~187.5 s | **~1.23x** |
 
-**CUDA against the 8-thread C++ already in the project: 4.2x on the clean phase
-becomes 1.03x end to end.** Three percent.
+**CUDA against the 8-thread C++ already in the project: ~2x on the clean phase
+becomes ~1.02x end to end.** The measurement-window correction halves the
+clean-phase ratios and moves the end-to-end conclusion by one point — which is
+the point: the conclusion never depended on the flattered number.
 
-This is Amdahl applied honestly. Speeding a phase that is ~20% of the total by
-25x yields at most 1.25x, and 1.24x is what the sweep measures. The stage
-breakdown says the same thing from inside: of CUDA's 1.82 s, **1.17 s is disk
-read and ~0.29 s is GPU compute**. The kernel stopped being the bottleneck
-before the pipeline did.
+This is Amdahl applied honestly. Speeding a phase that is ~20% of the total
+even by 13x yields at most ~1.25x, and ~1.23x is the estimate. The stage
+breakdown (pre-correction, so read it as shape) says the same thing from
+inside: of the recorded 1.82 s, 1.17 s is disk read and ~0.29 s is GPU
+compute. The kernel stopped being the bottleneck before the pipeline did.
 
 **The defensible claim is not "the GPU makes cleaning faster" — it is that
 cleaning has stopped being the problem.** Three independent paths were measured
 — multithreaded CPU, distributed MAS, GPU — and all three land on the same
-place: the cost is persistence, not transformation. `merge_all` attacked it from
-one side (the merge phase, 1.11x to 1.84x); CUDA proved it from the other, by
-driving compute to 0.29 s and moving the total only to 1.24x.
+place: the cost is persistence, not transformation. `merge_all` attacked it
+from one side (2.89x on the merge in isolation); CUDA proved it from the
+other, by driving GPU compute to ~0.29 s and moving the total only to ~1.23x.
 
-That is a stronger result than a factor of four, because it says where to work
-next instead of celebrating a number. It also settles the question the kernel
-was written to answer: **how much headroom was left in the clean phase? Almost
-none, and it is now measured rather than assumed.**
+Two qualifications the first version of this section did not carry:
+
+- The clean-phase ratios are also a statement about the CPU baseline.
+  `cpp-1T` parses at ~35 MB/s because `CsvRawReader` builds an
+  `std::istringstream` per row and calls `std::stod` 108 times per row; a
+  `std::from_chars` parser over the same buffer would plausibly close much of
+  the gap on its own. "~13x over C++ 1T" measures the distance between a tuned
+  GPU pipeline and an untuned CPU parser — which strengthens, not weakens, the
+  persistence conclusion: with a competent CPU parser the clean phase shrinks
+  further below the store cost.
+- Every number in this section is n=3 on a laptop. The re-run with the
+  corrected timers (tracked in the validation log) is what turns the
+  window-corrected column from an estimate into a measurement.
+
+It also settles the question the kernel was written to answer: **how much
+headroom was left in the clean phase? Almost none, and that is now measured
+rather than assumed.**
