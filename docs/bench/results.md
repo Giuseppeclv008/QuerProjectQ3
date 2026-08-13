@@ -156,3 +156,88 @@ during it, so those 36 rows were kept and the MAS block was re-run through the
 same harness (`run_bench.sh --only mas`). The two blocks therefore come from
 different sessions on the same machine — the same limitation already noted for
 the 30 re-measured rows in the previous sweep.
+
+## Parquet vs DuckDB: where the persistence cost actually goes (2026-08-13, branch `feat/parquet-store`)
+
+The store was 79.8% of `mono-1T`'s wall-clock, so the Parquet backend exists to
+ask whether removing the index, the WAL and the per-row constraint is worth what
+it costs. It is not a migration: DuckDB remains the default, and this section
+records the measurement that says why.
+
+Both stores were built from the same 28 day-files of February 2026, `machine_id`
+`MCC`, one thread, and they agree exactly: **21,872,663 events each**. The
+Parquet side holds 21,872,663 rows before deduplication as well, so no worker
+re-dispatch occurred and the read-side `DISTINCT ON` removes nothing — it is
+paid for in full anyway, which is the point of the read table below.
+
+### Write
+
+| backend | wall | store on disk |
+|---|---:|---:|
+| Parquet | **33.7 s** | 233 MB (28 files) |
+| DuckDB | 90.9 s | 1183 MB |
+
+**Parquet writes the month 2.70x faster** (90.9 / 33.7) and the store is 5.07x
+smaller (1183 / 233 MB).
+
+### Read — median of 3, the three canned reports over the whole month
+
+| report | DuckDB | Parquet | ratio |
+|---|---:|---:|---:|
+| kpi | 2.188 s | 9.675 s | 4.42x |
+| drift | 1.293 s | 8.365 s | 6.47x |
+| anomalies | 1.578 s | 8.496 s | 5.38x |
+| **all three** | **5.059 s** | **26.536 s** | **5.25x** |
+
+### The net, and it is a loss
+
+Writing the month once saves 57.2 s. Every subsequent run of the three reports
+costs an extra 21.5 s. **The saving is gone after 2.7 report runs** (57.2 /
+21.5), and the store is written once and read for the rest of the project.
+
+**DuckDB wins.** Parquet wins the phase this branch set out to optimise and
+loses the one that follows it.
+
+### What the read costs are actually made of
+
+One `GROUP BY head_id` aggregate over the full 21.9M rows, median of 3, isolates
+the layers:
+
+| what is read | median |
+|---|---:|
+| DuckDB native table | 0.047 s |
+| Parquet, plain scan, no dedup | 0.081 s |
+| Parquet + `DISTINCT ON` | 0.592 s |
+| Parquet + `DISTINCT ON` + `ORDER BY` (the shipped view) | 1.514 s |
+
+**Parquet-the-format is not the problem** — a plain scan is within 1.7x of the
+native table. The 32x comes from what replaced the write-time UNIQUE index:
+`DISTINCT ON` costs 7.3x the plain scan, and the `ORDER BY` that makes it
+deterministic (without it DuckDB compiles it to `HASH_GROUP_BY` + `first()`,
+where which row survives is undefined) costs another 2.6x on top. Both are
+required for correctness and neither can be dropped.
+
+So the finding is not "Parquet is slow". It is that **moving idempotency from
+write time to read time moves the cost and multiplies it**, because the write
+happens once and the read happens on every query.
+
+### Measurement integrity
+
+- **The write regime was forced by disk, and it favours DuckDB, not Parquet.**
+  The plan called for one `mas_monolith` invocation per backend over the 28
+  extracted files. That needs the 1.5 GB CSV pool plus a 1.26 GB DuckDB store
+  present at once, against 652 MB free. So each day was extracted from the zip,
+  fed to both backends, and deleted — 28 invocations per backend, identically
+  for both.
+- That regime was then calibrated rather than assumed harmless: days 01-04 were
+  run both ways, twice. Four invocations vs one costs **DuckDB 1.28x and 1.26x**
+  (12.92 s vs 16.51 s; 14.49 s vs 18.20 s) and Parquet nothing outside noise
+  (4.59 vs 4.55 s; 6.05 vs 4.93 s). A single-invocation month would therefore
+  put DuckDB near 115 s, not 90.9 s. **2.70x on write is a lower bound.**
+  The mechanism was not investigated; only the direction and size matter here,
+  and both were reproduced.
+- The read timings include the view's full `ORDER BY` sort on every query.
+  Period predicates do not push past it: the whole matched corpus is sorted
+  regardless of the filter.
+- Same machine and same session for every figure in this section, unlike the two
+  sweeps above.

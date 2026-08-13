@@ -613,3 +613,94 @@ Projected end-to-end, NOT yet measured: MAS N=16 at 28 days is 27.1 s clean +
 64.0 s merge = 91.2 s. At ~23 s of merge it would be ~50 s, i.e. ~2.0x over
 mono-1T instead of 1.11x. That projection needs a full sweep before it is
 written down as a result.
+
+## 2026-08-13 — Parquet vs DuckDB: the store is faster to write and dearer to read
+
+The persistence phase was 79.8% of `mono-1T`'s wall-clock, so `feat/parquet-store`
+built a second `IEventStore` with no index, no WAL and no per-row constraint, to
+measure what those cost. The spec required the benchmark to be able to conclude
+that Parquet loses. It does.
+
+### Commands
+
+```bash
+# both stores, 28 February day-files, machine_id MCC, 1 thread
+#   (per-day invocation regime -- see "Disk forced the regime" below)
+./build/mas_monolith --format parquet /tmp/pq-month MCC 1 <day>.csv     # x28
+./build/mas_monolith /tmp/duck-month.duckdb MCC 1 <day>.csv             # x28
+
+.venv/bin/python bench/read_bench.py /tmp/duck-month.duckdb /tmp/pq-month 3
+```
+
+### The two stores agree
+
+```
+duckdb 21,872,663  parquet distinct 21,872,663  parquet raw 21,872,663  MATCH
+```
+
+Raw equals distinct, so no day-file was processed twice and the read-side
+`DISTINCT ON` deduplicates nothing on this corpus. It still pays for itself on
+every query — which is what the read table measures.
+
+`read_bench.py`'s pre-flight scope check ran first and reported
+`machine_id='MCC' -> 21872663 rows in both stores`. Without it a mismatched
+`machine_id` would have produced fast, plausible, meaningless timings; the guard
+exists because that failure mode is silent.
+
+### Write
+
+| backend | wall | store |
+|---|---:|---:|
+| Parquet | 33.7 s | 233 MB |
+| DuckDB | 90.9 s | 1183 MB |
+
+2.70x on write, 5.07x smaller on disk.
+
+### Read, median of 3
+
+| report | DuckDB | Parquet | ratio |
+|---|---:|---:|---:|
+| kpi | 2.188 s | 9.675 s | 4.42x |
+| drift | 1.293 s | 8.365 s | 6.47x |
+| anomalies | 1.578 s | 8.496 s | 5.38x |
+| all three | 5.059 s | 26.536 s | 5.25x |
+
+### Conclusion
+
+The write saves 57.2 s once. Each subsequent run of the three reports costs
+21.5 s more. Break-even is 2.7 report runs, after which Parquet is behind and
+stays behind. **DuckDB remains the default**, and now for a measured reason
+rather than an inherited one.
+
+Decomposed on a single `GROUP BY` over all 21.9M rows (median of 3): DuckDB
+native 0.047 s, Parquet plain scan 0.081 s, plus `DISTINCT ON` 0.592 s, plus the
+`ORDER BY` that makes it deterministic 1.514 s. The columnar format is within
+1.7x of the native table; the 32x is entirely the machinery that replaced the
+write-time UNIQUE index. Moving idempotency from write time to read time moves
+the cost onto every query.
+
+### Disk forced the regime, so the regime was calibrated
+
+Only 652 MB were free. One invocation per backend over the extracted pool needs
+the 1.5 GB of CSV plus a 1.26 GB DuckDB store at once, so each day was instead
+unzipped, given to both backends, and deleted: 28 invocations per backend,
+identically for both.
+
+Rather than assert that this is harmless, days 01-04 were run both ways, twice:
+
+| | four invocations | one invocation |
+|---|---:|---:|
+| Parquet, rep 1 | 4.59 s | 4.55 s |
+| Parquet, rep 2 | 6.05 s | 4.93 s |
+| DuckDB, rep 1 | 12.92 s | 16.51 s |
+| DuckDB, rep 2 | 14.49 s | 18.20 s |
+
+DuckDB is 1.28x and 1.26x slower in a single invocation; Parquet shows nothing
+outside noise. The regime therefore **understates** DuckDB's cost — a
+single-invocation month would land near 115 s rather than 90.9 s — so 2.70x is a
+floor, and the direction of the bias is against the conclusion being drawn, not
+for it. The mechanism behind DuckDB's single-invocation penalty was not
+investigated; it is recorded as measured and reproduced, nothing more.
+
+The extracted February pool was deleted to make room. It is regenerable: the zip
+was verified to hold all 28 day-files (1,599,006,757 bytes) before the delete.
