@@ -466,6 +466,7 @@ nothing is what lets the benchmark build on a machine with no DuckDB at all.
 | Component | File(s) | Description |
 |-----------|---------|-------------|
 | `ProcMetrics` / `read_metrics()` / `metrics_line()` | [`platform_metrics.hpp`](core/include/mas/util/platform_metrics.hpp) | Self-reported wall, CPU (user+sys) and peak RSS. `GetProcessTimes`/`GetProcessMemoryInfo` on Windows, `getrusage` elsewhere (`ru_maxrss` is bytes on macOS, KB on Linux). **The only `#ifdef _WIN32` in the codebase.** Emits one machine-readable `metrics:` line that the benchmark driver parses. |
+| `Engine` / `parse_engine()` / `resolve_engine()` | [`engine.hpp`](core/include/mas/util/engine.hpp) | The `--engine=cpu\|cuda` policy: parse the flag value, refuse an engine the binary was not built with (the error names `-DMAS_ENABLE_CUDA=ON` as the remedy), never fall back. Kept as pure functions so the refusal rules are unit-tested from builds that have no CUDA. |
 
 This replaces the old harness's `/usr/bin/time -l` wrapper, which is BSD-only —
 GNU coreutils rejects the flag and Windows has no equivalent. Having each binary
@@ -611,7 +612,7 @@ Default `machine_id`: `"MCC"`.
 ### `mas_monolith` — Multi-Threaded In-Process Pipeline
 
 ```
-usage: mas_monolith [--no-store] <out.duckdb> <machine_id> <threads> <day1.csv> [day2.csv ...]
+usage: mas_monolith [--no-store] [--engine=cpu|cuda] <out.duckdb> <machine_id> <threads> <day1.csv> [day2.csv ...]
 ```
 
 Two operating modes:
@@ -626,6 +627,17 @@ there is nothing coherent to measure without them. Measured on the M3 at one
 day-file: 0.47 s with `--no-store` against 3.2 s with the store, i.e. the write
 is ~85% of the wall clock. Both report the same 765,711 events; the `--no-store`
 run reports `store holds 0 rows`.
+
+**`--engine=cpu|cuda`** (default `cpu`) selects the cleaning engine; the store
+and every downstream consumer see identical events either way (the flat
+extractor is proved bitwise-equal to the stateful one, and the GPU path to the
+flat one by `mas_cuda_clean --verify`). `cuda` requires a binary configured
+with `-DMAS_ENABLE_CUDA=ON` — a build without it **refuses the run and names
+that flag** rather than quietly cleaning on the CPU, and a CUDA failure at
+runtime aborts the same way. There is deliberately no fallback: the summary
+line ends in `engine cpu` or `engine cuda`, and that stamp is only worth
+printing if it cannot lie. `--engine=cuda` requires `threads=1` — the pool
+parallelizes CPU cleaning, while the GPU path is one device fed file by file.
 
 Every run also emits a `metrics:` line on stderr with wall, CPU and peak RSS.
 
@@ -967,7 +979,7 @@ cmake --build build --parallel
 |--------|---------|--------|
 | `MAS_BENCH_ONLY` | `OFF` | Build only the cleaning core and the benchmark binaries. Fetches no DuckDB asset and no libzmq source, and forces `MAS_ENABLE_ZMQ=OFF`. |
 | `MAS_ENABLE_ZMQ` | `ON` | Build the ZeroMQ agent runtime (`mas_transport`, `mas_worker`, `mas_coordinator`) and its 40 tests. |
-| `MAS_ENABLE_CUDA` | `OFF` | Build `mas_cuda_clean`. Requires the CUDA Toolkit. |
+| `MAS_ENABLE_CUDA` | `OFF` | Build `mas_cuda_clean`, and (in the full build) compile the GPU cleaner into `mas_monolith` so `--engine=cuda` works. Requires the CUDA Toolkit. |
 | `MAS_BUILD_TESTS` | `ON` | Build the GoogleTest suite. `OFF` drops the last dependency that needs network. |
 
 The default triple (`OFF, ON, OFF, ON`) is the build this project has always
