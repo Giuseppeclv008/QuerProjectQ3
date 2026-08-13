@@ -25,7 +25,12 @@ PY_DIR = os.path.join(ROOT, "python")
 ROWS_PER_DAY = 86399
 REPEATS = 3
 VOLUMES = (1, 7, 28)
-PY_NAIVE_MAX_FILES = 1        # spec §6.3: 28 days is ~2 h for the naive path
+# Measured, not assumed: py-naive cleans one day-file in ~2.7 s, so the full
+# 28-file month is ~75 s per repeat -- cheap enough to measure at every volume.
+# (An earlier estimate of "~2 h for the naive path" was off by two orders of
+# magnitude and justified extrapolating the larger volumes; the extrapolation
+# and its CSV rows are gone with it.)
+PY_NAIVE_MAX_FILES = max(VOLUMES)
 
 RESULTS = os.path.join(ROOT, "bench", "results_cuda.csv")
 STAGES = os.path.join(ROOT, "bench", "results_cuda_stages.csv")
@@ -242,8 +247,6 @@ def main():
         sw = csv.DictWriter(stage_fh, fieldnames=STAGE_FIELDS)
         sw.writeheader()
 
-        naive_1day = []          # clean_s samples, used for the extrapolation
-
         for v in volumes:
             sub = files[:v]
             for rep in range(1, REPEATS + 1):
@@ -259,12 +262,10 @@ def main():
                 for arch, module in (("py-naive", "oracle"),
                                      ("py-numpy", "clean_vectorized")):
                     if arch == "py-naive" and v > PY_NAIVE_MAX_FILES:
-                        continue          # spec §6.3; extrapolated below
+                        continue
                     rel = [os.path.relpath(f, PY_DIR) for f in sub]
                     events, clean_s = py_arch_time(module, rel)
                     seen[arch] = events
-                    if arch == "py-naive" and v == 1:
-                        naive_1day.append(clean_s)
                     emit(w, arch, "clean", 1, v, rep, clean_s, clean_s, events, 0.0, 0.0)
                     print(f"done: {arch} v={v}d rep={rep} clean={clean_s:.3f}s")
 
@@ -321,23 +322,6 @@ def main():
                             if os.path.exists(stale):
                                 os.remove(stale)
                         print(f"done: {arch} [{mode}] v={v}d rep={rep} clean={clean_s:.3f}s")
-
-        # --- py-naive extrapolation (spec §6.3) ------------------------------
-        # The interpreted loop is ~40 min per repeat at 28 day-files, so it is
-        # measured at 1 day only. The transform is O(rows) with no cross-file
-        # state, so scaling the median linearly is sound for `clean` mode. Rows
-        # are labelled so nobody mistakes them for measurements.
-        if naive_1day:
-            naive_1day.sort()
-            median_1d = naive_1day[len(naive_1day) // 2]
-            for v in volumes:
-                if v <= PY_NAIVE_MAX_FILES:
-                    continue
-                est = median_1d * v
-                emit(w, "py-naive", "clean", 1, v, 0, est, est, 0, 0.0, 0.0,
-                     note="extrapolated")
-                print(f"note: py-naive v={v}d extrapolated to {est:.1f}s "
-                      f"from the 1-day median")
 
         stage_fh.close()
 
