@@ -36,7 +36,17 @@ FetchContent_MakeAvailable(libzmq cppzmq)
 unset(CMAKE_POLICY_VERSION_MINIMUM)
 
 # DuckDB v1.2.2 prebuilt binary (never build from source — 30+ min).
-if(APPLE)
+if(WIN32)
+  set(DUCKDB_ASSET libduckdb-windows-amd64.zip)
+  set(DUCKDB_LIBNAME duckdb.dll)
+  set(DUCKDB_IMPLIB duckdb.lib)        # MSVC links against the import lib,
+                                       # not the DLL; ELF and Mach-O need no
+                                       # equivalent, which is why the other
+                                       # two branches do not set it.
+  # Pinned from the first verified download on the Windows target box
+  # (2026-08-10, matches the official v1.2.2 release asset).
+  set(DUCKDB_SHA256 8fa8b50b49d0ec9a84a95edff9bfa926b8ae336d5d9a3a6442ea494606ebc9c7)
+elseif(APPLE)
   set(DUCKDB_ASSET libduckdb-osx-universal.zip)
   set(DUCKDB_LIBNAME libduckdb.dylib)
   set(DUCKDB_SHA256 150588828afd4e84cc7b13f69ba62247147a20c814a8b9a21efa55531d2fd3c9)
@@ -69,6 +79,10 @@ add_library(duckdb_imported SHARED IMPORTED GLOBAL)
 set_target_properties(duckdb_imported PROPERTIES
   IMPORTED_LOCATION "${duckdb_prebuilt_SOURCE_DIR}/${DUCKDB_LIBNAME}"
   INTERFACE_INCLUDE_DIRECTORIES "${duckdb_prebuilt_SOURCE_DIR}")
+if(WIN32)
+  set_target_properties(duckdb_imported PROPERTIES
+    IMPORTED_IMPLIB "${duckdb_prebuilt_SOURCE_DIR}/${DUCKDB_IMPLIB}")
+endif()
 
 add_library(mas_core
   core/src/domain/CapEventExtractor.cpp
@@ -106,6 +120,15 @@ add_executable(monolith_exe core/src/apps/monolith_main.cpp)
 target_link_libraries(monolith_exe PRIVATE mas_core Threads::Threads)
 set_target_properties(monolith_exe PROPERTIES OUTPUT_NAME mas_monolith)
 
+if(WIN32)
+  # /usr/bin/time -l stand-in for bench/run_bench.sh: prints the same two
+  # stderr lines (real/user/sys + peak RSS in bytes) so parse_time() keeps a
+  # single parser across macOS and Windows.
+  add_executable(win_time_exe bench/win_time.cpp)
+  target_link_libraries(win_time_exe PRIVATE psapi)
+  set_target_properties(win_time_exe PROPERTIES OUTPUT_NAME win_time)
+endif()
+
 enable_testing()
 add_executable(unit_tests
   tests/test_cap_event.cpp
@@ -123,5 +146,21 @@ target_link_libraries(unit_tests PRIVATE mas_core mas_transport GTest::gtest_mai
 target_include_directories(unit_tests PRIVATE tests)
 set_target_properties(unit_tests clean_exe merge_exe worker_exe coordinator_exe monolith_exe PROPERTIES
   BUILD_RPATH "${duckdb_prebuilt_SOURCE_DIR}")
+if(WIN32)
+  # No rpath on Windows: the loader looks next to the .exe, so copy each
+  # runtime DLL beside every binary that links it (libzmq builds shared and
+  # its DLL lands deep in _deps).
+  foreach(tgt clean_exe merge_exe worker_exe coordinator_exe monolith_exe unit_tests)
+    add_custom_command(TARGET ${tgt} POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+              "${duckdb_prebuilt_SOURCE_DIR}/${DUCKDB_LIBNAME}"
+              "$<TARGET_FILE_DIR:${tgt}>")
+  endforeach()
+  foreach(tgt worker_exe coordinator_exe unit_tests)
+    add_custom_command(TARGET ${tgt} POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+              "$<TARGET_FILE:libzmq>" "$<TARGET_FILE_DIR:${tgt}>")
+  endforeach()
+endif()
 include(GoogleTest)
 gtest_discover_tests(unit_tests)
