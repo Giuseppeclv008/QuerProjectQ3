@@ -613,3 +613,96 @@ Projected end-to-end, NOT yet measured: MAS N=16 at 28 days is 27.1 s clean +
 64.0 s merge = 91.2 s. At ~23 s of merge it would be ~50 s, i.e. ~2.0x over
 mono-1T instead of 1.11x. That projection needs a full sweep before it is
 written down as a result.
+
+## 2026-08-13 — Interleaved A/B: the clean-time anomaly is the machine, and the mono-MT/MAS gap does not survive it
+
+**HEAD:** `638478b`. **Hardware:** `Mac14,2` — MacBook Air M2, 8 cores, **no
+fan**. That last fact turns out to be the whole story.
+
+Two questions the PR #9 sweep left open: whether `clean_s` is repeatable within a
+session, and what the mono-MT/MAS gap is now that mono-MT's merge clock stops
+before its own cleanup (`638478b`).
+
+**Method.** One binary set, built before the run and untouched during it. Four
+rounds, each running mono-1T, mono-MT T=8 and MAS N=16 over the same 28 February
+day-files, in that order every time. Interleaving is the point: any drift in the
+machine hits all three configurations in the same round, so it appears as a trend
+across rounds rather than as a difference between architectures. All 12 runs
+produced exactly 21,872,663 rows.
+
+### `clean_s` is repeatable on one core and not on eight
+
+| config | r1 | r2 | r3 | r4 | median | spread |
+|---|---:|---:|---:|---:|---:|---:|
+| mono-1T | 105.4 | 107.4 | 105.7 | 108.8 | 106.6 | **3%** |
+| mono-MT T=8 | 31.3 | 34.2 | 33.6 | 38.0 | 33.9 | **21%** |
+| MAS N=16 | 30.6 | 40.6 | 36.9 | 47.0 | 38.8 | **53%** |
+
+Same binary, same input, same twenty minutes. The single-core baseline is flat to
+3% while both parallel configurations climb round on round — MAS by 53% from
+first to last. This is thermal accumulation on a fanless chassis, and it is not a
+caveat about precision: it means a parallel configuration's `clean_s` on this
+machine records *when in the sweep it ran*, not how fast it is.
+
+**This settles the "unexplained" inflation.** The PR #9 sweep reported `clean_s`
+7-34% higher than the sweep before it for every parallel configuration and none
+for mono-1T, with identical clean-path code, and presented 1.84x as a lower bound
+on the reasoning that the inflation could only depress the ratio. The reasoning
+does not hold: the sign of the effect is set by run order, not by the branch.
+Nothing was inflated *by the branch*; the two sweeps sampled different points on
+a thermal curve. **1.84x is not a floor. It is a number with tens of percent of
+uncertainty**, and the recorded ±0 on it should be read as such.
+
+### The 20.9 s gap is an artifact of the SIGTERM restart
+
+| | mono-MT T=8 | MAS N=16 | gap |
+|---|---:|---:|---:|
+| recorded (PR #9) | 76.26 | 55.39 | **20.9 s** |
+| interleaved, median of 4 | 70.4 | 72.6 | **−2.1 s** |
+
+Per round the gap is +4.3, +2.2, −4.8, −6.3 — **the sign flips**. The two
+architectures are tied inside the noise of this machine, and neither the
+"architectures do not converge" reading nor the earlier "~4 s" projection
+survives.
+
+Where the 20.9 s came from is recorded in `docs/bench/results.md` itself: that
+sweep was killed by SIGTERM at 65 of 81 rows, the completed monolith block was
+kept, and the MAS block was re-run in a fresh session. So mono-MT's numbers come
+from the tail of a long hot run and MAS's from a cold start. The caveat was
+written down; the conclusion was drawn across it anyway. Against the table above,
+mono-MT's recorded `clean_s` of 43.31 is high and MAS's 29.27 is low — exactly
+the direction a hot block versus a cold block predicts.
+
+Median merges, interleaved and with the clock fixed: mono-MT 35.8 s, MAS 33.7 s.
+The recorded 32.4 / 25.4 split had two causes, both now removed — mono-MT was
+charged for unlinking its own per-thread stores, and the two blocks were measured
+in different thermal states.
+
+### What still stands, and what does not
+
+Unaffected: every correctness result, `merge_all`'s 2.89x on its own benchmark,
+and the structural finding that merge cost stopped growing with source count.
+`clean_s` for mono-1T is stable enough to trust.
+
+Not established on this hardware: any end-to-end speedup ratio quoted to three
+significant figures, and any comparison between two parallel architectures
+measured in different sessions. The replacement is a full sweep on a machine with
+active cooling — the numbers in `bench/results.csv` should be read as shape, not
+as seconds, until then.
+
+Raw data, all 12 runs:
+
+| round | arch | clean_s | merge_s | total_s | rows |
+|---|---|---:|---:|---:|---:|
+| 1 | mono-1T | 105.4 | 0.0 | 105.4 | 21,872,663 |
+| 1 | mono-MT T=8 | 31.3 | 35.1 | 66.5 | 21,872,663 |
+| 1 | mas N=16 | 30.6 | 31.6 | 62.2 | 21,872,663 |
+| 2 | mono-1T | 107.4 | 0.0 | 107.4 | 21,872,663 |
+| 2 | mono-MT T=8 | 34.2 | 42.4 | 76.6 | 21,872,663 |
+| 2 | mas N=16 | 40.6 | 33.8 | 74.4 | 21,872,663 |
+| 3 | mono-1T | 105.7 | 0.0 | 105.7 | 21,872,663 |
+| 3 | mono-MT T=8 | 33.6 | 32.3 | 66.0 | 21,872,663 |
+| 3 | mas N=16 | 36.9 | 33.8 | 70.7 | 21,872,663 |
+| 4 | mono-1T | 108.8 | 0.0 | 108.8 | 21,872,663 |
+| 4 | mono-MT T=8 | 38.0 | 36.4 | 74.4 | 21,872,663 |
+| 4 | mas N=16 | 47.0 | 33.7 | 80.7 | 21,872,663 |

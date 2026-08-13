@@ -138,17 +138,41 @@ before the measurement:
 - **`mas N=1` gains nothing, by construction.** `merge_all` returns to
   `merge_from` for a single source, so its 0.92x is the same code path measured
   twice, not a regression.
-- **The architectures do not converge.** A projection assuming a flat 22.8 s
+- **The architectures do not converge.** ~~A projection assuming a flat 22.8 s
   merge everywhere put mono-MT T=8 and MAS N=16 within ~4 s. Measured, the gap is
-  20.9 s, because MAS's merge benefits more (25.4 s) than mono-MT's (32.4 s).
+  20.9 s, because MAS's merge benefits more (25.4 s) than mono-MT's (32.4 s).~~
+  **[WITHDRAWN 2026-08-13 — see below.]** Interleaved on the same machine the gap
+  is −2.1 s and its sign flips round to round. Both this claim and the ~4 s
+  projection it corrected were reading noise.
 
-**1.84x is a lower bound.** `clean_s` came out higher on this branch than on
-`main` for every parallel configuration (+7% to +34%, unevenly). `merge_all` does
-not touch the clean phase, and MAS `clean_s` is documented above as including
-worker spawn, ZMQ connect and the registration wait — a jittery component. So the
-new totals carry inflated clean time; with clean at `main`'s levels the ratio
-would be higher, not lower. The inflation is unexplained and is the reason the
-figure is presented as a floor.
+**~~1.84x is a lower bound.~~ Superseded 2026-08-13: it is a number with tens of
+percent of uncertainty.** The original reasoning ran: `clean_s` came out higher
+on this branch than on `main` for every parallel configuration (+7% to +34%,
+unevenly) and for none of mono-1T, `merge_all` cannot touch the clean phase, so
+the totals carry inflated clean time and the true ratio can only be higher.
+
+That inference does not hold, and an interleaved A/B says why. Four rounds of
+mono-1T, mono-MT T=8 and MAS N=16 over the same 28 day-files, one binary set,
+twenty minutes: mono-1T's `clean_s` spread 3% while mono-MT spread 21% and MAS
+53%, both climbing round on round. This is a `Mac14,2` — a MacBook Air M2, with
+**no fan**. A parallel configuration's `clean_s` here records when in the sweep it
+ran, not how fast it is, and the sign of the difference between two sweeps is set
+by run order rather than by the code under test. Nothing was inflated *by the
+branch*; the two sweeps sampled different points on a thermal curve.
+
+The same effect explains the 20.9 s gap withdrawn above. Per the measurement
+caveat below, mono-MT's rows come from the tail of a long hot run and MAS's from
+a fresh session after the SIGTERM — and mono-MT's recorded `clean_s` of 43.31 is
+correspondingly high against 33.9 interleaved, MAS's 29.27 correspondingly low
+against 38.8. The caveat was recorded; the conclusion was drawn across it anyway.
+
+Full measurement in [`docs/validation-log.md`](../validation-log.md), entry
+2026-08-13. What survives: every correctness result, `merge_all`'s 2.89x on its
+own benchmark, the structural finding that merge cost stopped growing with source
+count, and mono-1T's timings. What does not: any end-to-end ratio quoted to three
+significant figures, and any comparison between two parallel architectures
+measured in different sessions. Read the table below as shape, not as seconds,
+until the sweep is repeated on hardware with active cooling.
 
 **Measurement caveat.** The first attempt at this sweep was killed by SIGTERM at
 65 of 81 rows, mid-MAS. The monolith block had completed and no binary changed

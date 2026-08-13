@@ -650,12 +650,23 @@ creates deterministic 2-row test files with cross-day counter continuity for
 smoke testing.
 
 **Headline finding — the merge phase is the scaling wall.** Cleaning
-parallelizes well (28-day medians: mono-1T 101.0 s → MAS N=16 27.1 s, a 3.73×
-speedup), but unifying the per-worker stores costs 63–65 s at month scale.
-End-to-end the MAS tops out at **1.11×** over the sequential baseline (N=16:
-91.2 s vs 101.0 s), and mono-MT never meaningfully beats mono-1T. This is the
-measured price of the "per-worker single-writer stores, merge at the sink"
-design.
+parallelizes well; unifying the per-worker stores is what caps the run. Before
+`merge_all` the merge cost 63–65 s at month scale against a ~101 s sequential
+baseline, so the whole gain from parallel cleaning went back into the sink. That
+is the price of the "per-worker single-writer stores, merge at the sink" design,
+and it is the finding the sweep was worth running for.
+
+**The end-to-end ratios are not settled, and the reason is the hardware.** The
+sweep machine is a `Mac14,2` — a MacBook Air M2, with no fan. An interleaved A/B
+(four rounds, one binary set, same 28 day-files) puts mono-1T's `clean_s` spread
+at 3% while mono-MT's is 21% and the MAS's is 53%, both climbing round on round:
+a parallel configuration's clean time here records when in the sweep it ran. So
+`bench/results.csv` should be read as *shape* — how cost moves with N, where the
+bottleneck sits — and not as seconds. Numbers that survive that reading are in
+[`docs/bench/results.md`](docs/bench/results.md); the ones that do not are marked
+there, with the measurement in the
+[validation log](docs/validation-log.md) (entry 2026-08-13). A repeat on hardware
+with active cooling is the open item.
 
 These numbers replace an earlier sweep that was timing 66% of the work: under
 the old `cap_seq` key the store wrote 14.4M rows where it now writes 21.9M for
@@ -665,11 +676,13 @@ now flat, because that growth was the defect doing work — more stores meant
 more colliding `cap_seq` for `INSERT OR IGNORE` to resolve, and every
 resolution discarded a real closure.
 
-The wall is being attacked on branch `perf/merge-set-based`, which replaces N
-per-row index-probing passes with one hash-based `DISTINCT` over the union of
-the sources. Measured in isolation on the same 8 stores, alternating binaries:
-**65.9 s → 22.8 s, 2.89×**, with identical row counts. End-to-end confirmation
-is still pending.
+The wall has since been attacked: `DuckDbEventStore::merge_all()` replaces N
+per-row index-probing passes with one hash-based `DISTINCT` over the union of the
+sources. Measured in isolation on the same 8 stores, alternating binaries:
+**65.9 s → 22.8 s, 2.89×**, with identical row counts; across the sweep the merge
+improves ~2.1× consistently. That figure is a like-for-like comparison of the two
+merge implementations and is unaffected by the thermal caveat above, which bites
+on the clean phase.
 
 All 81 runs matched the correctness oracle exactly.
 
@@ -993,7 +1006,7 @@ a number.
 ## Roadmap
 
 - [x] **Python analytics agents** — eight deterministic analysis tools, an LLM planner and narrator that cannot alter a number, and the `arol` CLI. See [Analytics CLI and Reports](#analytics-cli-and-reports).
-- [x] **Attack the merge bottleneck** — the benchmark's headline finding. `perf/merge-set-based` replaces the per-row `INSERT OR IGNORE` probes with one set-based dedup over the union: 65.9 s → 22.8 s in isolation (2.89×), same rows. Partitioned Parquet output or a concurrent-writer store remain the larger redesigns
+- [x] **Attack the merge bottleneck** — the benchmark's headline finding. `DuckDbEventStore::merge_all()` replaces the per-row `INSERT OR IGNORE` probes with one set-based dedup over the union: 65.9 s → 22.8 s in isolation (2.89×), ~2.1× across the sweep, same rows. Partitioned Parquet output or a concurrent-writer store remain the larger redesigns
 - [ ] **PUB/SUB fan-out and REQ/REP registration** — the two ZeroMQ patterns from the spec that the current 3-endpoint PUSH/PULL fabric does not yet use
 - [ ] **TRY_CAST + quarantine** — gracefully handle malformed timestamps (currently strict-CAST aborts the day-file)
 - [ ] **Monitoring dashboard** — live view of processing progress and per-head statistics
