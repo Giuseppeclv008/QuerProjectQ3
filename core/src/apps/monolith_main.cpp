@@ -98,7 +98,15 @@ int main(int argc, char** argv) {
                     events += n;
                 }
                 clean_s = seconds_since(t0);
-                rows = 0;
+                // The store saw every write; its count must equal the sum of
+                // clean_file's returns, or one of the two miscounts batches.
+                if (store.count() != events) {
+                    std::cerr << "error: clean_file returned " << events
+                              << " events but the store received "
+                              << store.count() << "\n";
+                    return 1;
+                }
+                rows = 0;   // nothing persisted; "store holds 0 rows" is true
             } else {
                 mas::DuckDbEventStore store(out, machine);
                 for (const auto& f : files) {

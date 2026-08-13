@@ -6,6 +6,7 @@
 // replacement is thrust's counting_iterator, which CUB's device algorithms take.
 #include <thrust/iterator/counting_iterator.h>
 #include <chrono>
+#include <climits>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -77,6 +78,9 @@ __device__ __forceinline__ double parse_num(const char* p, const char* e,
         if (frac) ++scale;
     }
     if (mant > kExact) *inexact = true;
+    if (scale > 22) *inexact = true;   // pow10_ is exact only to 1e22; beyond
+                                       // it the divisor itself is rounded and
+                                       // the one-rounding argument fails
     double v = static_cast<double>(mant);
     if (scale > 0) v /= pow10_(scale);
     return neg ? -v : v;
@@ -188,18 +192,25 @@ __global__ void delta_kernel(const double* count, const double* torque,
     flags[t] = 1;
 }
 
+// Sticky-error timer: every cudaEvent call records its first failure instead
+// of being ignored, so a stage cannot silently report 0.000 because an event
+// failed to create or record. The caller checks ok() once, after the last
+// stage -- garbage timings fail the file rather than entering the CSV.
 struct Timer {
     cudaEvent_t a{}, b{};
-    Timer()  { cudaEventCreate(&a); cudaEventCreate(&b); }
+    cudaError_t err = cudaSuccess;
+    void note(cudaError_t e) { if (err == cudaSuccess && e != cudaSuccess) err = e; }
+    Timer()  { note(cudaEventCreate(&a)); note(cudaEventCreate(&b)); }
     ~Timer() { cudaEventDestroy(a); cudaEventDestroy(b); }
-    void start() { cudaEventRecord(a); }
+    void start() { note(cudaEventRecord(a)); }
     double stop() {
-        cudaEventRecord(b);
-        cudaEventSynchronize(b);
+        note(cudaEventRecord(b));
+        note(cudaEventSynchronize(b));
         float ms = 0;
-        cudaEventElapsedTime(&ms, a, b);
+        note(cudaEventElapsedTime(&ms, a, b));
         return ms * 1e-3;
     }
+    bool ok() const { return err == cudaSuccess; }
 };
 
 bool check_header(const std::string& path, std::string& error) {
@@ -244,6 +255,16 @@ bool cuda_clean_file(const std::string& path, std::vector<CapEvent>& out,
     const size_t n_bytes = static_cast<size_t>(in.tellg());
     in.seekg(0);
 
+    // CUB's DeviceSelect takes num_items as int, so the compaction paths top
+    // out at INT_MAX items. A day-file is ~58 MB; refuse loudly rather than
+    // truncate silently if one ever is not.
+    if (n_bytes > static_cast<size_t>(INT_MAX)) {
+        error = path + " is " + std::to_string(n_bytes) +
+                " bytes; the CUB compaction path (int num_items) caps a file "
+                "at 2 GB -- split the file or lift the CUB calls to i64";
+        return false;
+    }
+
     char* h_buf = nullptr;
     // +1: NUL-terminated so the patch path below can strtod straight into the
     // buffer -- it stops at ',' or '\r'/'\n', and the terminator bounds a file
@@ -254,6 +275,13 @@ bool cuda_clean_file(const std::string& path, std::vector<CapEvent>& out,
     in.read(h_buf, static_cast<std::streamsize>(n_bytes));
     h_buf[n_bytes] = '\0';
     times.read_s = t.stop();
+    if (!in || in.gcount() != static_cast<std::streamsize>(n_bytes)) {
+        error = path + ": read " + std::to_string(in.gcount()) + " of " +
+                std::to_string(n_bytes) + " bytes; refusing to parse the "
+                "uninitialized remainder";
+        cudaFreeHost(h_buf);
+        return false;
+    }
 
     char* d_buf = nullptr;
     unsigned char* d_flags = nullptr;
@@ -289,6 +317,11 @@ bool cuda_clean_file(const std::string& path, std::vector<CapEvent>& out,
     FAIL_IF(cudaMalloc(&d_flags, n_bytes), "cudaMalloc flags");
     FAIL_IF(cudaMalloc(&d_nl_count, sizeof(unsigned int)), "cudaMalloc nl_count");
     FAIL_IF(cudaMemset(d_nl_count, 0, sizeof(unsigned int)), "memset nl_count");
+    // Stage windows time compute and transfers only; every allocation sits
+    // outside every window (spec §6.4 -- stages are only comparable if they
+    // all account the same kinds of cost). index_s is therefore two segments
+    // around the untimed cudaMallocs, whose sizes depend on the first
+    // segment's n_lines.
     unsigned int n_lines = 0;
     t.start();
     {
@@ -297,6 +330,7 @@ bool cuda_clean_file(const std::string& path, std::vector<CapEvent>& out,
         flag_newlines<<<static_cast<unsigned int>(grid), blk>>>(d_buf, n_bytes,
                                                                 d_flags, d_nl_count);
     }
+    times.index_s = t.stop();
     FAIL_IF(cudaGetLastError(), "S2 flag");
     FAIL_IF(cudaMemcpy(&n_lines, d_nl_count, sizeof(unsigned int),
                        cudaMemcpyDeviceToHost), "D2H nl_count");
@@ -308,10 +342,11 @@ bool cuda_clean_file(const std::string& path, std::vector<CapEvent>& out,
         cub::DeviceSelect::Flagged(nullptr, tmp_bytes, idx, d_flags, d_nl,
                                    d_nl_count, static_cast<int>(n_bytes));
         FAIL_IF(cudaMalloc(&d_tmp, tmp_bytes), "cudaMalloc cub tmp");
+        t.start();
         cub::DeviceSelect::Flagged(d_tmp, tmp_bytes, idx, d_flags, d_nl,
                                    d_nl_count, static_cast<int>(n_bytes));
+        times.index_s += t.stop();
     }
-    times.index_s = t.stop();
     FAIL_IF(cudaGetLastError(), "S2 index");
 
     // Header only, or a single data row (which is the seed and emits nothing).
@@ -337,6 +372,14 @@ bool cuda_clean_file(const std::string& path, std::vector<CapEvent>& out,
 
     // ---- S4: delta ----------------------------------------------------------
     const size_t slots = static_cast<size_t>(n_rows - 1) * NUM_HEADS;
+    if (slots > static_cast<size_t>(INT_MAX)) {
+        error = path + ": " + std::to_string(n_rows) + " rows give " +
+                std::to_string(slots) + " event slots, past the CUB "
+                "compaction path's int num_items -- split the file or lift "
+                "the CUB calls to i64";
+        cleanup();
+        return false;
+    }
     FAIL_IF(cudaMalloc(&d_slots, slots * sizeof(CapEventDevice)), "cudaMalloc slots");
     FAIL_IF(cudaMalloc(&d_evflags, slots), "cudaMalloc evflags");
     t.start();
@@ -351,18 +394,18 @@ bool cuda_clean_file(const std::string& path, std::vector<CapEvent>& out,
     // ---- S5: compact --------------------------------------------------------
     FAIL_IF(cudaMalloc(&d_dense, slots * sizeof(CapEventDevice)), "cudaMalloc dense");
     FAIL_IF(cudaMalloc(&d_ev_count, sizeof(unsigned int)), "cudaMalloc ev_count");
-    t.start();
     {
         void* tmp2 = nullptr;
         size_t tmp2_bytes = 0;
         cub::DeviceSelect::Flagged(nullptr, tmp2_bytes, d_slots, d_evflags, d_dense,
                                    d_ev_count, static_cast<int>(slots));
         FAIL_IF(cudaMalloc(&tmp2, tmp2_bytes), "cudaMalloc cub tmp2");
+        t.start();
         cub::DeviceSelect::Flagged(tmp2, tmp2_bytes, d_slots, d_evflags, d_dense,
                                    d_ev_count, static_cast<int>(slots));
+        times.compact_s = t.stop();
         cudaFree(tmp2);
     }
-    times.compact_s = t.stop();
     FAIL_IF(cudaGetLastError(), "S5 compact");
 
     unsigned int n_events = 0;
@@ -450,6 +493,14 @@ bool cuda_clean_file(const std::string& path, std::vector<CapEvent>& out,
     times.materialize_s =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - tm0)
             .count();
+    if (!t.ok()) {
+        error = path + ": stage timing failed: " +
+                cudaGetErrorString(t.err) +
+                " -- the events are fine but the timings are garbage, and a "
+                "benchmark run must not record them";
+        cleanup();
+        return false;
+    }
 #undef FAIL_IF
     cleanup();
     return true;
