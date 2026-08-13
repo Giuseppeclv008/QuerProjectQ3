@@ -100,4 +100,9 @@ void ParquetEventStore::close() {
 
 long long ParquetEventStore::count() const { return impl_->n; }
 
+std::string parquet_path_for(const std::string& out_dir, const std::string& in_path) {
+    return (std::filesystem::path(out_dir) /
+            (std::filesystem::path(in_path).stem().string() + ".parquet")).string();
+}
+
 } // namespace mas

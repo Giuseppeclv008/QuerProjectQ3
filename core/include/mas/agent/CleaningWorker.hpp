@@ -17,7 +17,11 @@ namespace mas {
 // fact working.
 class CleaningWorker {
 public:
-    using CleanFn = std::function<long long(const std::string&, IEventStore&)>;
+    // The beat callback is passed so a clean_fn that supplies its own store --
+    // the parquet path does -- can decorate it too. Without it that path is
+    // silent for the whole file and the coordinator tombstones a live worker.
+    using CleanFn = std::function<long long(const std::string&, IEventStore&,
+                                            const std::function<void()>&)>;
 
     // Minimum spacing between in-progress heartbeats. Far under the
     // coordinator's 30 s death threshold, and coarse enough that a day-file's

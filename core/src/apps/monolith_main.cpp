@@ -1,5 +1,6 @@
 #include "mas/domain/Pipeline.hpp"
 #include "mas/store/DuckDbEventStore.hpp"
+#include "mas/store/ParquetEventStore.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -33,14 +34,28 @@ void remove_store(const std::string& path) {
 
 int main(int argc, char** argv) {
     if (argc < 5) {
-        std::cerr << "usage: mas_monolith <out.duckdb> <machine_id> <threads> "
-                     "<day1.csv> [day2.csv ...]\n";
+        std::cerr << "usage: mas_monolith [--format duckdb|parquet] <out.duckdb|out_dir> "
+                     "<machine_id> <threads> <day1.csv> [day2.csv ...]\n";
         return 2;
     }
-    const std::string out = argv[1], machine = argv[2];
+    int argi = 1;
+    bool parquet = false;
+    if (std::string(argv[argi]) == "--format") {
+        if (argc < argi + 2) { std::cerr << "error: --format needs a value\n"; return 2; }
+        const std::string fmt = argv[argi + 1];
+        if (fmt == "parquet") parquet = true;
+        else if (fmt != "duckdb") { std::cerr << "error: --format must be duckdb or parquet\n"; return 2; }
+        argi += 2;
+    }
+    if (argc - argi < 4) {
+        std::cerr << "usage: mas_monolith [--format duckdb|parquet] <out.duckdb|out_dir> "
+                     "<machine_id> <threads> <day1.csv> [day2.csv ...]\n";
+        return 2;
+    }
+    const std::string out = argv[argi], machine = argv[argi + 1];
     int threads = 0;
     try {
-        threads = std::stoi(argv[3]);
+        threads = std::stoi(argv[argi + 2]);
     } catch (const std::exception&) {
         std::cerr << "error: threads must be a number\n";
         return 2;
@@ -50,7 +65,7 @@ int main(int argc, char** argv) {
         return 2;
     }
     std::vector<std::string> files;
-    for (int i = 4; i < argc; ++i) files.emplace_back(argv[i]);
+    for (int i = argi + 3; i < argc; ++i) files.emplace_back(argv[i]);
 
     try {
         const auto t0 = std::chrono::steady_clock::now();
@@ -59,18 +74,34 @@ int main(int argc, char** argv) {
         long long rows = 0;
 
         if (threads == 1) {
-            // Baseline arch "mono-1T": one store, one file after another.
-            mas::DuckDbEventStore store(out, machine);
-            for (const auto& f : files) {
-                const long long n = mas::clean_file(f, store);
-                if (n < 0) {
-                    std::cerr << "error: cannot clean " << f << "\n";
-                    return 1;
+            if (parquet) {
+                // A store per input file, not per run: IEventStore::write()
+                // never learns that a file is finished, so a shared store
+                // would have to buffer all 21.9M events before it could name
+                // anything (spec §3.1).
+                for (const auto& f : files) {
+                    mas::ParquetEventStore store(mas::parquet_path_for(out, f), machine);
+                    const long long n = mas::clean_file(f, store);
+                    if (n < 0) { std::cerr << "error: cannot clean " << f << "\n"; return 1; }
+                    store.close();
+                    events += n;
                 }
-                events += n;
+                clean_s = seconds_since(t0);
+                rows = events;
+            } else {
+                // Baseline arch "mono-1T": one store, one file after another.
+                mas::DuckDbEventStore store(out, machine);
+                for (const auto& f : files) {
+                    const long long n = mas::clean_file(f, store);
+                    if (n < 0) {
+                        std::cerr << "error: cannot clean " << f << "\n";
+                        return 1;
+                    }
+                    events += n;
+                }
+                clean_s = seconds_since(t0);
+                rows = store.count();
             }
-            clean_s = seconds_since(t0);
-            rows = store.count();
         } else {
             // Arch "mono-MT" (spec §3): fixed pool of T threads pulling file
             // indices off an atomic counter — the same file-grain unit of
@@ -87,6 +118,16 @@ int main(int argc, char** argv) {
             for (int t = 0; t < threads; ++t) remove_store(thread_store(out, t));
             auto pull = [&](int t) {
                 try {
+                    if (parquet) {
+                        for (std::size_t i; (i = next.fetch_add(1)) < files.size();) {
+                            mas::ParquetEventStore local(
+                                mas::parquet_path_for(out, files[i]), machine);
+                            per_file[i] = mas::clean_file(files[i], local);
+                            local.close();
+                            if (per_file[i] < 0) failed = true;
+                        }
+                        return;
+                    }
                     mas::DuckDbEventStore local(thread_store(out, t), machine);
                     for (std::size_t i;
                          (i = next.fetch_add(1)) < files.size();) {
@@ -114,24 +155,29 @@ int main(int argc, char** argv) {
             }
             for (const auto n : per_file) events += n;
 
-            // Thread stores are closed (destroyed) here — merge_from's
-            // closed/checkpointed precondition holds.
-            const auto tm = std::chrono::steady_clock::now();
-            {
-                mas::DuckDbEventStore store(out, machine);
-                std::vector<std::string> sources;
-                sources.reserve(static_cast<std::size_t>(threads));
-                for (int t = 0; t < threads; ++t)
-                    sources.push_back(thread_store(out, t));
-                store.merge_all(sources);
-                rows = store.count();
-            }   // close the destination before deleting its sources
-            // The per-thread stores used to survive the run. Since the store
-            // appends, a later run over a *different* file set re-merged the
-            // previous run's rows into the new one, silently — build_store.sh
-            // removed only the destination.
-            for (int t = 0; t < threads; ++t) remove_store(thread_store(out, t));
-            merge_s = seconds_since(tm);
+            if (parquet) {
+                merge_s = 0.0;
+                for (const auto n : per_file) rows += n;
+            } else {
+                // Thread stores are closed (destroyed) here — merge_from's
+                // closed/checkpointed precondition holds.
+                const auto tm = std::chrono::steady_clock::now();
+                {
+                    mas::DuckDbEventStore store(out, machine);
+                    std::vector<std::string> sources;
+                    sources.reserve(static_cast<std::size_t>(threads));
+                    for (int t = 0; t < threads; ++t)
+                        sources.push_back(thread_store(out, t));
+                    store.merge_all(sources);
+                    rows = store.count();
+                }   // close the destination before deleting its sources
+                // The per-thread stores used to survive the run. Since the
+                // store appends, a later run over a *different* file set
+                // re-merged the previous run's rows into the new one,
+                // silently — build_store.sh removed only the destination.
+                for (int t = 0; t < threads; ++t) remove_store(thread_store(out, t));
+                merge_s = seconds_since(tm);
+            }
         }
 
         std::cerr << "monolith: " << files.size() << " files, " << events

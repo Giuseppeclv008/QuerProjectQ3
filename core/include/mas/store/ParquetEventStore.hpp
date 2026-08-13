@@ -31,4 +31,8 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
+// <dir>/<input basename without extension>.parquet — the naming that makes
+// reprocessing idempotent.
+std::string parquet_path_for(const std::string& out_dir, const std::string& in_path);
+
 } // namespace mas
