@@ -143,6 +143,29 @@ for v in "${VOLUMES[@]}"; do
     done
 done
 
+# --- parquet runs -------------------------------------------------------------
+# Same clean path, different persistence: no index, no WAL, no merge. The
+# comparison is against mono-1T's e2e, where the DuckDB store is 79.8% of
+# wall-clock.
+for v in "${VOLUMES[@]}"; do
+    for rep in 1 2 3; do
+        R="$T/run" && rm -rf "$R" && mkdir -p "$R/pq"
+        /usr/bin/time -l "$BUILD/mas_monolith" --format parquet "$R/pq" "$MACHINE" 1 \
+            "${FILES[@]:0:$v}" 2>"$R/log" || { cat "$R/log"; exit 1; }
+        line=$(grep '^monolith:' "$R/log")
+        ev=$(echo "$line"    | sed -n 's/.* files, \([0-9]*\) events.*/\1/p')
+        clean=$(echo "$line" | sed -n 's/.*clean \([0-9.]*\) s.*/\1/p')
+        total=$(echo "$line" | sed -n 's/.*total \([0-9.]*\) s.*/\1/p')
+        rows=$(python3 -c "
+import duckdb,sys
+print(duckdb.sql(\"SELECT COUNT(DISTINCT (machine_id, head_id, ts)) FROM read_parquet('$R/pq/*.parquet')\").fetchone()[0])")
+        check_count "$rows" "$v" "parquet v=$v rep=$rep"
+        read -r real user sys rss < <(parse_time "$R/log")
+        emit_row "parquet" 0 1 "$v" "$rep" "$clean" "0" "$total" "$ev" "$rss" "$user" "$sys" "$real"
+        echo "done: parquet v=${v}d rep=$rep total=${total}s"
+    done
+done
+
 fi   # end monolith block
 
 # --- MAS runs ----------------------------------------------------------------
