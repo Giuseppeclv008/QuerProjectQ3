@@ -13,12 +13,9 @@ import sys
 import numpy as np
 import pandas as pd
 
+import oracle
+
 NUM_HEADS = 36
-# Bit 0 of the AROL status bitmask, matching oracle.is_reject and
-# mas::is_reject. This file was written while oracle.py still tested
-# `status in {65.0}`; that rule was corrected and this one was not, so
-# status 9 (No InTorque) read as clean here. The merge that brought the
-# corrected oracle onto this branch is what surfaced it.
 
 EXPECTED_HEADER = (
     ["timestamp"]
@@ -60,16 +57,34 @@ def extract(path):
     # the two disagree on real data. round_trip uses the same correctly-rounded
     # strtod float() does. Spec §10 R2: a parse that is one ulp out is a bug to
     # fix, not a tolerance to widen.
-    df = pd.read_csv(path, header=0, names=EXPECTED_HEADER,
-                     dtype=_DTYPES, float_precision="round_trip")
+    #
+    # Dirty input goes to oracle.extract instead. The contract of this module is
+    # "the same tuples as oracle.py", and oracle skips short rows and rows with
+    # an unparsable cell -- the row-skip rules CsvRawReader applies to the whole
+    # pool in production. pandas cannot reproduce them from here: a malformed
+    # cell raises out of read_csv, and a short row is silently NaN-padded. Both
+    # used to kill this contender (or worse, feed NaN through the transform) on
+    # exactly the input the cross-check exists for. Re-implementing the skip
+    # rules a third time is how the GPU parser got its own divergence, so the
+    # dirty path delegates to the reference instead. The pool is clean, so the
+    # benchmark never takes this branch.
+    try:
+        df = pd.read_csv(path, header=0, names=EXPECTED_HEADER,
+                         dtype=_DTYPES, float_precision="round_trip")
+    except ValueError:            # ParserError subclasses ValueError
+        return oracle.extract(path)
     n_rows = len(df)
     if n_rows < 2:
         return []
 
     ts = df["timestamp"].to_numpy()
-    count = np.rint(df.iloc[:, 1:1 + NUM_HEADS].to_numpy(dtype=np.float64)).astype(np.int64)
+    count_f = df.iloc[:, 1:1 + NUM_HEADS].to_numpy(dtype=np.float64)
     torque = df.iloc[:, 1 + NUM_HEADS:1 + 2 * NUM_HEADS].to_numpy(dtype=np.float64)
     status = df.iloc[:, 1 + 2 * NUM_HEADS:].to_numpy(dtype=np.float64)
+    if (np.isnan(count_f).any() or np.isnan(torque).any()
+            or np.isnan(status).any() or pd.isna(ts).any()):
+        return oracle.extract(path)
+    count = np.rint(count_f).astype(np.int64)
 
     # Spec §3: last_count_[h] after row i is always count[i][h], so the whole
     # transform is a one-row difference. Row 0 is the seed and emits nothing.

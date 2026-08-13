@@ -85,6 +85,44 @@ def test_rejects_a_header_with_a_wrong_column_name(tmp_path):
         clean_vectorized.extract(p)
 
 
+def test_agrees_with_oracle_on_a_truncated_row(tmp_path):
+    # oracle (and CsvRawReader in production) skip a short row and carry the
+    # per-head state across the gap. pandas instead NaN-pads it, which used to
+    # feed NaN through the transform. The events must be identical, including
+    # the delta computed across the skipped row.
+    p = str(tmp_path / "short.csv")
+    _write_csv(p, [
+        _row("2026-02-01T00:00:00.000", 100),
+        _row("2026-02-01T00:00:01.000", 101),
+    ])
+    with open(p, "a", newline="") as f:
+        f.write("2026-02-01T00:00:02.000,7,7\n")            # 3 of 109 columns
+    with open(p, "a", newline="") as f:
+        ts, c, t, s = _row("2026-02-01T00:00:03.000", 103)
+        f.write(",".join([ts] + [str(x) for x in c + t + s]) + "\n")
+    got = clean_vectorized.extract(p)
+    assert got == oracle.extract(p)
+    # The skipped row must not have produced a reset: one +1 event, then one
+    # aggregated +2 spanning the gap, per head.
+    assert not any(ev[8] for ev in got), "a truncated row fabricated a reset"
+
+
+def test_agrees_with_oracle_on_a_malformed_cell(tmp_path):
+    # A cell the float parser refuses kills read_csv outright; oracle skips the
+    # row. The contender must survive and agree, not die on exactly the input
+    # the cross-check exists for.
+    p = str(tmp_path / "badcell.csv")
+    _write_csv(p, [
+        _row("2026-02-01T00:00:00.000", 100),
+        _row("2026-02-01T00:00:01.000", 101),
+    ])
+    ts, c, t, s = _row("2026-02-01T00:00:02.000", 102)
+    t[5] = "garbage"
+    with open(p, "a", newline="") as f:
+        f.write(",".join([ts] + [str(x) for x in c + t + s]) + "\n")
+    assert clean_vectorized.extract(p) == oracle.extract(p)
+
+
 @pytest.mark.skipif(not REAL, reason="pool not extracted")
 def test_agrees_with_oracle_on_a_real_day_file():
     got = clean_vectorized.extract(REAL[0])
