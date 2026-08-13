@@ -121,22 +121,24 @@ def render(csv_path, out_dir) -> None:
                     "peak_rss_mb", "cpu_pct"]
     md = ["# Benchmark results (median of 3 repeats)", "",
           _dataframe_to_markdown(med[cols]), "",
-          "Caveats: laptop thermals (no fan control), median-of-3, "
-          "N=16 on 8 cores is a deliberate oversubscription point, "
-          "merge phase reported separately; mono-MT uses a std::thread "
-          "atomic-counter pool (dynamic load balancing, slightly fairer "
-          "than PUSH/PULL round-robin)."]
+          "Caveats: measured on an actively-cooled i7-13700H laptop "
+          "(6P+8E cores, 20 threads — N=16 exceeds the P-cores but not the "
+          "hardware threads), median-of-3, merge phase reported separately; "
+          "mono-MT uses a std::thread atomic-counter pool (dynamic load "
+          "balancing, slightly fairer than PUSH/PULL round-robin)."]
     # Everything below the generated table is hand-written analysis, and this
     # function used to overwrite the whole file — regenerating the plots silently
     # deleted it. Keep whatever follows the first "## " heading after the table.
     target = out / "results.md"
     tail = ""
     if target.exists():
-        existing = target.read_text()
+        # encoding pinned: Windows' locale default is cp1252, which mangles
+        # the em-dashes in this file and can refuse bytes UTF-8 accepts.
+        existing = target.read_text(encoding="utf-8")
         marker = existing.find("\n## ")
         if marker != -1:
             tail = existing[marker:]
-    target.write_text("\n".join(md) + "\n" + tail)
+    target.write_text("\n".join(md) + "\n" + tail, encoding="utf-8")
 
 
 def main() -> int:
