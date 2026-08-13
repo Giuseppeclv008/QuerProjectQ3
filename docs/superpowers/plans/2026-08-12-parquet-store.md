@@ -1065,7 +1065,7 @@ the comparison from being decided by the half that flatters it."
 **Files:**
 - Modify: `docs/bench/results.md`, `docs/validation-log.md`
 
-- [ ] **Step 1: Build the store both ways at month scale**
+- [x] **Step 1: Build the store both ways at month scale**
 
 Run:
 ```bash
@@ -1078,7 +1078,7 @@ time ./build/mas_monolith /tmp/duck-month.duckdb MCC 1 "$D"/*.csv
 Record both wall times. Expect DuckDB near 230 s and Parquet well under it; if
 Parquet is not faster on write, stop and report that — it is the result.
 
-- [ ] **Step 2: Verify the two stores agree**
+- [x] **Step 2: Verify the two stores agree**
 
 Run:
 ```bash
@@ -1092,12 +1092,12 @@ print(f'duckdb {d:,}  parquet {p:,}  {\"MATCH\" if d == p else \"MISMATCH\"}')"
 Expected: `21,872,663` both, `MATCH`. A mismatch means the backends disagree and
 no timing is worth quoting until it is explained.
 
-- [ ] **Step 3: Time the reads**
+- [x] **Step 3: Time the reads**
 
 Run: `.venv/bin/python bench/read_bench.py /tmp/duck-month.duckdb /tmp/pq-month 3`
 Expected: `bench/read_results.csv` with 18 rows.
 
-- [ ] **Step 4: Write the finding**
+- [x] **Step 4: Write the finding**
 
 Append a section to `docs/bench/results.md` stating, with the measured numbers:
 write time for each backend at month scale; read time per report type for each;
@@ -1106,14 +1106,14 @@ including the case where Parquet writes faster and reads slower for a net loss.
 Do not round in a direction that favours a conclusion, and do not quote a ratio
 without the two numbers it came from.
 
-- [ ] **Step 5: Append the validation-log entry**
+- [x] **Step 5: Append the validation-log entry**
 
 Record: the two commands, both row counts and the fact they matched, the write
 and read tables, and the conclusion. If any figure is extrapolated or measured
 in a different session from the one it is compared against, say so — the log
 already carries that caveat for two earlier sweeps.
 
-- [ ] **Step 6: Full suite**
+- [x] **Step 6: Full suite**
 
 Run:
 ```bash
@@ -1122,7 +1122,7 @@ cd python && ../.venv/bin/python -m pytest -q 2>&1 | tail -2
 ```
 Expected: `[  PASSED  ] 90 tests.` and `234 passed, 5 skipped`.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add docs/bench/results.md docs/validation-log.md bench/read_results.csv
