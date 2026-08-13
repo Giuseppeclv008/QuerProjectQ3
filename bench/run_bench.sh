@@ -29,9 +29,22 @@ REPEATS=3
 WORK=tcp://127.0.0.1:5591 RES=tcp://127.0.0.1:5592 HB=tcp://127.0.0.1:5593
 
 for exe in mas_monolith mas_merge mas_worker mas_coordinator; do
-    [ -x "$BUILD/$exe" ] || { echo "missing $BUILD/$exe (build first)"; exit 2; }
+    [ -x "$BUILD/$exe" ] || [ -x "$BUILD/$exe.exe" ] \
+        || { echo "missing $BUILD/$exe (build first)"; exit 2; }
 done
 [ -f python/oracle_union.py ] || { echo "missing python/oracle_union.py"; exit 2; }
+
+# /usr/bin/time -l is BSD-only. On Windows the build provides win_time
+# (bench/win_time.cpp), which prints the same two stderr lines parse_time()
+# reads. Linux's GNU time (-v) is still unadapted — this only covers macOS
+# and Windows; refusing beats parsing empty fields into the CSV.
+if [ -x /usr/bin/time ]; then
+    TIMEIT=(/usr/bin/time -l)
+elif [ -x "$BUILD/win_time" ] || [ -x "$BUILD/win_time.exe" ]; then
+    TIMEIT=("$BUILD/win_time")
+else
+    echo "no /usr/bin/time and no $BUILD/win_time — unsupported platform"; exit 2
+fi
 
 # --- disk guard --------------------------------------------------------------
 # 2 GiB covers first-time extraction (~1.5 GiB) plus the per-run working set;
@@ -49,7 +62,9 @@ need_mb=2048
 
 # --- volume prep: idempotent extraction -------------------------------------
 mkdir -p "$DATA"
-unzip -n -q "$ZIP" -d "$DATA" 2>/dev/null || unzip -n -q "$ZIP"   # zip layout may or may not nest
+if [ -f "$ZIP" ]; then
+    unzip -n -q "$ZIP" -d "$DATA" 2>/dev/null || unzip -n -q "$ZIP"   # zip layout may or may not nest
+fi   # no zip with the CSVs already extracted is fine; the >=28 gate below still aborts otherwise
 FILES=()
 while IFS= read -r f; do FILES+=("$f"); done \
     < <(find "$DATA" -name '*.csv' | sort)
@@ -125,7 +140,7 @@ for v in "${VOLUMES[@]}"; do
     for th in 1 2 4 8; do
         for rep in 1 2 3; do
             R="$T/run" && rm -rf "$R" && mkdir "$R"
-            /usr/bin/time -l "$BUILD/mas_monolith" "$R/mono.duckdb" "$MACHINE" "$th" \
+            "${TIMEIT[@]}" "$BUILD/mas_monolith" "$R/mono.duckdb" "$MACHINE" "$th" \
                 "${FILES[@]:0:$v}" 2>"$R/log" || { cat "$R/log"; exit 1; }
             line=$(grep '^monolith:' "$R/log") \
                 || { echo "FAIL: no monolith summary line"; cat "$R/log"; exit 1; }
@@ -158,14 +173,14 @@ for v in "${VOLUMES[@]}"; do
             PIDS=()
             WPIDS=()
             for ((w = 1; w <= n; w++)); do
-                /usr/bin/time -l "$BUILD/mas_worker" "$WORK" "$RES" "$HB" \
+                "${TIMEIT[@]}" "$BUILD/mas_worker" "$WORK" "$RES" "$HB" \
                     "$R/w$w.duckdb" "w$w" 2>"$R/w$w.log" &
                 WPIDS+=($!); PIDS+=($!)
             done
             # --workers: gate dispatch on all N registering, else ZMQ PUSH
             # queues every file into the first connected pipe (slow-joiner
             # capture, found by sweep #1 — MAS was flat across N).
-            /usr/bin/time -l "$BUILD/mas_coordinator" "$WORK" "$RES" "$HB" \
+            "${TIMEIT[@]}" "$BUILD/mas_coordinator" "$WORK" "$RES" "$HB" \
                 --workers "$n" \
                 "${FILES[@]:0:$v}" 2>"$R/coord.log" || { cat "$R/coord.log"; exit 1; }
             for p in "${WPIDS[@]}"; do wait "$p" || true; done
@@ -173,7 +188,7 @@ for v in "${VOLUMES[@]}"; do
 
             srcs=(); for ((w = 1; w <= n; w++)); do srcs+=("$R/w$w.duckdb"); done
             t_m0=$(python3 -c 'import time; print(f"{time.time():.3f}")')
-            /usr/bin/time -l "$BUILD/mas_merge" "$R/merged.duckdb" "$MACHINE" \
+            "${TIMEIT[@]}" "$BUILD/mas_merge" "$R/merged.duckdb" "$MACHINE" \
                 "${srcs[@]}" 2>"$R/merge.log" || { cat "$R/merge.log"; exit 1; }
             t_merge=$(python3 -c "import time; print(f'{time.time() - $t_m0:.3f}')")
 
