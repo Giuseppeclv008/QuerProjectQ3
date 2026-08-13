@@ -264,7 +264,7 @@ organized by layer.
 │           ├── render.py                   # The six mandated sections + tool-call trace
 │           ├── plots.py                    # Five matplotlib figures, driven only by ToolResults
 │           └── export.py                   # Self-contained HTML; best-effort PDF
-│   └── tests/                              # 236 tests incl. golden report + mocked-LLM agent
+│   └── tests/                              # 238 tests incl. golden report + mocked-LLM agent
 │
 ├── scripts/
 │   ├── arol                                # WP4 entry point: arol report kpi --period 2026-02
@@ -1209,14 +1209,14 @@ it, `--pdf` logs how to install it and writes Markdown and HTML as normal.
 
 ## Testing
 
-The project has **102 C++ unit tests** across 15 Google Test files, plus **236
+The project has **102 C++ unit tests** across 14 Google Test files, plus **238
 Python tests** for the analytics tier. Both counts are asserted by
 `python/tests/test_readme_counts.py`, so adding a test and forgetting this
 paragraph fails the suite rather than quietly dating it.
 
 ```bash
 cd build && ctest --output-on-failure           # 102 C++ tests
-cd python && ../.venv/bin/python -m pytest -q   # 236 Python tests (5 need the rebuilt store and skip without it)
+cd python && ../.venv/bin/python -m pytest -q   # 238 Python tests (5 need the rebuilt store and skip without it)
 ```
 
 Under `-DMAS_BENCH_ONLY=ON` the C++ suite is the 34 tests that need neither
