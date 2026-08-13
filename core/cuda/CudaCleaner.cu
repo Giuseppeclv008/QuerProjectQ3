@@ -5,6 +5,7 @@
 // CCCL 3.0 (CUDA 13) removed cub::CountingInputIterator; the unified library's
 // replacement is thrust's counting_iterator, which CUB's device algorithms take.
 #include <thrust/iterator/counting_iterator.h>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -375,10 +376,13 @@ bool cuda_clean_file(const std::string& path, std::vector<CapEvent>& out,
             return false;
         }
 
-    // ---- host: materialize --------------------------------------------------
+    // ---- S7: host materialize -----------------------------------------------
     // Rows flagged parse-inexact get their event payloads re-read from the raw
     // line with strtod (exact for any digit count). Events arrive in (row asc,
     // head asc) order, so a one-row cache of field offsets amortizes the scan.
+    // Timed with the host clock: this is CPU work, and cudaEvent timestamps
+    // would measure the idle stream instead of the loop.
+    const auto tm0 = std::chrono::steady_clock::now();
     out.reserve(out.size() + n_events);
     long long cached_row = -1;
     const char* fld[1 + 3 * NUM_HEADS];
@@ -412,6 +416,9 @@ bool cuda_clean_file(const std::string& path, std::vector<CapEvent>& out,
         }
         out.push_back(e);
     }
+    times.materialize_s =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - tm0)
+            .count();
 #undef FAIL_IF
     cleanup();
     return true;

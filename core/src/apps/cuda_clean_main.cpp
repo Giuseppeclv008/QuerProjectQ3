@@ -76,7 +76,7 @@ int main(int argc, char** argv) {
         total.read_s += t.read_s;   total.h2d_s += t.h2d_s;
         total.index_s += t.index_s; total.parse_s += t.parse_s;
         total.delta_s += t.delta_s; total.compact_s += t.compact_s;
-        total.d2h_s += t.d2h_s;
+        total.d2h_s += t.d2h_s;    total.materialize_s += t.materialize_s;
         events += static_cast<long long>(gpu.size());
 
         if (verify) {
@@ -96,15 +96,21 @@ int main(int argc, char** argv) {
         }
     }
 
+    // Spec §6.1 "clean": parse + transform + materialize events in memory.
+    // The sum still excludes cudaMalloc/cudaHostAlloc and check_header, which
+    // is why the driver takes the process wall clock as total_s and keeps this
+    // as the stage-accounted portion.
     const double clean_s = total.read_s + total.h2d_s + total.index_s +
-                           total.parse_s + total.delta_s + total.compact_s + total.d2h_s;
+                           total.parse_s + total.delta_s + total.compact_s +
+                           total.d2h_s + total.materialize_s;
     std::cerr << "cuda_clean: " << (argc - argi) << " files, " << events
               << " events, clean " << std::fixed << std::setprecision(3)
               << clean_s << " s\n";
     std::cerr << "stages: read_s=" << total.read_s << " h2d_s=" << total.h2d_s
               << " index_s=" << total.index_s << " parse_s=" << total.parse_s
               << " delta_s=" << total.delta_s << " compact_s=" << total.compact_s
-              << " d2h_s=" << total.d2h_s << "\n";
+              << " d2h_s=" << total.d2h_s
+              << " materialize_s=" << total.materialize_s << "\n";
     std::cerr << mas::metrics_line("clean", mas::read_metrics()) << "\n";
     return 0;
 }

@@ -34,7 +34,7 @@ FIELDS = ["arch", "mode", "n_workers", "threads", "files", "repeat", "clean_s",
           "merge_s", "total_s", "events", "rows_per_s", "events_per_s",
           "peak_rss_mb", "cpu_pct", "note"]
 STAGE_FIELDS = ["files", "repeat", "read_s", "h2d_s", "index_s", "parse_s",
-                "delta_s", "compact_s", "d2h_s", "store_s"]
+                "delta_s", "compact_s", "d2h_s", "materialize_s", "store_s"]
 
 _METRICS = re.compile(
     r"metrics: tag=(\S+) wall_s=([\d.]+) cpu_s=([\d.]+) peak_rss_mb=([\d.]+)")
@@ -260,7 +260,7 @@ def main():
                     _, wall, cpu_s, rss, events, clean_s = run(
                         [bench_cpu, str(th)] + sub)
                     seen[arch] = events
-                    emit(w, arch, "clean", th, v, rep, clean_s, clean_s, events, rss, cpu_s)
+                    emit(w, arch, "clean", th, v, rep, clean_s, wall, events, rss, cpu_s)
                     print(f"done: {arch} v={v}d rep={rep} clean={clean_s:.3f}s")
 
                 # --- CUDA ----------------------------------------------------
@@ -272,7 +272,12 @@ def main():
                     blob, wall, cpu_s, rss, events, clean_s = run(
                         [cuda] + verify + sub)
                     seen["cuda"] = events
-                    emit(w, "cuda", "clean", 1, v, rep, clean_s, clean_s, events, rss, cpu_s)
+                    # total_s is the process wall clock, not the sum of stage
+                    # timers: the stage sum used to hide the event
+                    # materialization and every cudaMalloc/cudaHostAlloc, and
+                    # at 28 day-files the hidden part cost about as much as the
+                    # reported one.
+                    emit(w, "cuda", "clean", 1, v, rep, clean_s, wall, events, rss, cpu_s)
                     m = _STAGE.search(blob)
                     if m:
                         kv = dict(p.split("=") for p in m.group(1).split())

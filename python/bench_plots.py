@@ -179,8 +179,11 @@ def render_cuda(results_csv, stages_csv, out_dir):
     if st.empty:
         return
     st = st.groupby("files").median().reset_index()
-    cols = ["read_s", "h2d_s", "index_s", "parse_s", "delta_s",
-            "compact_s", "d2h_s"]
+    # materialize_s is filtered on presence: stage CSVs written before the
+    # stage existed do not carry the column.
+    cols = [c for c in ["read_s", "h2d_s", "index_s", "parse_s", "delta_s",
+                        "compact_s", "d2h_s", "materialize_s"]
+            if c in st.columns]
     fig, ax = plt.subplots(figsize=(9, 5))
     bottom = [0.0] * len(st)
     for c in cols:
