@@ -277,8 +277,8 @@ organized by layer.
 │   ├── run_bench_cuda.py                   # Portable driver: Python | C++ | CUDA, one command
 │   ├── README.md                           # Windows/Linux/macOS run instructions
 │   ├── requirements-bench.txt              # numpy, pandas, matplotlib
-│   ├── results_cuda.csv                    # CUDA-sweep data (currently CPU+Python only)
-│   ├── results_cuda_stages.csv             # Per-stage GPU timings (empty until a GPU runs it)
+│   ├── results_cuda.csv                    # CUDA-sweep data (RTX 4070 Laptop, 2026-08-10)
+│   ├── results_cuda_stages.csv             # Per-stage GPU timings from the same sweep
 │   └── fixtures/
 │       └── make_tiny_csvs.py               # Deterministic 2-row fixture generator
 │
@@ -295,7 +295,7 @@ organized by layer.
 │   │   ├── results.md                      # Benchmark analysis: medians, scaling, bottleneck
 │   │   ├── cuda_throughput.png             # Clean time per arch at one day-file (log scale)
 │   │   ├── cuda_scaling.png                # Clean time vs volume, per arch
-│   │   └── cuda_stages.png                 # GPU stage breakdown (absent until a GPU runs it)
+│   │   └── cuda_stages.png                 # GPU stage breakdown (RTX sweep)
 │   ├── superpowers/
 │   │   ├── specs/                          # Design specs, one per plan
 │   │   └── plans/                          # Phased implementation plans
@@ -490,10 +490,15 @@ Design notes:
 - **The delta kernel is the payoff** of the element-wise finding: 3.1M threads
   each doing two loads and a compare.
 
-> **Not yet compiled or measured.** The development machine is an Apple M3 with
-> no NVIDIA GPU and no `nvcc`. `cuda_clean_main.cpp` is plain C++ and does build
-> here; `CudaCleaner.cu` has never been through a compiler. See
-> [`docs/validation-log.md`](docs/validation-log.md).
+> **Compiled and measured** on the Windows target box (RTX 4070 Laptop, CUDA
+> Toolkit 13.3, MSVC 14.41) on 2026-08-10 — three real build breaks from CUDA
+> 13's CCCL later. `--verify` earned its keep on the first run: it caught the
+> GPU parse one ulp under the CPU on the pool's 17-digit torque cells, bitwise.
+> One caveat carried forward: the sweep's recorded CUDA `clean_s` predates the
+> `materialize_s` stage timer, so it understates the clean phase by roughly
+> half — the ratios below say "~" until the re-run. See
+> [`docs/validation-log.md`](docs/validation-log.md), entries 2026-08-10 and
+> 2026-08-13.
 
 ---
 
@@ -876,17 +881,24 @@ for the design.
 GPU speeds the store is two orders of magnitude larger than the transform, so
 reporting only `e2e` would flatten every architecture into the same number.
 
-**Measured so far — M3, one day-file, median of 3, `clean` mode:**
+**Measured — Windows target box (RTX 4070 Laptop), 28 day-files, median of 3,
+`clean` mode:**
 
-| Arch | clean_s |
-|------|---------|
-| `mono-1T` (`--no-store`) | 0.47 |
-| `cpp-1T` / `cpp-MT` | 0.48 |
-| `py-naive` (`oracle.py`) | 1.25 |
-| `py-numpy` (`clean_vectorized.py`) | 1.79 |
-| `cuda` | *not yet measured* |
+| Arch | clean_s, median [min–max] |
+|------|---------------------------|
+| `cuda` | 1.82 [1.81–3.89] — **understated ~2×**, see below |
+| `cpp-MT` (8 threads) | 7.68 [7.62–7.73] |
+| `cpp-1T` | 46.77 [46.60–47.11] |
+| `py-numpy` (`clean_vectorized.py`) | 91.00 [89.79–91.50] |
+| `py-naive` (`oracle.py`) | ~75 (extrapolated then; measured at every volume after the review) |
 
-All arches emit exactly 765,711 events; the sweep aborts if any two disagree.
+Every arch at every volume × repeat emitted identical event counts (21,872,663
+for the month); the sweep aborts if any two disagree. The recorded CUDA row
+predates the `materialize_s` timer, so its comparable number is roughly 3.6 s:
+**~2× the 8-thread C++ and ~13× the single-thread** — and roughly **1.23×
+end to end**, because the DuckDB store is ~80% of the wall clock. The full
+analysis, intervals included, is in
+[`docs/bench/results.md`](docs/bench/results.md).
 
 **The vectorized Python contender is slower than the naive loop** — the reverse
 of what was expected. The cost is not vectorization failing to pay, it is float
@@ -899,9 +911,10 @@ kept — see [`docs/validation-log.md`](docs/validation-log.md) for the full
 write-up, including why the sweep's own cross-arch gate would *not* have caught
 it.
 
-**No CUDA number exists yet.** The kernels are written; this machine has no
-`nvcc`. Run the sweep on a box with an NVIDIA GPU (see
-[Build & Run](#cuda-benchmark-python-vs-c-vs-cuda)) to fill in that row.
+**The number that matters is the end-to-end one.** ~13× on the clean phase
+moves the month's pipeline by ~1.23×, because persistence dominates — which is
+the finding, not a footnote. The re-run with the corrected stage timers
+(tracked in the validation log) replaces the ~ estimates with measurements.
 
 ---
 
@@ -959,7 +972,7 @@ cmake --build build --parallel
 | `MAS_BUILD_TESTS` | `ON` | Build the GoogleTest suite. `OFF` drops the last dependency that needs network. |
 
 The default triple (`OFF, ON, OFF, ON`) is the build this project has always
-had: **90 tests green**. With `MAS_BENCH_ONLY=ON` the suite is the 34 tests that
+had: **102 tests green**. With `MAS_BENCH_ONLY=ON` the suite is the 37 tests that
 need neither DuckDB nor ZeroMQ; with `MAS_BUILD_TESTS=OFF` on top of that,
 `_deps/` is never created at all — nothing is downloaded:
 
@@ -1219,8 +1232,9 @@ cd build && ctest --output-on-failure           # 102 C++ tests
 cd python && ../.venv/bin/python -m pytest -q   # 240 Python tests (5 need the rebuilt store and skip without it)
 ```
 
-Under `-DMAS_BENCH_ONLY=ON` the C++ suite is the 34 tests that need neither
-DuckDB nor ZeroMQ — the rest are excluded by design, not skipped.
+Under `-DMAS_BENCH_ONLY=ON` the C++ suite is the 37 tests that need neither
+DuckDB nor ZeroMQ — the rest are excluded by design, not skipped. (Two of the
+37 skip without the extracted pool beside the binary.)
 
 | Test File | What It Tests |
 |-----------|---------------|
@@ -1282,7 +1296,7 @@ a number.
 
 - [x] **Python analytics agents** — eight deterministic analysis tools, an LLM planner and narrator that cannot alter a number, and the `arol` CLI. See [Analytics CLI and Reports](#analytics-cli-and-reports).
 - [x] **CUDA cleaning pipeline and the three-way benchmark** — the transform is element-wise, proved by test, so it ports to the GPU; the portable driver measures Python, C++ and CUDA on one machine. See [CUDA cleaning benchmark](#cuda-cleaning-benchmark).
-- [ ] **Run the CUDA sweep on real hardware** — the kernels are written but have never been compiled: this machine has no `nvcc`. `mas_cuda_clean --verify` is the correctness gate and runs as part of the sweep. The command is in [Build & Run](#cuda-benchmark-python-vs-c-vs-cuda).
+- [x] **Run the CUDA sweep on real hardware** — done on an RTX 4070 Laptop (CUDA 13.3, Windows 11, 2026-08-10). `--verify` caught a real 1-ulp GPU parse defect on the first run. Clean phase ~2× the 8-thread C++ and ~13× the single-thread once the timing window is corrected; ~1.23× end to end because the store dominates. Re-run with the corrected timers pending — see [docs/bench/results.md](docs/bench/results.md).
 - [x] **Attack the merge bottleneck** — the benchmark's headline finding. `DuckDbEventStore::merge_all()` replaces the per-row `INSERT OR IGNORE` probes with one set-based dedup over the union: 65.9 s → 22.8 s in isolation (2.89×), ~2.1× across the M2 sweep, same rows; end to end on actively-cooled hardware the design lands at **3.83×** the sequential baseline (537.8 s → 140.4 s, MAS N=16, resweep 2026-08-13). Partitioned Parquet output or a concurrent-writer store remain the larger redesigns
 - [ ] **PUB/SUB fan-out and REQ/REP registration** — the two ZeroMQ patterns from the spec that the current 3-endpoint PUSH/PULL fabric does not yet use
 - [ ] **TRY_CAST + quarantine** — gracefully handle malformed timestamps (currently strict-CAST aborts the day-file)
