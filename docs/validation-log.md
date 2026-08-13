@@ -609,6 +609,11 @@ could not land on one side.
 the load-bearing check: a faster merge that loses rows is the defect this branch
 exists to prevent, in a new costume.
 
+**[SUPERSEDED 2026-08-13 — the full sweep it asks for exists, on actively-cooled
+hardware (i7-13700H): measured end-to-end, MAS N=16 is 3.83x over mono-1T there.
+The M2-frame figures in this paragraph (27.1 clean / 64.0 merge / 91.2 total /
+1.11x) were later shown thermally unstable and never became measurable on that
+chassis; see the resweep entry at the end of this file.]**
 Projected end-to-end, NOT yet measured: MAS N=16 at 28 days is 27.1 s clean +
 64.0 s merge = 91.2 s. At ~23 s of merge it would be ~50 s, i.e. ~2.0x over
 mono-1T instead of 1.11x. That projection needs a full sweep before it is
@@ -706,3 +711,101 @@ Raw data, all 12 runs:
 | 4 | mono-1T | 108.8 | 0.0 | 108.8 | 21,872,663 |
 | 4 | mono-MT T=8 | 38.0 | 36.4 | 74.4 | 21,872,663 |
 | 4 | mas N=16 | 47.0 | 33.7 | 80.7 | 21,872,663 |
+
+## 2026-08-13 — Resweep on actively-cooled hardware: the ratios are settled, and the harness had one more thumb on the scale
+
+**HEAD:** `ba6d4f8` (branch `bench/resweep-on-cooled-hardware`). **Hardware:**
+HP Victus 16-r0xxx — Intel i7-13700H, 6 P-cores + 8 E-cores (20 threads),
+16 GB, NVMe SSD, dual-fan **active cooling**, on AC power, Windows 11
+("Balanced" plan), machine otherwise idle. **Toolchain:** MSVC 19.41 Release
+(`/O2 /Ob2 /DNDEBUG`), DuckDB v1.2.2 official `windows-amd64` binary, libzmq
+4.3.5 from source — the first ZMQ build this repo has done on Windows;
+`ctest` **85/85** before the sweep, on the first run. **Command:**
+`BUILD_DIR=build-sweep/Release bash bench/run_bench.sh` under Git Bash, timed
+by `bench/win_time.cpp` (QPC + `GetProcessTimes` + `PeakWorkingSetSize`,
+printed in the BSD `time -l` shape `parse_time()` already reads), because
+`/usr/bin/time` does not exist on Windows — the portability defect the resweep
+prompt flagged, now closed for macOS + Windows and a loud abort elsewhere.
+
+**Runs: 81 of 81, one uninterrupted session.** Binaries built before the run
+and untouched during it; no SIGTERM splice, no re-measured block — the first
+sweep in this log that carries neither caveat. **Correctness gate: every run
+exact.** 21,872,663 distinct `(head_id, ts)` events at 28 days, 3,901,017 at
+7, 765,711 at 1 — all three repeats of all nine configurations per volume,
+against the independent Python oracle.
+
+### Found on the way in: mono and MAS were not writing the same rows
+
+The smoke run surfaced it before the sweep could: a MAS worker cleaned a
+day-file in ~10 s of wall while `mas_monolith` spent 18.4 s of pure CPU on the
+same file — half the cycles for "the same work" means it was not the same
+work. `run_bench.sh` never passed a machine id to `mas_worker`, whose argv
+default is `MCC`; the monolith and `mas_merge` got the full 35-character id.
+That id is the first column of `UNIQUE(machine_id, head_id, ts)` and is
+written 21.9M times per month: 3 chars stay inside DuckDB's inline string
+representation, 35 go out of line, and on this build that is the difference
+between 9.1 s and 18.3 s for `clean.exe` on one day-file with nothing else
+changed. On the M2 the asymmetry was timing-neutral (v=1 mono and MAS clean
+within noise, long id and short), so no Mac figure is retroactively tainted —
+but here it would have handed MAS a 2× head start on the clean phase, and the
+sweep would have measured a default argument. Fixed in `ba6d4f8` before any
+measured row: workers now write the real id everywhere. Same defect class as
+`638478b` — two configurations timed doing different work.
+
+### 28-day medians (3 repeats each)
+
+| config | clean_s | merge_s | total_s | spread (total) | vs mono-1T |
+|---|---:|---:|---:|---:|---:|
+| mono-1T | 537.79 | — | 537.79 | 1.1% | 1.00x |
+| mono-MT T=2 | 264.91 | 72.18 | 338.34 | 1.5% | 1.59x |
+| mono-MT T=4 | 134.91 | 69.67 | 204.58 | 0.3% | 2.63x |
+| mono-MT T=8 | 86.04 | 70.59 | 157.35 | 1.1% | 3.42x |
+| mas N=1 | 514.59 | 430.40 | 944.32 | 0.6% | 0.57x |
+| mas N=2 | 279.52 | 69.08 | 348.14 | 0.3% | 1.54x |
+| mas N=4 | 151.48 | 68.62 | 219.83 | 0.4% | 2.45x |
+| mas N=8 | 111.88 | 70.81 | 182.59 | 1.5% | 2.95x |
+| mas N=16 | 74.90 | 64.85 | 140.44 | 4.8% | **3.83x** |
+
+### What this settles
+
+- **Repeatability.** `clean_s` spreads 0.1–1.8% across every 28-day
+  configuration; `total_s` 0.3–4.8% (worst: MAS N=16). The same harness on the
+  M2 spread 21% (mono-MT) and 53% (MAS) in the interleaved A/B. On this
+  machine a number records the code, not the run order.
+- **The end-to-end ratio is a measurement, not a bound: 3.83x at N=16**
+  (537.8 s → 140.4 s), clean phase alone 7.2x across 16 workers on 20 hardware
+  threads. This replaces 1.84x-with-tens-of-percent-uncertainty as the repo's
+  reference number. It does not "correct" 1.84x: different machine, different
+  cost mix — the M2 spent 70% of MAS's wall in the merge, this box 46%,
+  because the per-row clean path costs ~5x more here while the set-based merge
+  costs the same (64.8 s vs the M2's 64.0 s — DuckDB's internal pass is close
+  to platform-neutral; the per-row application code is not).
+- **The mono-MT/MAS gap has an owner: parallelism, not process isolation.** At
+  equal N the thread pool wins — MAS N=8 trails mono-MT T=8 by 25.2 s (182.59
+  vs 157.35) — and MAS takes the matrix top only because it is swept to N=16
+  (140.44, 16.9 s ahead of T=8, well clear of the 1.1–4.8% spreads). The PR #9
+  sweep's 20.9 s "MAS ahead at same-ish parallelism" was the merge-clock
+  artifact (`638478b`) plus two thermal states; the A/B called the tie
+  correctly on the M2, and this measurement gives the sign a mechanism.
+- **Merge cost is flat across N≥2 on a second platform** (69.1 / 68.6 / 70.8 /
+  64.8 s for N=2..16; 72.2 / 69.7 / 70.6 s for T=2..8): `merge_all` costs what
+  the volume costs. The N=1 control, which falls back to per-row `merge_from`,
+  pays **430.4 s — 6.2x the set-based pass** over the same total volume (the
+  same fallback was ~10% over set-based on the M2). Per-row index probing is
+  precisely the work this platform taxes, which is the strongest evidence yet
+  for the set-based design.
+- **Absolute seconds do not transfer between machines.** mono-1T's month:
+  537.8 s here, ~101–108 s on the M2, same source, both Release. Shape
+  transfers; seconds do not. Anyone quoting this repo's performance quotes a
+  machine.
+
+### Supersession
+
+The reference numbers for every end-to-end ratio and the mono-MT/MAS
+comparison are now this entry's table; `docs/bench/results.md` (table +
+analysis) and the README's benchmarking section were rewritten from this
+sweep, and the four plots regenerated from the new `bench/results.csv`. The
+2026-08-11 merge_all projection paragraph is marked superseded in place; the
+2026-08-13 interleaved A/B above stands as the M2 measurement that made this
+resweep necessary, and its "until then" closes here. The M2's like-for-like
+merge A/B (65.9 → 22.8 s, 2.89x) remains valid as measured.

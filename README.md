@@ -649,24 +649,33 @@ generator [`bench/fixtures/make_tiny_csvs.py`](bench/fixtures/make_tiny_csvs.py)
 creates deterministic 2-row test files with cross-day counter continuity for
 smoke testing.
 
-**Headline finding — the merge phase is the scaling wall.** Cleaning
-parallelizes well; unifying the per-worker stores is what caps the run. Before
-`merge_all` the merge cost 63–65 s at month scale against a ~101 s sequential
-baseline, so the whole gain from parallel cleaning went back into the sink. That
-is the price of the "per-worker single-writer stores, merge at the sink" design,
-and it is the finding the sweep was worth running for.
+**Headline finding — the merge phase was the scaling wall, and `merge_all`
+moved it.** Cleaning parallelizes well; unifying the per-worker stores is what
+capped the run. Before `merge_all` the merge cost 63–65 s at month scale
+against a ~101 s sequential baseline on the original sweep machine, so the
+whole gain from parallel cleaning went back into the sink — the price of the
+"per-worker single-writer stores, merge at the sink" design, and the finding
+the sweep was worth running for. With the set-based merge the cost is flat
+across source count (65–72 s at month scale, N=2..16 and T=2..8 alike) and is
+46% of MAS N=16's wall rather than 70%.
 
-**The end-to-end ratios are not settled, and the reason is the hardware.** The
-sweep machine is a `Mac14,2` — a MacBook Air M2, with no fan. An interleaved A/B
-(four rounds, one binary set, same 28 day-files) puts mono-1T's `clean_s` spread
-at 3% while mono-MT's is 21% and the MAS's is 53%, both climbing round on round:
-a parallel configuration's clean time here records when in the sweep it ran. So
-`bench/results.csv` should be read as *shape* — how cost moves with N, where the
-bottleneck sits — and not as seconds. Numbers that survive that reading are in
-[`docs/bench/results.md`](docs/bench/results.md); the ones that do not are marked
-there, with the measurement in the
-[validation log](docs/validation-log.md) (entry 2026-08-13). A repeat on hardware
-with active cooling is the open item.
+**The end-to-end ratios are settled, on hardware that can hold its clock.**
+The original sweep machine was a `Mac14,2` — a fanless MacBook Air M2 whose
+interleaved A/B put parallel `clean_s` spreads at 21–53%, so its ratios
+recorded run order, not code. The full matrix was re-measured on 2026-08-13 on
+an actively-cooled i7-13700H (6P+8E cores, 20 threads, 16 GB): every 28-day
+configuration now repeats within 0.1–1.8% on `clean_s` and 0.3–4.8% on
+`total_s`, and the medians read: mono-1T 537.8 s, mono-MT T=8 157.3 s
+(**3.42×**), MAS N=16 140.4 s (**3.83×** end-to-end; the clean phase alone
+parallelizes at 7.2×). At equal parallelism the thread pool wins — MAS N=8
+trails mono-MT T=8 by 25.2 s, the cost of processes, transport and per-worker
+stores — and MAS takes the matrix only at N=16. Absolute seconds moved with
+the platform (the per-row store path costs ~5× more under MSVC/Windows than
+under clang/macOS; the DuckDB-internal merge costs the same), so the two
+machines' seconds do not compare — the analysis, with per-config spreads and
+caveats, is in [`docs/bench/results.md`](docs/bench/results.md) and the full
+measurement in the [validation log](docs/validation-log.md) (entry 2026-08-13,
+resweep).
 
 These numbers replace an earlier sweep that was timing 66% of the work: under
 the old `cap_seq` key the store wrote 14.4M rows where it now writes 21.9M for
@@ -676,15 +685,18 @@ now flat, because that growth was the defect doing work — more stores meant
 more colliding `cap_seq` for `INSERT OR IGNORE` to resolve, and every
 resolution discarded a real closure.
 
-The wall has since been attacked: `DuckDbEventStore::merge_all()` replaces N
-per-row index-probing passes with one hash-based `DISTINCT` over the union of the
-sources. Measured in isolation on the same 8 stores, alternating binaries:
-**65.9 s → 22.8 s, 2.89×**, with identical row counts; across the sweep the merge
-improves ~2.1× consistently. That figure is a like-for-like comparison of the two
-merge implementations and is unaffected by the thermal caveat above, which bites
-on the clean phase.
+The wall was attacked by `DuckDbEventStore::merge_all()`: N per-row
+index-probing passes became one hash-based `DISTINCT` over the union of the
+sources. Measured in isolation on the M2, alternating binaries: **65.9 s →
+22.8 s, 2.89×**, identical row counts — a like-for-like comparison unaffected
+by that machine's thermal caveat. The cooled-hardware resweep shows the same
+mechanism from another angle: the set-based pass holds 65–72 s regardless of
+source count, while the per-row path it replaced (still reachable as the N=1
+fallback) costs 430 s over the same volume there — 6.2× — because per-row
+index probing is exactly the work the new platform taxes hardest.
 
-All 81 runs matched the correctness oracle exactly.
+All 81 runs of the resweep matched the correctness oracle exactly —
+21,872,663 distinct events at month scale, every repeat.
 
 ---
 
@@ -1006,7 +1018,7 @@ a number.
 ## Roadmap
 
 - [x] **Python analytics agents** — eight deterministic analysis tools, an LLM planner and narrator that cannot alter a number, and the `arol` CLI. See [Analytics CLI and Reports](#analytics-cli-and-reports).
-- [x] **Attack the merge bottleneck** — the benchmark's headline finding. `DuckDbEventStore::merge_all()` replaces the per-row `INSERT OR IGNORE` probes with one set-based dedup over the union: 65.9 s → 22.8 s in isolation (2.89×), ~2.1× across the sweep, same rows. Partitioned Parquet output or a concurrent-writer store remain the larger redesigns
+- [x] **Attack the merge bottleneck** — the benchmark's headline finding. `DuckDbEventStore::merge_all()` replaces the per-row `INSERT OR IGNORE` probes with one set-based dedup over the union: 65.9 s → 22.8 s in isolation (2.89×), ~2.1× across the M2 sweep, same rows; end to end on actively-cooled hardware the design lands at **3.83×** the sequential baseline (537.8 s → 140.4 s, MAS N=16, resweep 2026-08-13). Partitioned Parquet output or a concurrent-writer store remain the larger redesigns
 - [ ] **PUB/SUB fan-out and REQ/REP registration** — the two ZeroMQ patterns from the spec that the current 3-endpoint PUSH/PULL fabric does not yet use
 - [ ] **TRY_CAST + quarantine** — gracefully handle malformed timestamps (currently strict-CAST aborts the day-file)
 - [ ] **Monitoring dashboard** — live view of processing progress and per-head statistics
