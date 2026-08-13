@@ -126,12 +126,18 @@ int main(int argc, char** argv) {
                 store.merge_all(sources);
                 rows = store.count();
             }   // close the destination before deleting its sources
+            // Stop the clock BEFORE the cleanup. mas_merge does not delete its
+            // sources — run_bench.sh clears them outside its timing window — so
+            // charging mono-MT for ~1.5 GB of unlinks and leaving the MAS
+            // untimed made merge_s measure two different things and biased the
+            // architecture comparison toward the MAS by however long the
+            // unlinks take.
+            merge_s = seconds_since(tm);
             // The per-thread stores used to survive the run. Since the store
             // appends, a later run over a *different* file set re-merged the
             // previous run's rows into the new one, silently — build_store.sh
             // removed only the destination.
             for (int t = 0; t < threads; ++t) remove_store(thread_store(out, t));
-            merge_s = seconds_since(tm);
         }
 
         std::cerr << "monolith: " << files.size() << " files, " << events
