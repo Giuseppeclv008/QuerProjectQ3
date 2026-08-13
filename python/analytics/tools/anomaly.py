@@ -24,8 +24,8 @@ def _sample(con, sql, params, limit):
     """Return (rows, exact_total) with at most `limit` rows materialised.
 
     Every hit used to become a Python dict inside the ToolResult, and plots.py
-    then scattered all of them: 678,325 deviation hits on February, 1,734,460
-    across the three months. The counts a report quotes must stay exact, so the
+    then scattered all of them: 1,612,634 deviation hits on February alone, and
+    the three months hold more. The counts a report quotes must stay exact, so the
     total is recomputed with COUNT(*) -- but only when the sample actually
     filled up, which on a healthy period it does not.
     """
