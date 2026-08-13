@@ -173,8 +173,14 @@ for v in "${VOLUMES[@]}"; do
             PIDS=()
             WPIDS=()
             for ((w = 1; w <= n; w++)); do
+                # "$MACHINE" explicitly: worker_main defaults machine_id to
+                # "MCC", and the 3-char default vs the monolith's 35-char id
+                # made the two architectures write different rows — timing-
+                # neutral on macOS, but the long id doubles the per-row write
+                # cost on Windows (out-of-line vs inlined VARCHAR), so the
+                # comparison was not like-for-like there.
                 "${TIMEIT[@]}" "$BUILD/mas_worker" "$WORK" "$RES" "$HB" \
-                    "$R/w$w.duckdb" "w$w" 2>"$R/w$w.log" &
+                    "$R/w$w.duckdb" "w$w" "$MACHINE" 2>"$R/w$w.log" &
                 WPIDS+=($!); PIDS+=($!)
             done
             # --workers: gate dispatch on all N registering, else ZMQ PUSH
