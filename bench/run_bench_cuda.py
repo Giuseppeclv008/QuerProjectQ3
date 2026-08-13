@@ -40,6 +40,7 @@ _METRICS = re.compile(
     r"metrics: tag=(\S+) wall_s=([\d.]+) cpu_s=([\d.]+) peak_rss_mb=([\d.]+)")
 _EVENTS = re.compile(r"(\d+) events")
 _CLEAN = re.compile(r"clean ([\d.]+) s")
+_MERGE = re.compile(r"merge ([\d.]+) s")
 _STAGE = re.compile(r"stages: (.*)")
 
 
@@ -128,7 +129,11 @@ def provenance():
 
 
 def run(cmd, cwd=None):
-    """Run and return (stdout+stderr, wall_s, cpu_s, peak_rss_mb, events, clean_s)."""
+    """Run and return (stdout+stderr, wall_s, cpu_s, peak_rss_mb, events, clean_s, merge_s).
+
+    merge_s is 0.0 for every binary except the monolith, which is the only one
+    whose summary prints a merge phase.
+    """
     p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
     blob = p.stdout + p.stderr
     if p.returncode != 0:
@@ -138,9 +143,11 @@ def run(cmd, cwd=None):
         if m else (0.0, 0.0, 0.0)
     ev = last_match(_EVENTS, blob)
     cl = last_match(_CLEAN, blob)
+    mg = last_match(_MERGE, blob)
     events = int(ev.group(1)) if ev else 0
     clean_s = float(cl.group(1)) if cl else wall
-    return blob, wall, cpu, rss, events, clean_s
+    merge_s = float(mg.group(1)) if mg else 0.0
+    return blob, wall, cpu, rss, events, clean_s, merge_s
 
 
 def oracle_union(files):
@@ -153,11 +160,11 @@ def oracle_union(files):
 
 
 def emit(writer, arch, mode, threads, nfiles, rep, clean_s, total_s, events,
-         rss, cpu_s, note=""):
+         rss, cpu_s, merge_s=0.0, note=""):
     writer.writerow({
         "arch": arch, "mode": mode, "n_workers": 0, "threads": threads,
         "files": nfiles, "repeat": rep,
-        "clean_s": f"{clean_s:.3f}", "merge_s": "0.000",
+        "clean_s": f"{clean_s:.3f}", "merge_s": f"{merge_s:.3f}",
         "total_s": f"{total_s:.3f}", "events": events,
         "rows_per_s": f"{ROWS_PER_DAY * nfiles / total_s:.1f}" if total_s else "0",
         "events_per_s": f"{events / total_s:.1f}" if total_s else "0",
@@ -209,6 +216,12 @@ def main():
     if not cuda:
         print("WARNING: mas_cuda_clean not found -- CUDA rows will be missing. "
               "Configure with -DMAS_ENABLE_CUDA=ON to include them.\n")
+    if not mono:
+        print("WARNING: mas_monolith not found -- the e2e rows will be missing. "
+              "MAS_BENCH_ONLY is a cached option: reconfiguring the same build "
+              "directory without it keeps it ON. Configure with "
+              "-DMAS_BENCH_ONLY=OFF (or a separate build dir) to include "
+              "them.\n")
 
     # Reference only, and only meaningful for `e2e`: this is UNIQUE(head,
     # cap_seq) after the counter reset dedupes replayed ranges, i.e. what a
@@ -257,7 +270,7 @@ def main():
 
                 # --- C++ contender -------------------------------------------
                 for arch, th in (("cpp-1T", 1), ("cpp-MT", 8)):
-                    _, wall, cpu_s, rss, events, clean_s = run(
+                    _, wall, cpu_s, rss, events, clean_s, _m = run(
                         [bench_cpu, str(th)] + sub)
                     seen[arch] = events
                     emit(w, arch, "clean", th, v, rep, clean_s, wall, events, rss, cpu_s)
@@ -269,7 +282,7 @@ def main():
                     # against CapEventExtractorFlat inside the binary; a mismatch
                     # exits non-zero and run() aborts the sweep with the dump.
                     verify = ["--verify"] if rep == 1 else []
-                    blob, wall, cpu_s, rss, events, clean_s = run(
+                    blob, wall, cpu_s, rss, events, clean_s, _m = run(
                         [cuda] + verify + sub)
                     seen["cuda"] = events
                     # total_s is the process wall clock, not the sum of stage
@@ -299,9 +312,10 @@ def main():
                                            ("mono-MT", 8, [])):
                         mode = "clean" if flag else "e2e"
                         out_db = os.path.join(ROOT, "bench_tmp.duckdb")
-                        _, wall, cpu_s, rss, events, clean_s = run(
+                        _, wall, cpu_s, rss, events, clean_s, merge_s = run(
                             [mono] + flag + [out_db, "MCC", str(th)] + sub)
-                        emit(w, arch, mode, th, v, rep, clean_s, wall, events, rss, cpu_s)
+                        emit(w, arch, mode, th, v, rep, clean_s, wall, events,
+                             rss, cpu_s, merge_s=merge_s)
                         for stale in [out_db] + [
                                 f"{out_db}.t{t}.duckdb" for t in range(th)]:
                             if os.path.exists(stale):
