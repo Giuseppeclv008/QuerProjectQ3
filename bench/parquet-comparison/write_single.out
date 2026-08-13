@@ -1,0 +1,20 @@
+# one invocation per backend, 28 day-files, machine_id MCC, 1 thread
+# 2026-08-13T10:06:22Z
+extracting telemetry_MCC777eda3db57348ef8a3113a642ae74db_2026-02.zip
+input: 28 day-files
+/dev/disk3s5   228Gi   204Gi   2.1Gi    99%    2.3M   22M   10%   /System/Volumes/Data
+=== parquet ===
+monolith: 28 files, 21872663 events, clean 34.003 s, merge 0.000 s, total 34.003 s, store holds 21872663 rows
+real 34.02
+user 38.21
+sys 0.65
+/dev/disk3s5   228Gi   204Gi   1.9Gi   100%    2.3M   20M   10%   /System/Volumes/Data
+=== duckdb ===
+monolith: 28 files, 21872663 events, clean 98.806 s, merge 0.000 s, total 98.806 s, store holds 21872663 rows
+real 98.86
+user 101.61
+sys 8.40
+/dev/disk3s5   228Gi   205Gi   812Mi   100%    2.3M  8.3M   22%   /System/Volumes/Data
+=== stores ===
+228028	/tmp/pq-month
+1155852	/tmp/duck-month.duckdb

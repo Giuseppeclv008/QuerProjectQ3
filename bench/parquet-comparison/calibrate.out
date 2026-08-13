@@ -1,0 +1,69 @@
+# ---------------------------------------------------------------------------
+# EARLIER PAIR -- ~630 MB free (near-full APFS volume), 2026-08-13 ~09:5xZ
+#
+# Transcribed from the console of the constrained-disk session; that run was not
+# redirected to a file, which is why it is reproduced here by hand rather than
+# captured. It is kept because it is the reading that was withdrawn, and the
+# withdrawal is only checkable against it.
+#
+# === run 1 ===
+# --- parquet ---
+#   per-day 01.csv             real 1.28s   (total 1.253 s)
+#   per-day 02.csv             real 1.44s   (total 1.426 s)
+#   per-day 03.csv             real 1.02s   (total 1.005 s)
+#   per-day 04.csv             real 0.85s   (total 0.829 s)
+#   single invocation          real 4.55s   (total 4.533 s)
+# --- duckdb ---
+#   per-day 01.csv             real 3.38s   (total 3.336 s)
+#   per-day 02.csv             real 4.35s   (total 4.321 s)
+#   per-day 03.csv             real 2.50s   (total 2.465 s)
+#   per-day 04.csv             real 2.69s   (total 2.648 s)
+#   single invocation          real 16.51s   (total 16.450 s)
+# === run 2 ===
+# --- parquet ---
+#   per-day 01.csv             real 1.53s   (total 1.497 s)
+#   per-day 02.csv             real 1.82s   (total 1.797 s)
+#   per-day 03.csv             real 1.20s   (total 1.181 s)
+#   per-day 04.csv             real 1.50s   (total 1.485 s)
+#   single invocation          real 4.93s   (total 4.906 s)
+# --- duckdb ---
+#   per-day 01.csv             real 3.77s   (total 3.685 s)
+#   per-day 02.csv             real 4.90s   (total 4.872 s)
+#   per-day 03.csv             real 2.89s   (total 2.853 s)
+#   per-day 04.csv             real 2.93s   (total 2.882 s)
+#   single invocation          real 18.20s   (total 18.151 s)
+#
+# duckdb per-day sums 12.92 s and 14.49 s against 16.51 s and 18.20 s single:
+# 1.28x and 1.26x. Withdrawn -- see the LATER PAIR below, same script, same four
+# days, 2.3 GB free, where the effect is 0.99x and 1.00x.
+# ---------------------------------------------------------------------------
+
+# LATER PAIR -- 2.3 GB free, machine-captured:
+# calibrate.sh, two consecutive runs, 2026-08-13T10:04:12Z
+# host: this laptop; days 01-04 of February 2026; machine_id MCC; 1 thread
+=== run 1 ===
+--- parquet ---
+  per-day 01.csv             real 1.35s   (total 1.321 s)
+  per-day 02.csv             real 1.39s   (total 1.372 s)
+  per-day 03.csv             real 1.00s   (total 0.987 s)
+  per-day 04.csv             real 0.83s   (total 0.818 s)
+  single invocation          real 4.38s   (total 4.358 s)
+--- duckdb ---
+  per-day 01.csv             real 3.21s   (total 3.170 s)
+  per-day 02.csv             real 4.14s   (total 4.113 s)
+  per-day 03.csv             real 2.42s   (total 2.385 s)
+  per-day 04.csv             real 2.23s   (total 2.196 s)
+  single invocation          real 11.89s   (total 11.858 s)
+=== run 2 ===
+--- parquet ---
+  per-day 01.csv             real 1.25s   (total 1.229 s)
+  per-day 02.csv             real 1.41s   (total 1.394 s)
+  per-day 03.csv             real 1.02s   (total 1.002 s)
+  per-day 04.csv             real 0.83s   (total 0.814 s)
+  single invocation          real 4.42s   (total 4.402 s)
+--- duckdb ---
+  per-day 01.csv             real 3.19s   (total 3.146 s)
+  per-day 02.csv             real 4.04s   (total 4.018 s)
+  per-day 03.csv             real 2.42s   (total 2.384 s)
+  per-day 04.csv             real 2.20s   (total 2.162 s)
+  single invocation          real 11.85s   (total 11.815 s)

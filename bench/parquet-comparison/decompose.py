@@ -5,7 +5,7 @@
 format is slow. This peels the read view apart one layer at a time on a single
 aggregate over the whole month, so the cost lands where it belongs.
 
-usage: task6-decompose.py <duckdb store> <parquet dir> [repeats]
+usage: decompose.py <duckdb store> <parquet dir> [repeats]
 """
 import glob
 import os

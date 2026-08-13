@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 # What did the disk-forced per-day regime cost the write measurement?
 #
-# The month sweep ran 28 separate mas_monolith invocations per backend, so each
-# backend paid 28 process starts -- and DuckDB paid 28 opens and checkpoints of
-# a growing store, which Parquet does not have an equivalent of. If that
-# overhead is large it inflates DuckDB and the 2.7x write ratio is not real.
+# The superseded fallback sweep ran 28 mas_monolith invocations per backend, so
+# each backend paid 28 process starts -- and DuckDB paid 28 opens and checkpoints
+# of a growing store, which Parquet has no equivalent of.
+#
+# NOTE: this script's first two runs, taken with ~630 MB free, appeared to show
+# a 1.26-1.28x penalty for DuckDB's single invocation. Repeated with 2.3 GB
+# free it vanished (0.99-1.00x): it was measuring free space, not invocation
+# count. Both pairs are in calibrate.out. Run this only on a volume with room.
 #
 # So: run the same four days BOTH ways -- four invocations, then one -- and
 # report the difference. Four days, not the full month, because there is not

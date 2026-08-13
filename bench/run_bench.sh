@@ -145,8 +145,9 @@ done
 
 # --- parquet runs -------------------------------------------------------------
 # Same clean path, different persistence: no index, no WAL, no merge. The
-# comparison is against mono-1T's e2e, where the DuckDB store is 79.8% of
-# wall-clock.
+# comparison is against mono-1T's e2e. The 79.8% store share that motivated
+# this was measured on the RTX 4070 host (183.9 s of a 230.45 s run), not on
+# this harness; see docs/bench/results.md for what it measures here.
 for v in "${VOLUMES[@]}"; do
     for rep in 1 2 3; do
         R="$T/run" && rm -rf "$R" && mkdir -p "$R/pq"
