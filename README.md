@@ -657,9 +657,11 @@ whole gain from parallel cleaning went back into the sink — the price of the
 "per-worker single-writer stores, merge at the sink" design, and the finding
 the sweep was worth running for. With the set-based merge the cost is flat
 across source count (65–72 s at month scale, N=2..16 and T=2..8 alike) and is
-46% of MAS N=16's wall rather than 70%.
+46% of MAS N=16's wall — the same 46% it was on the original machine once both
+are measured with the set-based merge.
 
-**The end-to-end ratios are settled, on hardware that can hold its clock.**
+**The end-to-end ratios are repeatable, on hardware that can hold its clock —
+and they belong to that hardware.**
 The original sweep machine was a `Mac14,2` — a fanless MacBook Air M2 whose
 interleaved A/B put parallel `clean_s` spreads at 21–53%, so its ratios
 recorded run order, not code. The full matrix was re-measured on 2026-08-13 on
@@ -669,11 +671,14 @@ configuration now repeats within 0.1–1.8% on `clean_s` and 0.3–4.8% on
 (**3.42×**), MAS N=16 140.4 s (**3.83×** end-to-end; the clean phase alone
 parallelizes at 7.2×). At equal parallelism the thread pool wins — MAS N=8
 trails mono-MT T=8 by 25.2 s, the cost of processes, transport and per-worker
-stores — and MAS takes the matrix only at N=16. Absolute seconds moved with
-the platform (the per-row store path costs ~5× more under MSVC/Windows than
-under clang/macOS; the DuckDB-internal merge costs the same), so the two
-machines' seconds do not compare — the analysis, with per-config spreads and
-caveats, is in [`docs/bench/results.md`](docs/bench/results.md) and the full
+stores — and MAS takes the matrix only at N=16. **The ratio does not transfer,
+though: it is 1.84× on the M2 and 3.83× here** because the sequential baseline
+degrades 5.28× between the two machines while sixteen workers degrade only
+2.54× — this box answers a more expensive per-row path with 20 hardware threads
+against the M2's 8. A speedup measures the machine's serial penalty as much as
+the design's parallel efficiency, so quote it with the box attached. The
+analysis, with per-config spreads and caveats, is in
+[`docs/bench/results.md`](docs/bench/results.md) and the full
 measurement in the [validation log](docs/validation-log.md) (entry 2026-08-13,
 resweep).
 

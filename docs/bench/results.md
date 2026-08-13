@@ -73,11 +73,15 @@ history; the reference numbers are now these.
   total volume. On the M2 the same fallback was ~10% over set-based. Per-row
   index probing is exactly the kind of work this platform taxes, which makes
   the case for the set-based merge stronger, not weaker.
-- **The merge is no longer the majority of MAS's wall.** 64.8 s of N=16's
-  140.4 s is 46%, down from 70% on the M2 — not because the merge got faster
-  (64.8 s here vs 64.0 s there; DuckDB's internal set-based pass is close to
-  platform-neutral) but because the clean phase, which is per-row application
-  code, costs ~5× more on this platform and now dominates.
+- **The merge is 46% of MAS N=16's wall, and that is unchanged from the M2.**
+  64.8 s of 140.4 s here; 25.4 s of 55.4 s there, i.e. 45.8%. The "down from
+  70%" this bullet first claimed compared against the M2's *pre-*`merge_all`
+  sweep, where the merge was the old per-row `merge_from` — a different
+  algorithm, not a different machine. Like for like, with `merge_all` on both,
+  clean and merge scale between the two platforms by the *same* factor at
+  N=16 (29.3 → 74.9 s and 25.4 → 64.8 s, both 2.56×), which is exactly why the
+  fraction does not move. The set-based pass is not platform-neutral either: it
+  costs 2.56× more here, the same as everything else.
 - **MAS `clean_s` still includes worker spawn, ZMQ connect, and the
   registration wait** — measurably ~0.5 s here (v=1: MAS 19.0–19.3 s against
   mono-1T's 18.4 s). Initial dispatch stays gated on `--workers N`
@@ -104,12 +108,26 @@ replaces that number with a measurement:
 clean phase alone parallelizes at 7.2× (537.8 → 74.9 s across 16 workers on 20
 hardware threads).
 
-3.83× is not "the true value of 1.84×": it is a different machine with a
-different cost mix (the M2 spent 70% of MAS's wall in the merge; this box
-spends 46%, because its per-row clean path costs ~5× more while the set-based
-merge costs the same). What this measurement settles is the part the M2 could
-not: on hardware that holds its clock, the end-to-end gain of the design is
-real, repeatable, and large — not an artifact of run order.
+3.83× is not "the true value of 1.84×", but the reason is not a different cost
+mix — the mix is the same. With `merge_all` on both machines the merge is 46% of
+MAS N=16's wall on either, and clean and merge scale between them by an
+identical 2.56×. What differs is how far apart the two *ends* of the ratio move:
+
+| 28-day median | M2 | this box | factor |
+|---|---:|---:|---:|
+| mono-1T (the baseline) | 101.8 | 537.8 | **5.28×** |
+| MAS N=16 (the parallel end) | 55.4 | 140.4 | **2.54×** |
+| ratio | 1.84× | 3.83× | |
+
+The baseline degrades by 5.28× while sixteen workers degrade by only 2.54×,
+because this box answers a more expensive per-row path with 20 hardware threads
+against the M2's 8. The speedup therefore measures the machine's serial
+penalty as much as the design's parallel efficiency, and neither 1.84× nor
+3.83× transfers to a third machine. Quote the ratio with the box attached.
+
+What this measurement does settle is the part the M2 could not: on hardware that
+holds its clock, the end-to-end gain is real and repeatable — inputs stable to
+1.1% and 4.8% — rather than an artifact of run order.
 
 ### The mono-MT vs MAS gap, measured clean
 
