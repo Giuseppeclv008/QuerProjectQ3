@@ -21,9 +21,12 @@ int main(int argc, char** argv) {
         for (int i = 1; i < argc; ++i) {
             if (take_value(argc, argv, i, "--since", since)) continue;
             if (take_value(argc, argv, i, "--until", until)) continue;
-            if (store.empty()) store = argv[i];
-            else if (out.empty()) out = argv[i];
-            else throw std::runtime_error(std::string("unexpected argument: ") + argv[i]);
+            const std::string arg = argv[i];
+            if (arg.rfind("--", 0) == 0)
+                throw std::runtime_error("unknown flag " + arg);
+            if (store.empty()) store = arg;
+            else if (out.empty()) out = arg;
+            else throw std::runtime_error("unexpected argument: " + arg);
         }
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";

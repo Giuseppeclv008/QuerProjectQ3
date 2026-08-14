@@ -258,8 +258,11 @@ int main(int argc, char** argv) {
             std::atomic<bool> failed{false};
             // A previous run's per-thread stores are removed before the pool
             // opens: DuckDbEventStore appends, so reusing one would fold an
-            // earlier run's events into this one.
-            for (int t = 0; t < threads; ++t) remove_store(thread_store(out, t));
+            // earlier run's events into this one. Only the DuckDB path has
+            // them -- under parquet this would unlink <out>.tN.duckdb, a path
+            // this run neither writes nor owns.
+            if (!parquet)
+                for (int t = 0; t < threads; ++t) remove_store(thread_store(out, t));
             auto pull = [&](int t) {
                 try {
                     if (parquet) {

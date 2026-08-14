@@ -17,7 +17,10 @@ int report_missing_input(const std::string& in_path) {
 } // namespace
 
 int main(int argc, char** argv) {
-    if (argc < 3) {
+    // Deliberately 2, not 3: the arity this command needs is checked after the
+    // flags are parsed. Rejecting argc < 3 here made "--format needs a value"
+    // unreachable, so `clean --format` answered with the generic usage.
+    if (argc < 2) {
         std::cerr << "usage: clean [--format duckdb|parquet] <raw_in.csv> "
                      "<events_out.csv|.duckdb|out_dir> [machine_id]\n";
         return 2;
@@ -25,7 +28,7 @@ int main(int argc, char** argv) {
     int argi = 1;
     bool parquet = false;
     if (std::string(argv[argi]) == "--format") {
-        if (argc < argi + 2) { std::cerr << "error: --format needs a value\n"; return 2; }
+        if (argi + 1 >= argc) { std::cerr << "error: --format needs a value\n"; return 2; }
         const std::string fmt = argv[argi + 1];
         if (fmt == "parquet") parquet = true;
         else if (fmt != "duckdb") { std::cerr << "error: --format must be duckdb or parquet\n"; return 2; }

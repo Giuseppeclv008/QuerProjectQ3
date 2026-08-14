@@ -25,7 +25,9 @@ struct NullStore : mas::IEventStore {
 } // namespace
 
 int main(int argc, char** argv) {
-    if (argc < 6) {
+    // 2, not 6: arity is checked after flag parsing, below. The old guard made
+    // "--format needs a value" unreachable.
+    if (argc < 2) {
         std::cerr << "usage: mas_worker [--format duckdb|parquet] <work_endpoint> "
                      "<result_endpoint> <hb_endpoint> <out.duckdb|out_dir> "
                      "<worker_id> [machine_id]\n";
@@ -34,7 +36,7 @@ int main(int argc, char** argv) {
     int argi = 1;
     bool parquet = false;
     if (std::string(argv[argi]) == "--format") {
-        if (argc < argi + 2) { std::cerr << "error: --format needs a value\n"; return 2; }
+        if (argi + 1 >= argc) { std::cerr << "error: --format needs a value\n"; return 2; }
         const std::string fmt = argv[argi + 1];
         if (fmt == "parquet") parquet = true;
         else if (fmt != "duckdb") { std::cerr << "error: --format must be duckdb or parquet\n"; return 2; }
