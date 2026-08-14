@@ -724,3 +724,34 @@ same-machine, same-session, same input on both sides.
 The extracted February pool was deleted after the run to reclaim 1.5 GB. It is
 regenerable: `write_sweep.sh` re-extracts it from the zip, which was verified to
 hold all 28 day-files (1,599,006,757 bytes).
+
+### Reproduced 2026-08-14
+
+An independent repeat, artifacts under `bench/parquet-comparison/`
+(`write_7day_run2.out`, `read_run2.csv`, `decompose_run2.out`).
+
+| | first run | second run |
+|---|---:|---:|
+| read suite, DuckDB | 5.061 s | 5.202 s |
+| read suite, Parquet | 26.530 s | 26.870 s |
+| read ratio | 5.24x | 5.17x |
+| read penalty per suite | 21.47 s | 21.67 s |
+| decomposition, end to end | 40.1x | 41.0x |
+| break-even | 3.0 report runs | 3.0 report runs |
+
+The write could only be repeated at 7 day-files — the month stores were kept for
+the read side and the free space holds one or the other, not both. There:
+Parquet 7.25 s against DuckDB 18.51 s, **2.55x**, 3,901,017 events each, raw
+equal to distinct. An earlier uncaptured pass gave 7.53 s and 19.96 s, 2.65x.
+
+**The write ratio is volume-dependent: 2.55-2.65x at 7 days against 2.91x at 28.**
+That is expected rather than surprising — DuckDB probes and maintains a UNIQUE
+index against a store that keeps growing, so its per-event cost rises with what
+is already in it, while Parquet writes each day-file in isolation. It also means
+the month figure is the one to quote for a month, and neither should be
+extrapolated to a year without measuring.
+
+Both 7-day runs ended with ~660 MB free, inside the band where a near-full APFS
+volume inflates DuckDB (see the withdrawn calibration above). That biases the
+7-day ratio upward for Parquet, which strengthens rather than weakens the
+statement that the advantage grows with volume.

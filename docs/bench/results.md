@@ -272,3 +272,34 @@ happens once and the read happens on every query.
   `feat/cuda-cleaning-bench`; it was not done. The Parquet-vs-DuckDB comparison
   is unaffected — both backends ran on this laptop, in this session, one after
   the other, against the same input.
+
+### Second run, 2026-08-14: does any of it reproduce?
+
+An independent repeat. Artifacts: `write_7day_run2.out`, `read_run2.csv`,
+`decompose_run2.out`, all in `bench/parquet-comparison/`.
+
+**Read, same month stores, 3 repeats.** Suite median **5.202 s DuckDB against
+26.870 s Parquet — 5.17x**, against 5.24x in the first run. Per report: kpi
+2.391 / 9.992 s (4.18x), drift 1.290 / 8.321 s (6.45x), anomalies 1.540 /
+8.557 s (5.56x). The read penalty per suite run is **21.67 s**, against 21.47 s.
+Combined with the first run's month write saving of 64.84 s — the same stores —
+break-even is **3.0 report runs**, unchanged.
+
+**Decomposition, median of 7.** 0.031 / 0.061 / 0.402 / 1.254 s, giving 2.00x,
+6.57x, 3.12x per layer and **41.0x** end to end, against 40.1x. The conclusion
+it supports — the columnar format is cheap, the read-time idempotency is not —
+does not move.
+
+**Write, 7 day-files.** The month stores were kept for the read side, so only a
+7-day write fits in the free space: **7.25 s Parquet against 18.51 s DuckDB,
+2.55x**, 3,901,017 events each, `MATCH`. Stores 41.0 MB against 218.6 MB, 5.33x.
+An uncaptured first pass minutes earlier gave 7.53 s and 19.96 s, 2.65x.
+
+**Parquet's write advantage grows with volume, and that is the one number that
+did move.** 2.55-2.65x at 7 day-files against 2.91x at 28. DuckDB maintains a
+UNIQUE index per row against a destination that keeps growing, so its per-event
+cost rises with what is already stored; Parquet writes each day-file
+independently and does not care what came before. Both 7-day runs also finished
+with ~660 MB free, inside the pressure band documented above, which inflates
+DuckDB — so 2.55x is if anything an over-estimate of Parquet's advantage at that
+volume, and the widening with scale is real rather than an artefact.
