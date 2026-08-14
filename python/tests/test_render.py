@@ -41,7 +41,7 @@ def test_the_tool_call_trace_is_appended_and_machine_readable(tiny_cfg, tmp_path
 
 def test_report_md_is_written_to_disk(tiny_cfg, tmp_path):
     _, text = _kpi(tiny_cfg, tmp_path)
-    assert (tmp_path / "report.md").read_text() == text
+    assert (tmp_path / "report.md").read_text(encoding="utf-8") == text
 
 
 def test_plots_are_written_and_referenced(tiny_cfg, tmp_path):
@@ -178,7 +178,7 @@ def test_golden_report_is_byte_stable(tiny_cfg, tmp_path):
         "`../.venv/bin/python -m tests.regen_golden` and review the diff"
     )
     _, text = _kpi(tiny_cfg, tmp_path)
-    assert text == GOLDEN.read_text(), (
+    assert text == GOLDEN.read_text(encoding="utf-8"), (
         "The KPI report changed. If that is intentional, regenerate the golden "
         "with `../.venv/bin/python -m tests.regen_golden` -- then read the diff."
     )

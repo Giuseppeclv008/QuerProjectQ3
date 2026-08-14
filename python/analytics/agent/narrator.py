@@ -44,9 +44,10 @@ _SCHEMA = {
 
 # A tool's list-valued results are either an analytic grouping -- bounded by the
 # head count (36 here, 48 on the brief's example machine) or by the days in a
-# period -- or a hit list, which is bounded by nothing. On the real three-month
-# store `anomalies` returns 678,325 deviation hits and `idle_periods` returns
-# 12,276 periods. Serialising those in full builds a multi-megabyte prompt that
+# period -- or a hit list, which is bounded by nothing. On the rebuilt store a
+# single month is enough to show it: February alone gives `anomalies` 1,612,634
+# deviation hits and `idle_periods` 22,459 periods, and the three months hold
+# more. Serialising those in full builds a multi-megabyte prompt that
 # no request can carry, so `ask` would fail on every question about real data.
 # The cap (cfg.narrator_max_items) passes every grouping through whole and
 # truncates only the hit lists, which is what the narrator needs: the tools

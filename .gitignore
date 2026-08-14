@@ -4,6 +4,9 @@
 
 # sweep evidence (82 lines), committed by Plan 5 Task 5:
 !bench/results.csv
+# sweep evidence for the CUDA benchmark, pasted back from the target machine:
+!bench/results_cuda.csv
+!bench/results_cuda_stages.csv
 telemetry_*/
 *.duckdb
 *.parquet
@@ -12,7 +15,9 @@ telemetry_*/
 # Build
 /build/
 /build-bench/
+/build-full/
 /build-plan/
+/build-sweep/
 cmake-build-*/
 *.o
 *.obj
@@ -35,3 +40,5 @@ venv/
 
 # Personal files
 pers_*
+
+/build-verify/

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Render spec-§9 benchmark plots + median table from bench/results.csv."""
+import os
 import pathlib
 import sys
 
@@ -121,27 +122,103 @@ def render(csv_path, out_dir) -> None:
                     "peak_rss_mb", "cpu_pct"]
     md = ["# Benchmark results (median of 3 repeats)", "",
           _dataframe_to_markdown(med[cols]), "",
-          "Caveats: laptop thermals (no fan control), median-of-3, "
-          "N=16 on 8 cores is a deliberate oversubscription point, "
-          "merge phase reported separately; mono-MT uses a std::thread "
-          "atomic-counter pool (dynamic load balancing, slightly fairer "
-          "than PUSH/PULL round-robin)."]
+          "Caveats: measured on an actively-cooled i7-13700H laptop "
+          "(6P+8E cores, 20 threads — N=16 exceeds the P-cores but not the "
+          "hardware threads), median-of-3, merge phase reported separately; "
+          "mono-MT uses a std::thread atomic-counter pool (dynamic load "
+          "balancing, slightly fairer than PUSH/PULL round-robin)."]
     # Everything below the generated table is hand-written analysis, and this
     # function used to overwrite the whole file — regenerating the plots silently
     # deleted it. Keep whatever follows the first "## " heading after the table.
     target = out / "results.md"
     tail = ""
     if target.exists():
-        existing = target.read_text()
+        # encoding pinned: Windows' locale default is cp1252, which mangles
+        # the em-dashes in this file and can refuse bytes UTF-8 accepts.
+        existing = target.read_text(encoding="utf-8")
         marker = existing.find("\n## ")
         if marker != -1:
             tail = existing[marker:]
-    target.write_text("\n".join(md) + "\n" + tail)
+    target.write_text("\n".join(md) + "\n" + tail, encoding="utf-8")
+
+
+def render_cuda(results_csv, stages_csv, out_dir):
+    """Three plots for the CUDA sweep (spec §6.6)."""
+    os.makedirs(out_dir, exist_ok=True)
+    df = pd.read_csv(results_csv, comment="#")
+    # Estimated rows are not measurements and must not be plotted as if they
+    # were. The driver no longer writes them, but committed CSVs from before
+    # the change still carry them.
+    if "note" in df.columns:
+        df = df[df["note"].fillna("") != "extrapolated"]
+    med = (df.groupby(["arch", "mode", "files"])["clean_s"]
+             .median().reset_index())
+
+    one = med[med["files"] == med["files"].min()]
+    fig, ax = plt.subplots(figsize=(9, 5))
+    labels = [f"{a}\n[{m}]" for a, m in zip(one["arch"], one["mode"])]
+    ax.bar(labels, one["clean_s"])
+    ax.set_yscale("log")
+    ax.set_ylabel("clean time, s (log)")
+    ax.set_title(f"Cleaning one day-file ({int(one['files'].iloc[0])} file)")
+    fig.tight_layout()
+    fig.savefig(os.path.join(out_dir, "cuda_throughput.png"), dpi=150)
+    plt.close(fig)
+
+    fig, ax = plt.subplots(figsize=(9, 5))
+    for (arch, mode), grp in med.groupby(["arch", "mode"]):
+        grp = grp.sort_values("files")
+        ax.plot(grp["files"], grp["clean_s"], marker="o", label=f"{arch} [{mode}]")
+    ax.set_xlabel("day-files")
+    ax.set_ylabel("clean time, s (log)")
+    ax.set_yscale("log")
+    ax.legend(fontsize=8)
+    ax.set_title("Scaling with volume")
+    fig.tight_layout()
+    fig.savefig(os.path.join(out_dir, "cuda_scaling.png"), dpi=150)
+    plt.close(fig)
+
+    # The stages file exists but is header-only until a machine with a GPU has
+    # run the sweep. An empty stacked bar is worse than no plot at all.
+    if not os.path.exists(stages_csv):
+        return
+    st = pd.read_csv(stages_csv)
+    if st.empty:
+        return
+    st = st.groupby("files").median().reset_index()
+    # materialize_s is filtered on presence: stage CSVs written before the
+    # stage existed do not carry the column.
+    cols = [c for c in ["read_s", "h2d_s", "index_s", "parse_s", "delta_s",
+                        "compact_s", "d2h_s", "materialize_s"]
+            if c in st.columns]
+    fig, ax = plt.subplots(figsize=(9, 5))
+    bottom = [0.0] * len(st)
+    for c in cols:
+        ax.bar(st["files"].astype(str), st[c], bottom=bottom, label=c)
+        bottom = [b + v for b, v in zip(bottom, st[c])]
+    ax.set_xlabel("day-files")
+    ax.set_ylabel("seconds")
+    ax.legend(fontsize=8)
+    ax.set_title("CUDA stage breakdown")
+    fig.tight_layout()
+    fig.savefig(os.path.join(out_dir, "cuda_stages.png"), dpi=150)
+    plt.close(fig)
 
 
 def main() -> int:
-    csv = sys.argv[1] if len(sys.argv) > 1 else "bench/results.csv"
-    out = sys.argv[2] if len(sys.argv) > 2 else "docs/bench"
+    args = sys.argv[1:]
+    if "--cuda" in args:
+        # Positional overrides stay available, so the existing
+        # `bench_plots.py <csv> <out>` form is untouched.
+        args = [a for a in args if a != "--cuda"]
+        results = args[0] if args else "bench/results_cuda.csv"
+        stages = args[1] if len(args) > 1 else "bench/results_cuda_stages.csv"
+        out = args[2] if len(args) > 2 else "docs/bench"
+        render_cuda(results, stages, out)
+        print(f"wrote CUDA plots to {out}")
+        return 0
+    csv = args[0] if args else "bench/results.csv"
+    out = args[1] if len(args) > 1 else "docs/bench"
     render(csv, out)
     print(f"wrote plots + results.md to {out}")
     return 0

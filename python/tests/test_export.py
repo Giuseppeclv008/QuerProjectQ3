@@ -25,14 +25,14 @@ def test_html_is_written(tiny_cfg, tmp_path):
 
 def test_html_inlines_every_plot(tiny_cfg, tmp_path):
     d = _report_dir(tiny_cfg, tmp_path)
-    html = Path(export.to_html(d)).read_text()
+    html = Path(export.to_html(d)).read_text(encoding="utf-8")
     assert "data:image/png;base64," in html
     for png in Path(d).glob("*.png"):
         assert f'src="{png.name}"' not in html, f"{png.name} left as an external ref"
 
 
 def test_html_keeps_the_six_mandated_headings(tiny_cfg, tmp_path):
-    html = Path(export.to_html(_report_dir(tiny_cfg, tmp_path))).read_text()
+    html = Path(export.to_html(_report_dir(tiny_cfg, tmp_path))).read_text(encoding="utf-8")
     for heading in ("Goal", "Data used", "Analyses executed", "Findings",
                     "Confidence and limits", "Next checks"):
         assert f">{heading}<" in html, heading

@@ -36,6 +36,8 @@ Chaos E2E resilience testing · Benchmark sweep harness
   - [Store Layer](#store-layer)
   - [Agent Layer](#agent-layer)
   - [Transport Layer](#transport-layer)
+  - [Util Layer](#util-layer)
+  - [CUDA Layer](#cuda-layer)
 - [Database Design](#database-design)
   - [DuckDB Schema](#duckdb-schema)
   - [Write Path (Staging + Merge)](#write-path-staging--merge)
@@ -49,14 +51,18 @@ Chaos E2E resilience testing · Benchmark sweep harness
   - [mas_worker — Cleaning Agent](#mas_worker--cleaning-agent)
   - [mas_merge — Post-Run Store Unification](#mas_merge--post-run-store-unification)
   - [mas_export — Parquet Export](#mas_export--parquet-export)
+  - [bench_cpu — Store-Free Cleaning Contender](#bench_cpu--store-free-cleaning-contender)
+  - [mas_cuda_clean — GPU Cleaning Pipeline](#mas_cuda_clean--gpu-cleaning-pipeline)
 - [Resilience: Heartbeats, Death Detection, and Re-Dispatch](#resilience-heartbeats-death-detection-and-re-dispatch)
 - [Distributed Processing Flow](#distributed-processing-flow)
 - [Python Validation Oracle](#python-validation-oracle)
 - [Benchmarking](#benchmarking)
+  - [CUDA cleaning benchmark](#cuda-cleaning-benchmark)
 - [Chaos E2E Testing](#chaos-e2e-testing)
 - [Build & Run](#build--run)
   - [Prerequisites](#prerequisites)
   - [Build](#build)
+  - [Build Options](#build-options)
   - [Run Tests](#run-tests)
   - [Single-File Processing](#single-file-processing)
   - [Monolith Multi-Threaded Processing](#monolith-multi-threaded-processing)
@@ -64,6 +70,7 @@ Chaos E2E resilience testing · Benchmark sweep harness
   - [Validation Against Python Oracle](#validation-against-python-oracle)
   - [Chaos E2E Test](#chaos-e2e-test)
   - [Performance Benchmark](#performance-benchmark)
+  - [CUDA Benchmark (Python vs C++ vs CUDA)](#cuda-benchmark-python-vs-c-vs-cuda)
 - [Analytics CLI and Reports](#analytics-cli-and-reports)
   - [Build the analytics environment](#build-the-analytics-environment)
   - [Generate a report](#generate-a-report)
@@ -153,7 +160,8 @@ organized by layer.
 
 ```
 .
-├── CMakeLists.txt                          # Build system (CMake 3.16+, C++20)
+├── CMakeLists.txt                          # Build system (CMake 3.16+, C++20, optional CUDA)
+├── .gitattributes                          # Pins *.csv/*.sh/*.py/*.cu to LF (Windows co-dev)
 ├── README.md                               # This file
 │
 ├── core/                                   # C++ source code
@@ -161,6 +169,7 @@ organized by layer.
 │   │   ├── domain/                         # Domain layer (pure logic, no I/O)
 │   │   │   ├── CapEvent.hpp                # RawRow, CapEvent, NUM_HEADS, is_reject
 │   │   │   ├── CapEventExtractor.hpp       # Stateful per-head dedup engine
+│   │   │   ├── CapEventExtractorFlat.hpp   # Element-wise form + column loader (GPU precondition)
 │   │   │   └── Pipeline.hpp                # clean_file() orchestrator
 │   │   ├── store/                          # Storage layer (persistence)
 │   │   │   ├── EventStore.hpp              # IEventStore abstract interface (DIP seam)
@@ -171,12 +180,18 @@ organized by layer.
 │   │   │   ├── Message.hpp                 # Wire protocol: WorkItem, WorkResult, Heartbeat, STOP
 │   │   │   ├── CleaningWorker.hpp          # Worker agent with heartbeats + idle-exit
 │   │   │   └── Coordinator.hpp             # Coordinator with liveness + re-dispatch
-│   │   └── transport/                      # Transport layer (ZeroMQ abstraction)
-│   │       ├── Transport.hpp               # IMessageSource / IMessageSink interfaces
-│   │       └── ZmqTransport.hpp            # ZMQ PUSH/PULL adapters (linger_ms control)
+│   │   ├── transport/                      # Transport layer (ZeroMQ abstraction)
+│   │   │   ├── Transport.hpp               # IMessageSource / IMessageSink interfaces
+│   │   │   └── ZmqTransport.hpp            # ZMQ PUSH/PULL adapters (linger_ms control)
+│   │   └── util/
+│   │       └── platform_metrics.hpp        # Self-reported wall/CPU/peak-RSS; only #ifdef _WIN32
+│   ├── cuda/                               # CUDA cleaning pipeline (built only with MAS_ENABLE_CUDA)
+│   │   ├── CudaCleaner.hpp                 # Host-callable interface; leaks no CUDA types
+│   │   └── CudaCleaner.cu                  # Kernels S2-S5 + host orchestration (CUB)
 │   └── src/
 │       ├── domain/                         # Domain implementations
 │       │   ├── CapEventExtractor.cpp
+│       │   ├── CapEventExtractorFlat.cpp
 │       │   └── Pipeline.cpp
 │       ├── store/                          # Store implementations
 │       │   ├── CsvRawReader.cpp
@@ -194,11 +209,17 @@ organized by layer.
 │           ├── coordinator_main.cpp        # → mas_coordinator
 │           ├── worker_main.cpp             # → mas_worker
 │           ├── merge_main.cpp              # → mas_merge
-│           └── export_main.cpp             # → mas_export
+│           ├── export_main.cpp             # → mas_export      (store → Parquet, read-only)
+│           ├── bench_cpu_main.cpp          # → bench_cpu       (store-free contender)
+│           └── cuda_clean_main.cpp         # → mas_cuda_clean  (GPU contender, --verify)
 │
-├── tests/                                  # Google Test unit tests (99 tests)
+├── tests/                                  # Google Test unit tests (17 files, 124 tests)
+│   ├── test_cap_event.cpp
 │   ├── test_cap_event_extractor.cpp
+│   ├── test_cap_event_extractor_flat.cpp   # The GPU precondition, proved against the stateful one
+│   ├── test_platform_metrics.cpp
 │   ├── test_csv_raw_reader.cpp
+│   ├── test_bench_cpu_parity.cpp           # bench_cpu's loop == load_columns + extract_flat
 │   ├── test_pipeline.cpp
 │   ├── test_duckdb_smoke.cpp
 │   ├── test_duckdb_event_store.cpp
@@ -213,8 +234,10 @@ organized by layer.
 ├── python/                                 # Analytics tier (WP2-WP5) + validation oracles
 │   ├── requirements.txt                    # duckdb, matplotlib, anthropic, markdown-it-py
 │   ├── oracle.py                           # Reference dedup implementation
+│   ├── clean_vectorized.py                 # Vectorized (numpy/pandas) contender; same tuples
 │   ├── test_oracle.py                      # Pytest unit tests for the oracle
 │   ├── validate_real.py                    # Cross-validation: C++ vs Python on real data
+│   ├── bench_plots.py                      # Sweep plots; --cuda renders the CUDA-sweep figures
 │   ├── oracle_kpi.py                       # Independent KPI oracle, recomputed from raw CSV
 │   └── analytics/
 │       ├── config.py                       # WP5: every path, band and threshold (no hard-coding)
@@ -244,7 +267,7 @@ organized by layer.
 │           ├── render.py                   # The six mandated sections + tool-call trace
 │           ├── plots.py                    # Five matplotlib figures, driven only by ToolResults
 │           └── export.py                   # Self-contained HTML; best-effort PDF
-│   └── tests/                              # 230 tests incl. golden report + mocked-LLM agent
+│   └── tests/                              # 240 tests incl. golden report + mocked-LLM agent
 │
 ├── scripts/
 │   ├── arol                                # WP4 entry point: arol report kpi --period 2026-02
@@ -254,6 +277,11 @@ organized by layer.
 ├── bench/                                  # Performance benchmarking
 │   ├── run_bench.sh                        # Sweep: mono {1,2,4,8}T + MAS {1..16}W × {1,7,28}d
 │   ├── results.csv                         # Raw sweep data: 81 runs (27 configs × 3 repeats)
+│   ├── run_bench_cuda.py                   # Portable driver: Python | C++ | CUDA, one command
+│   ├── README.md                           # Windows/Linux/macOS run instructions
+│   ├── requirements-bench.txt              # numpy, pandas, matplotlib
+│   ├── results_cuda.csv                    # CUDA-sweep data (RTX 4070 Laptop, 2026-08-10)
+│   ├── results_cuda_stages.csv             # Per-stage GPU timings from the same sweep
 │   └── fixtures/
 │       └── make_tiny_csvs.py               # Deterministic 2-row fixture generator
 │
@@ -267,7 +295,13 @@ organized by layer.
 │   │   ├── drift-2026-02_2026-04/
 │   │   └── anomalies-2026-02/
 │   ├── bench/
-│   │   └── results.md                      # Benchmark analysis: medians, scaling, bottleneck
+│   │   ├── results.md                      # Benchmark analysis: medians, scaling, bottleneck
+│   │   ├── cuda_throughput.png             # Clean time per arch at one day-file (log scale)
+│   │   ├── cuda_scaling.png                # Clean time vs volume, per arch
+│   │   └── cuda_stages.png                 # GPU stage breakdown (RTX sweep)
+│   ├── superpowers/
+│   │   ├── specs/                          # Design specs, one per plan
+│   │   └── plans/                          # Phased implementation plans
 │   └── diagrams/                           # C4 architecture diagrams
 │       ├── c4-context.puml                 # Level 1: System Context
 │       ├── c4-container.puml               # Level 2: Container
@@ -277,7 +311,8 @@ organized by layer.
 │       └── C4_Component.png                # Rendered component diagram
 │
 ├── telemetry_*/                            # Raw data (git-ignored, ~1.6 GB/month)
-└── build/                                  # CMake build directory (git-ignored)
+├── build/                                  # CMake build directory (git-ignored)
+└── build-plan/                             # Scratch configure dir for option matrices (git-ignored)
 ```
 
 ---
@@ -297,6 +332,20 @@ organized by layer.
 Each event carries: `head_id` (1–36), `timestamp`, `cap_seq` (counter value),
 `app_torque`, `status`, `delta`, `is_fault` (the reject bit — see
 [Status semantics](#status-semantics)), `aggregated`, `reset`.
+
+**The transform is element-wise, not a scan.** Every branch of `process()` ends
+with `last = c`, and the held branch is entered only when `c == *last` — so
+`last_count_[h]` after row `i` is always `llround(count[i][h])`, and the
+transform never reads state older than one row back. `extract_flat()` in
+[`CapEventExtractorFlat.hpp`](core/include/mas/domain/CapEventExtractorFlat.hpp)
+is that same transform written over consecutive row pairs, and
+[`test_cap_event_extractor_flat.cpp`](tests/test_cap_event_extractor_flat.cpp)
+proves the two produce identical `CapEvent` vectors — all nine fields — on the
+edge cases and on a real day-file (765,711 events).
+
+That is what makes the day-file 3,110,364 independent (row, head) pairs rather
+than 36 sequential chains, and it is the precondition for both the GPU port and
+the one-`numpy.diff` Python contender.
 
 ---
 
@@ -356,6 +405,21 @@ transport → agent → domain ← store
                   IEventStore (DIP seam)
 ```
 
+The CMake targets mirror that split, so the cleaning hot path can be built with
+nothing attached to it:
+
+| Target | Sources | Links |
+|--------|---------|-------|
+| `mas_clean_core` | `CapEventExtractor`, `CapEventExtractorFlat`, `CsvRawReader` | **nothing** — C++20 stdlib only (`psapi` on Windows) |
+| `mas_store` | `CsvEventStore`, `DuckDbEventStore`, `Pipeline` | `mas_clean_core` + DuckDB |
+| `mas_agent` | `Message`, `CleaningWorker`, `Coordinator` | `mas_store` |
+| `mas_transport` | `ZmqTransport` | cppzmq |
+| `mas_core` | *(INTERFACE alias)* | `mas_agent` — kept so no call site changed |
+
+`Pipeline.cpp` lives with the DuckDB stores, so before the split every consumer
+of the cleaning path also linked `duckdb_imported`. `mas_clean_core` linking
+nothing is what lets the benchmark build on a machine with no DuckDB at all.
+
 ### Domain Layer
 
 **Directory:** `core/include/mas/domain/` · `core/src/domain/`
@@ -364,6 +428,7 @@ transport → agent → domain ← store
 |-----------|---------|-------------|
 | `CapEvent` / `RawRow` | [`CapEvent.hpp`](core/include/mas/domain/CapEvent.hpp) | Domain value types. `NUM_HEADS=36`, `FAULT_STATUS=65`. |
 | `CapEventExtractor` | [`CapEventExtractor.hpp`](core/include/mas/domain/CapEventExtractor.hpp) · [`.cpp`](core/src/domain/CapEventExtractor.cpp) | Stateful per-head dedup. Maintains `last_count_[36]`. Not thread-safe. |
+| `extract_flat()` / `RawColumns` / `load_columns()` | [`CapEventExtractorFlat.hpp`](core/include/mas/domain/CapEventExtractorFlat.hpp) · [`.cpp`](core/src/domain/CapEventExtractorFlat.cpp) | Element-wise form of the same transform, plus a whole-file CSV→columns loader. Stdlib only, no state across rows. Tolerates CRLF; validates the 109-column header. |
 | `clean_file()` | [`Pipeline.hpp`](core/include/mas/domain/Pipeline.hpp) · [`.cpp`](core/src/domain/Pipeline.cpp) | Orchestrator: CsvRawReader → CapEventExtractor → IEventStore in 8192-event batches. |
 
 ### Store Layer
@@ -396,6 +461,48 @@ transport → agent → domain ← store
 | `IMessageSource` / `IMessageSink` | [`Transport.hpp`](core/include/mas/transport/Transport.hpp) | ISP-split interfaces. `recv()` returns `nullopt` on timeout. |
 | `ZmqPushSink` | [`ZmqTransport.hpp`](core/include/mas/transport/ZmqTransport.hpp) · [`.cpp`](core/src/transport/ZmqTransport.cpp) | ZMQ PUSH adapter. Independent `linger_ms` parameter (default sentinel preserves backward compat; `linger_ms=0` for fire-and-forget sinks). |
 | `ZmqPullSource` | (same files) | ZMQ PULL adapter. Configurable `timeout_ms`. |
+
+### Util Layer
+
+**Directory:** `core/include/mas/util/` (header-only)
+
+| Component | File(s) | Description |
+|-----------|---------|-------------|
+| `ProcMetrics` / `read_metrics()` / `metrics_line()` | [`platform_metrics.hpp`](core/include/mas/util/platform_metrics.hpp) | Self-reported wall, CPU (user+sys) and peak RSS. `GetProcessTimes`/`GetProcessMemoryInfo` on Windows, `getrusage` elsewhere (`ru_maxrss` is bytes on macOS, KB on Linux). **The only `#ifdef _WIN32` in the codebase.** Emits one machine-readable `metrics:` line that the benchmark driver parses. |
+| `Engine` / `parse_engine()` / `resolve_engine()` | [`engine.hpp`](core/include/mas/util/engine.hpp) | The `--engine=cpu\|cuda` policy: parse the flag value, refuse an engine the binary was not built with (the error names `-DMAS_ENABLE_CUDA=ON` as the remedy), never fall back. Kept as pure functions so the refusal rules are unit-tested from builds that have no CUDA. |
+
+This replaces the old harness's `/usr/bin/time -l` wrapper, which is BSD-only —
+GNU coreutils rejects the flag and Windows has no equivalent. Having each binary
+report its own numbers also excludes process spawn from the measurement.
+
+### CUDA Layer
+
+**Directory:** `core/cuda/` — compiled only when `-DMAS_ENABLE_CUDA=ON`
+
+| Component | File(s) | Description |
+|-----------|---------|-------------|
+| `cuda_clean_file()` / `CudaStageTimes` | [`CudaCleaner.hpp`](core/cuda/CudaCleaner.hpp) · [`.cu`](core/cuda/CudaCleaner.cu) | Seven stages: read into pinned memory → one H2D upload of the raw bytes → CUB newline index → thread-per-row parse → thread-per-`(row,head)` delta → CUB stream compaction → one D2H download. Emits events in `(row asc, head asc)` order, identical to `CapEventExtractor`. |
+
+Design notes:
+
+- **Timestamps never reach the GPU as strings.** Each device event carries a row
+  index; the host maps it back after the download, which is what keeps the
+  device struct flat and 40 bytes.
+- **Torque and status stay `double`** so `--verify` compares bitwise against
+  `extract_flat` rather than with a tolerance. A parse one ulp out is a bug to
+  find, not a tolerance to widen.
+- **The delta kernel is the payoff** of the element-wise finding: 3.1M threads
+  each doing two loads and a compare.
+
+> **Compiled and measured** on the Windows target box (RTX 4070 Laptop, CUDA
+> Toolkit 13.3, MSVC 14.41) on 2026-08-10 — three real build breaks from CUDA
+> 13's CCCL later. `--verify` earned its keep on the first run: it caught the
+> GPU parse one ulp under the CPU on the pool's 17-digit torque cells, bitwise.
+> Re-measured on 2026-08-13 with the corrected timers (an eighth
+> `materialize_s` stage, process wall clock recorded as `total_s`): the
+> numbers below are measurements, not estimates. See
+> [`docs/validation-log.md`](docs/validation-log.md), entries 2026-08-10 and
+> 2026-08-13.
 
 ---
 
@@ -527,13 +634,34 @@ Default `machine_id`: `"MCC"`.
 ### `mas_monolith` — Multi-Threaded In-Process Pipeline
 
 ```
-usage: mas_monolith <out.duckdb> <machine_id> <threads> <day1.csv> [day2.csv ...]
+usage: mas_monolith [--no-store] [--engine=cpu|cuda] <out.duckdb> <machine_id> <threads> <day1.csv> [day2.csv ...]
 ```
 
 Two operating modes:
 
 - **`threads=1` (mono-1T):** Sequential baseline — one DuckDB store, files processed one after another. No merge step.
 - **`threads>1` (mono-MT):** Thread pool with atomic counter work-stealing. Each thread owns a per-thread `.duckdb` store (shared-nothing). After all threads join, the thread stores are merged into the output store. Uses `std::thread` + `std::atomic` (no ZeroMQ).
+
+**`--no-store`** swaps the DuckDB store for a null store that counts events and
+discards them, so the clean path can be timed on its own. It requires
+`threads=1` — the MT path's whole shape is per-thread stores and a merge, so
+there is nothing coherent to measure without them. Measured on the M3 at one
+day-file: 0.47 s with `--no-store` against 3.2 s with the store, i.e. the write
+is ~85% of the wall clock. Both report the same 765,711 events; the `--no-store`
+run reports `store holds 0 rows`.
+
+**`--engine=cpu|cuda`** (default `cpu`) selects the cleaning engine; the store
+and every downstream consumer see identical events either way (the flat
+extractor is proved bitwise-equal to the stateful one, and the GPU path to the
+flat one by `mas_cuda_clean --verify`). `cuda` requires a binary configured
+with `-DMAS_ENABLE_CUDA=ON` — a build without it **refuses the run and names
+that flag** rather than quietly cleaning on the CPU, and a CUDA failure at
+runtime aborts the same way. There is deliberately no fallback: the summary
+line ends in `engine cpu` or `engine cuda`, and that stamp is only worth
+printing if it cannot lie. `--engine=cuda` requires `threads=1` — the pool
+parallelizes CPU cleaning, while the GPU path is one device fed file by file.
+
+Every run also emits a `metrics:` line on stderr with wall, CPU and peak RSS.
 
 ### `mas_coordinator` — Ventilator + Sink + Liveness Monitor
 
@@ -593,6 +721,38 @@ properties worth knowing:
 $ mas_export events.duckdb feb03.parquet --since 2026-02-03 --until 2026-02-03
 exported 451898 rows to feb03.parquet
 ```
+
+### `bench_cpu` — Store-Free Cleaning Contender
+
+```
+usage: bench_cpu <threads> <day1.csv> [day2.csv ...]
+```
+
+The C++ entry in the [CUDA benchmark](#cuda-cleaning-benchmark). Runs the same
+`CsvRawReader → CapEventExtractor` hot path with the same file-grain threading as
+`mas_monolith`, but accumulates events in memory instead of writing DuckDB — so
+the headline measurement does not require DuckDB on the target machine. Links
+only `mas_clean_core`, which is why it survives `MAS_BENCH_ONLY=ON`.
+
+[`test_bench_cpu_parity.cpp`](tests/test_bench_cpu_parity.cpp) keeps the
+substitution auditable: the streamed loop and `load_columns + extract_flat` must
+agree event-for-event on a real day-file.
+
+### `mas_cuda_clean` — GPU Cleaning Pipeline
+
+```
+usage: mas_cuda_clean [--verify] <day1.csv> [day2.csv ...]
+```
+
+Built only with `-DMAS_ENABLE_CUDA=ON`. Prints a `stages:` line with the
+seven per-stage GPU timings, which is what says how much of any win is "the GPU
+parses the CSV" versus "the GPU does the compare".
+
+**`--verify`** runs the bitwise differential against `extract_flat` inside the
+binary and exits non-zero on any disagreement, dumping the first ten differing
+events with all nine fields. The sweep passes it on the first repeat of every
+volume, so a fast-but-wrong implementation cannot produce a number — and a
+failure on a machine the author cannot reach is diagnosable from one paste.
 
 ---
 
@@ -671,6 +831,7 @@ under test cannot detect an error in it:
 | File | Purpose |
 |------|---------|
 | [`oracle.py`](python/oracle.py) | `extract(path)` → list of event tuples. Mirrors `CapEventExtractor` logic exactly. |
+| [`clean_vectorized.py`](python/clean_vectorized.py) | Same tuples, same order, no Python row loop: pandas parses, one `numpy.diff` does the transform. `np.nonzero` already returns `(row asc, head asc)` — the C++ emission order. The fair Python contender in the benchmark; `test_clean_vectorized.py` holds it to byte-equality with `oracle.py`. |
 | [`test_oracle.py`](python/test_oracle.py) | Pytest: verifies increment counting, dedup of held rows, and aggregated detection. |
 | [`validate_real.py`](python/validate_real.py) | Asserts C++ output row count matches oracle count on real data. |
 | [`oracle_kpi.py`](python/oracle_kpi.py) | Recomputes the headline KPIs straight from the raw CSV — no DuckDB, no toolkit SQL. Cross-checks the WP2 analytics tier. |
@@ -697,13 +858,38 @@ generator [`bench/fixtures/make_tiny_csvs.py`](bench/fixtures/make_tiny_csvs.py)
 creates deterministic 2-row test files with cross-day counter continuity for
 smoke testing.
 
-**Headline finding — the merge phase is the scaling wall.** Cleaning
-parallelizes well (28-day medians: mono-1T 101.0 s → MAS N=16 27.1 s, a 3.73×
-speedup), but unifying the per-worker stores costs 63–65 s at month scale.
-End-to-end the MAS tops out at **1.11×** over the sequential baseline (N=16:
-91.2 s vs 101.0 s), and mono-MT never meaningfully beats mono-1T. This is the
-measured price of the "per-worker single-writer stores, merge at the sink"
-design.
+**Headline finding — the merge phase was the scaling wall, and `merge_all`
+moved it.** Cleaning parallelizes well; unifying the per-worker stores is what
+capped the run. Before `merge_all` the merge cost 63–65 s at month scale
+against a ~101 s sequential baseline on the original sweep machine, so the
+whole gain from parallel cleaning went back into the sink — the price of the
+"per-worker single-writer stores, merge at the sink" design, and the finding
+the sweep was worth running for. With the set-based merge the cost is flat
+across source count (65–72 s at month scale, N=2..16 and T=2..8 alike) and is
+46% of MAS N=16's wall — the same 46% it was on the original machine once both
+are measured with the set-based merge.
+
+**The end-to-end ratios are repeatable, on hardware that can hold its clock —
+and they belong to that hardware.**
+The original sweep machine was a `Mac14,2` — a fanless MacBook Air M2 whose
+interleaved A/B put parallel `clean_s` spreads at 21–53%, so its ratios
+recorded run order, not code. The full matrix was re-measured on 2026-08-13 on
+an actively-cooled i7-13700H (6P+8E cores, 20 threads, 16 GB): every 28-day
+configuration now repeats within 0.1–1.8% on `clean_s` and 0.3–4.8% on
+`total_s`, and the medians read: mono-1T 537.8 s, mono-MT T=8 157.3 s
+(**3.42×**), MAS N=16 140.4 s (**3.83×** end-to-end; the clean phase alone
+parallelizes at 7.2×). At equal parallelism the thread pool wins — MAS N=8
+trails mono-MT T=8 by 25.2 s, the cost of processes, transport and per-worker
+stores — and MAS takes the matrix only at N=16. **The ratio does not transfer,
+though: it is 1.84× on the M2 and 3.83× here** because the sequential baseline
+degrades 5.28× between the two machines while sixteen workers degrade only
+2.54× — this box answers a more expensive per-row path with 20 hardware threads
+against the M2's 8. A speedup measures the machine's serial penalty as much as
+the design's parallel efficiency, so quote it with the box attached. The
+analysis, with per-config spreads and caveats, is in
+[`docs/bench/results.md`](docs/bench/results.md) and the full
+measurement in the [validation log](docs/validation-log.md) (entry 2026-08-13,
+resweep).
 
 These numbers replace an earlier sweep that was timing 66% of the work: under
 the old `cap_seq` key the store wrote 14.4M rows where it now writes 21.9M for
@@ -713,13 +899,81 @@ now flat, because that growth was the defect doing work — more stores meant
 more colliding `cap_seq` for `INSERT OR IGNORE` to resolve, and every
 resolution discarded a real closure.
 
-The wall is being attacked on branch `perf/merge-set-based`, which replaces N
-per-row index-probing passes with one hash-based `DISTINCT` over the union of
-the sources. Measured in isolation on the same 8 stores, alternating binaries:
-**65.9 s → 22.8 s, 2.89×**, with identical row counts. End-to-end confirmation
-is still pending.
+The wall was attacked by `DuckDbEventStore::merge_all()`: N per-row
+index-probing passes became one hash-based `DISTINCT` over the union of the
+sources. Measured in isolation on the M2, alternating binaries: **65.9 s →
+22.8 s, 2.89×**, identical row counts — a like-for-like comparison unaffected
+by that machine's thermal caveat. The cooled-hardware resweep shows the same
+mechanism from another angle: the set-based pass holds 65–72 s regardless of
+source count, while the per-row path it replaced (still reachable as the N=1
+fallback) costs 430 s over the same volume there — 6.2× — because per-row
+index probing is exactly the work the new platform taxes hardest.
 
-All 81 runs matched the correctness oracle exactly.
+All 81 runs of the resweep matched the correctness oracle exactly —
+21,872,663 distinct events at month scale, every repeat.
+
+### CUDA cleaning benchmark
+
+`CapEventExtractor` never reads state older than the previous row — every branch
+of `process()` leaves `last_count_[h]` equal to the current row's count. So the
+transform is element-wise over 3,110,364 independent (row, head) pairs per
+day-file, not 36 sequential chains, and it ports to the GPU cleanly.
+
+`bench/run_bench_cuda.py` measures the same transform five ways on one machine:
+pure-Python (`oracle.py`), vectorized Python (`clean_vectorized.py`), C++ 1-thread
+and 8-thread (`bench_cpu`), and CUDA (`mas_cuda_clean`).
+
+```bash
+cmake -S . -B build -DMAS_BENCH_ONLY=ON -DMAS_ENABLE_CUDA=ON
+cmake --build build --config Release
+python bench/run_bench_cuda.py --data telemetry_..._2026-02.zip
+```
+
+`MAS_BENCH_ONLY=ON` builds only the cleaning core and the benchmark binaries —
+no DuckDB, no ZeroMQ, nothing downloaded — so it configures on any machine with
+CMake, a C++20 compiler, and Python. See [`bench/README.md`](bench/README.md) for
+the Windows path and
+[`docs/superpowers/specs/2026-08-10-cuda-cleaning-bench-design.md`](docs/superpowers/specs/2026-08-10-cuda-cleaning-bench-design.md)
+for the design.
+
+**Two timing modes.** `clean` times the transform alone (`--no-store`,
+`bench_cpu`, the Python `extract()` calls); `e2e` includes the DuckDB write. At
+GPU speeds the store is ~33× the transform, so reporting only `e2e` would
+flatten every architecture into the same number.
+
+**Measured — Windows target box (RTX 4070 Laptop), 28 day-files, median of 3,
+`clean` mode, corrected timers (sweep 2026-08-13):**
+
+| Arch | clean_s, median [min–max] |
+|------|---------------------------|
+| `cuda` | 6.43 [6.33–8.34] |
+| `cpp-MT` (8 threads) | 8.21 [8.12–8.32] |
+| `cpp-1T` | 46.26 [45.91–46.57] |
+| `py-naive` (`oracle.py`) | 74.64 [74.32–76.31] |
+| `py-numpy` (`clean_vectorized.py`) | 85.82 [84.53–86.99] |
+
+Every arch at every volume × repeat emitted identical event counts (21,872,663
+for the month); the sweep aborts if any two disagree. With `materialize_s`
+timed, the CUDA row is directly comparable: **1.3× the 8-thread C++ and 7.2×
+the single-thread** — and **1.18× end to end**, because the DuckDB store is
+~82% of the wall clock. The full analysis, intervals included, is in
+[`docs/bench/results.md`](docs/bench/results.md).
+
+**The vectorized Python contender is slower than the naive loop** — the reverse
+of what was expected. The cost is not vectorization failing to pay, it is float
+parsing: `oracle.py` uses `float()`, which is correctly rounded, while pandas'
+default C parser is not and lands one ulp off on values like `2.002`.
+`float_precision="round_trip"` is the only setting that agrees, and it costs
+1.18 s of the 1.79 s. The remaining ~0.6 s is materializing 765,711 Python
+tuples, which numpy does not remove either. The wrong-but-fast parse was not
+kept — see [`docs/validation-log.md`](docs/validation-log.md) for the full
+write-up, including why the sweep's own cross-arch gate would *not* have caught
+it.
+
+**The number that matters is the end-to-end one.** 7.2× on the clean phase
+moves the month's pipeline by 1.18×, because persistence dominates — which is
+the finding, not a footnote. The 2026-08-13 re-run with the corrected stage
+timers replaced the ~ estimates with these measurements.
 
 ---
 
@@ -750,11 +1004,15 @@ killed mid-run. Wall clock ~57 s (30 s death threshold dominates).
   prebuilt asset is fetched for those two platforms only (see `CMakeLists.txt`)
 - **Java** (for rendering PlantUML diagrams, optional)
 - **Python 3** (for validation oracle and benchmark, optional)
+- **CUDA Toolkit** (only for `-DMAS_ENABLE_CUDA=ON`; ships CUB, which the kernels use)
+
+On a Windows box missing MSVC or the CUDA Toolkit, `scripts\setup_windows_toolchain.ps1`
+(elevated) installs both; CMake can come from the venv (`pip install cmake`).
 
 All C++ dependencies are fetched automatically via CMake `FetchContent`:
 - Google Test v1.14.0
 - libzmq 4.3.5 + cppzmq 4.10.0
-- DuckDB v1.2.2 (prebuilt binary — macOS universal or Linux amd64)
+- DuckDB v1.2.2 (prebuilt binary — Windows amd64, macOS universal, or Linux amd64)
 
 ### Build
 
@@ -762,6 +1020,30 @@ All C++ dependencies are fetched automatically via CMake `FetchContent`:
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
 ```
+
+### Build Options
+
+| Option | Default | Effect |
+|--------|---------|--------|
+| `MAS_BENCH_ONLY` | `OFF` | Build only the cleaning core and the benchmark binaries. Fetches no DuckDB asset and no libzmq source, and forces `MAS_ENABLE_ZMQ=OFF`. |
+| `MAS_ENABLE_ZMQ` | `ON` | Build the ZeroMQ agent runtime (`mas_transport`, `mas_worker`, `mas_coordinator`) and its 40 tests. |
+| `MAS_ENABLE_CUDA` | `OFF` | Build `mas_cuda_clean`, and (in the full build) compile the GPU cleaner into `mas_monolith` so `--engine=cuda` works. Requires the CUDA Toolkit. |
+| `MAS_BUILD_TESTS` | `ON` | Build the GoogleTest suite. `OFF` drops the last dependency that needs network. |
+
+The default triple (`OFF, ON, OFF, ON`) is the build this project has always
+had: **110 tests green**. With `MAS_BENCH_ONLY=ON` the suite is the 45 tests that
+need neither DuckDB nor ZeroMQ; with `MAS_BUILD_TESTS=OFF` on top of that,
+`_deps/` is never created at all — nothing is downloaded:
+
+```bash
+# Portable benchmark build: configures anywhere with CMake + a C++20 compiler
+cmake -S . -B build -DMAS_BENCH_ONLY=ON -DMAS_BUILD_TESTS=OFF
+cmake --build build --config Release
+```
+
+ZeroMQ is **compiled out, never deleted** — it carries the processes-vs-threads
+axis of the scalability proof. `MAS_ENABLE_ZMQ=OFF` is the only mechanism for
+dropping it.
 
 ### Run Tests
 
@@ -831,6 +1113,25 @@ bench/run_bench.sh
 # Quick sweep (1-day volume only)
 bench/run_bench.sh --quick
 ```
+
+### CUDA Benchmark (Python vs C++ vs CUDA)
+
+```bash
+cmake -S . -B build -DMAS_BENCH_ONLY=ON -DMAS_ENABLE_CUDA=ON
+cmake --build build --config Release
+pip install -r bench/requirements-bench.txt
+
+python bench/run_bench_cuda.py --data telemetry_..._2026-02.zip
+python bench/run_bench_cuda.py --data telemetry_..._2026-02 --quick   # 1-day only
+
+python python/bench_plots.py --cuda      # → docs/bench/cuda_*.png
+```
+
+`--data` takes either a month zip or an already-extracted directory. Arches
+whose binary is missing are skipped with a warning rather than aborting, which
+is what lets one script cover both the portable build and the full build — add
+`mas_monolith` (i.e. configure without `MAS_BENCH_ONLY`) and the `e2e` rows
+appear too. See [`bench/README.md`](bench/README.md) for the Windows path.
 
 ---
 
@@ -980,19 +1281,587 @@ it, `--pdf` logs how to install it and writes Markdown and HTML as normal.
 
 ## Testing
 
-The project has **99 C++ unit tests** across 13 Google Test files, plus **239
-Python tests** for the analytics tier (234 pass, 5 skip without the rebuilt store).
+### `bench_cpu` — Store-Free Cleaning Contender
+
+```
+usage: bench_cpu <threads> <day1.csv> [day2.csv ...]
+```
+
+The C++ entry in the [CUDA benchmark](#cuda-cleaning-benchmark). Runs the same
+`CsvRawReader → CapEventExtractor` hot path with the same file-grain threading as
+`mas_monolith`, but accumulates events in memory instead of writing DuckDB — so
+the headline measurement does not require DuckDB on the target machine. Links
+only `mas_clean_core`, which is why it survives `MAS_BENCH_ONLY=ON`.
+
+[`test_bench_cpu_parity.cpp`](tests/test_bench_cpu_parity.cpp) keeps the
+substitution auditable: the streamed loop and `load_columns + extract_flat` must
+agree event-for-event on a real day-file.
+
+### `mas_cuda_clean` — GPU Cleaning Pipeline
+
+```
+usage: mas_cuda_clean [--verify] <day1.csv> [day2.csv ...]
+```
+
+Built only with `-DMAS_ENABLE_CUDA=ON`. Prints a `stages:` line with the
+seven per-stage GPU timings, which is what says how much of any win is "the GPU
+parses the CSV" versus "the GPU does the compare".
+
+**`--verify`** runs the bitwise differential against `extract_flat` inside the
+binary and exits non-zero on any disagreement, dumping the first ten differing
+events with all nine fields. The sweep passes it on the first repeat of every
+volume, so a fast-but-wrong implementation cannot produce a number — and a
+failure on a machine the author cannot reach is diagnosable from one paste.
+
+---
+
+## Resilience: Heartbeats, Death Detection, and Re-Dispatch
+
+The MAS implements a heartbeat-driven liveness protocol:
+
+```
+     ┌──────────────┐        Heartbeat (HB)        ┌──────────────┐
+     │  mas_worker   │ ──────────────────────────►  │mas_coordinator│
+     │               │        WorkResult            │               │
+     │  PULL work    │ ──────────────────────────►  │  PULL results │
+     │  PUSH result  │                              │  PULL HB      │
+     │  PUSH HB      │◄──────────────────────────── │  PUSH work    │
+     └──────────────┘        WorkItem / STOP        └──────────────┘
+```
+
+**Worker liveness contract:**
+1. Hello heartbeat on `run()` entry
+2. One heartbeat per empty recv tick (1 s period in production)
+3. One heartbeat after each `WorkResult`
+4. The only silent window is during `clean_file()` execution
+
+**Coordinator 4-phase loop (per tick):**
+1. **Result tick** — take one result (200 ms timeout paces the loop)
+2. **Heartbeat drain** — drain all pending heartbeats without blocking
+3. **Death sweep** — tombstone workers silent > `death_threshold` (30 s), reopen their completed items, re-dispatch all open items (capped at `redispatch_cap=2` per item)
+4. **Abort check** — if no live workers remain and items are open, abort
+
+**Dead-worker store write-off:** A dead worker's store is written off entirely
+— its items are re-dispatched to survivors. The idempotent upsert absorbs any
+overlap. `mas_merge` safely skips corrupt stores.
+
+---
+
+## Distributed Processing Flow
+
+```
+┌─────────────────────────┐
+│     mas_coordinator      │
+│ (ventilator + sink +     │
+│  liveness monitor)       │
+│                          │
+│  PUSH WorkItems          │── tcp://..:5591 (work) ──►┌───────────────┐
+│  PULL WorkResults        │◄─ tcp://..:5592 (results) │  mas_worker 1 │
+│  PULL Heartbeats         │◄─ tcp://..:5593 (hb) ─────│  → w1.duckdb  │
+│  Sweep deaths (30s)      │                            │  worker_id=w1 │
+│  Re-dispatch dead items  │                            └───────────────┘
+│  PUSH STOP × live workers│                                   ...
+│                          │── tcp://..:5591 ──────►┌───────────────┐
+│                          │◄─ tcp://..:5592 ───────│  mas_worker N │
+│                          │◄─ tcp://..:5593 ───────│  → wN.duckdb  │
+└─────────────────────────┘                         └───────────────┘
+         │
+         │  (after all workers done)
+         ▼
+┌─────────────────────────┐
+│       mas_merge          │
+│                          │
+│  ATTACH w1.duckdb        │
+│  ATTACH w2.duckdb        │──►  unified.duckdb
+│  ...                     │
+│  INSERT OR IGNORE        │
+│  (skips corrupt stores)  │
+└─────────────────────────┘
+```
+
+---
+
+## Python Validation Oracle
+
+Independent Python re-implementations serve as **reference oracles**, sharing no
+code with the implementations they check — an oracle that imports the definition
+under test cannot detect an error in it:
+
+| File | Purpose |
+|------|---------|
+| [`oracle.py`](python/oracle.py) | `extract(path)` → list of event tuples. Mirrors `CapEventExtractor` logic exactly. |
+| [`clean_vectorized.py`](python/clean_vectorized.py) | Same tuples, same order, no Python row loop: pandas parses, one `numpy.diff` does the transform. `np.nonzero` already returns `(row asc, head asc)` — the C++ emission order. The fair Python contender in the benchmark; `test_clean_vectorized.py` holds it to byte-equality with `oracle.py`. |
+| [`test_oracle.py`](python/test_oracle.py) | Pytest: verifies increment counting, dedup of held rows, and aggregated detection. |
+| [`validate_real.py`](python/validate_real.py) | Asserts C++ output row count matches oracle count on real data. |
+| [`oracle_kpi.py`](python/oracle_kpi.py) | Recomputes the headline KPIs straight from the raw CSV — no DuckDB, no toolkit SQL. Cross-checks the WP2 analytics tier. |
+
+**Validated result:** On 2026-02-01 day-file (86,399 rows): C++ = 765,711 events, Python = 765,711 events → **MATCH**.
+
+---
+
+## Benchmarking
+
+The benchmark harness [`bench/run_bench.sh`](bench/run_bench.sh) runs a
+comprehensive sweep:
+
+- **Architectures:** monolith-1T, monolith-MT (threads ∈ {1,2,4,8}), MAS (workers ∈ {1,2,4,8,16})
+- **Volumes:** 1, 7, or 28 day-files (`--quick` flag for 1-day only)
+- **Repeats:** 3 per configuration
+- **Per-run correctness check** against the oracle
+- **Metrics captured:** clean time, merge time, total time, events, rows/s, events/s, peak RSS, CPU%
+
+Raw data (81 runs = 27 configs × 3 repeats) lands in
+[`bench/results.csv`](bench/results.csv); the analysis, with median tables and
+caveats, is in [`docs/bench/results.md`](docs/bench/results.md). The fixture
+generator [`bench/fixtures/make_tiny_csvs.py`](bench/fixtures/make_tiny_csvs.py)
+creates deterministic 2-row test files with cross-day counter continuity for
+smoke testing.
+
+**Headline finding — the merge phase was the scaling wall, and `merge_all`
+moved it.** Cleaning parallelizes well; unifying the per-worker stores is what
+capped the run. Before `merge_all` the merge cost 63–65 s at month scale
+against a ~101 s sequential baseline on the original sweep machine, so the
+whole gain from parallel cleaning went back into the sink — the price of the
+"per-worker single-writer stores, merge at the sink" design, and the finding
+the sweep was worth running for. With the set-based merge the cost is flat
+across source count (65–72 s at month scale, N=2..16 and T=2..8 alike) and is
+46% of MAS N=16's wall — the same 46% it was on the original machine once both
+are measured with the set-based merge.
+
+**The end-to-end ratios are repeatable, on hardware that can hold its clock —
+and they belong to that hardware.**
+The original sweep machine was a `Mac14,2` — a fanless MacBook Air M2 whose
+interleaved A/B put parallel `clean_s` spreads at 21–53%, so its ratios
+recorded run order, not code. The full matrix was re-measured on 2026-08-13 on
+an actively-cooled i7-13700H (6P+8E cores, 20 threads, 16 GB): every 28-day
+configuration now repeats within 0.1–1.8% on `clean_s` and 0.3–4.8% on
+`total_s`, and the medians read: mono-1T 537.8 s, mono-MT T=8 157.3 s
+(**3.42×**), MAS N=16 140.4 s (**3.83×** end-to-end; the clean phase alone
+parallelizes at 7.2×). At equal parallelism the thread pool wins — MAS N=8
+trails mono-MT T=8 by 25.2 s, the cost of processes, transport and per-worker
+stores — and MAS takes the matrix only at N=16. **The ratio does not transfer,
+though: it is 1.84× on the M2 and 3.83× here** because the sequential baseline
+degrades 5.28× between the two machines while sixteen workers degrade only
+2.54× — this box answers a more expensive per-row path with 20 hardware threads
+against the M2's 8. A speedup measures the machine's serial penalty as much as
+the design's parallel efficiency, so quote it with the box attached. The
+analysis, with per-config spreads and caveats, is in
+[`docs/bench/results.md`](docs/bench/results.md) and the full
+measurement in the [validation log](docs/validation-log.md) (entry 2026-08-13,
+resweep).
+
+These numbers replace an earlier sweep that was timing 66% of the work: under
+the old `cap_seq` key the store wrote 14.4M rows where it now writes 21.9M for
+the same input, and the benchmark counted the shortfall as speed. The merge
+cost also used to *grow* with store count (35 s at N=1 to 51 s at N=16); it is
+now flat, because that growth was the defect doing work — more stores meant
+more colliding `cap_seq` for `INSERT OR IGNORE` to resolve, and every
+resolution discarded a real closure.
+
+The wall was attacked by `DuckDbEventStore::merge_all()`: N per-row
+index-probing passes became one hash-based `DISTINCT` over the union of the
+sources. Measured in isolation on the M2, alternating binaries: **65.9 s →
+22.8 s, 2.89×**, identical row counts — a like-for-like comparison unaffected
+by that machine's thermal caveat. The cooled-hardware resweep shows the same
+mechanism from another angle: the set-based pass holds 65–72 s regardless of
+source count, while the per-row path it replaced (still reachable as the N=1
+fallback) costs 430 s over the same volume there — 6.2× — because per-row
+index probing is exactly the work the new platform taxes hardest.
+
+All 81 runs of the resweep matched the correctness oracle exactly —
+21,872,663 distinct events at month scale, every repeat.
+
+### CUDA cleaning benchmark
+
+`CapEventExtractor` never reads state older than the previous row — every branch
+of `process()` leaves `last_count_[h]` equal to the current row's count. So the
+transform is element-wise over 3,110,364 independent (row, head) pairs per
+day-file, not 36 sequential chains, and it ports to the GPU cleanly.
+
+`bench/run_bench_cuda.py` measures the same transform five ways on one machine:
+pure-Python (`oracle.py`), vectorized Python (`clean_vectorized.py`), C++ 1-thread
+and 8-thread (`bench_cpu`), and CUDA (`mas_cuda_clean`).
 
 ```bash
-cd build && ctest --output-on-failure     # 99 C++ tests
-cd python && ../.venv/bin/python -m pytest -q   # 234 pass, 5 skip (they need the rebuilt store)
+cmake -S . -B build -DMAS_BENCH_ONLY=ON -DMAS_ENABLE_CUDA=ON
+cmake --build build --config Release
+python bench/run_bench_cuda.py --data telemetry_..._2026-02.zip
 ```
+
+`MAS_BENCH_ONLY=ON` builds only the cleaning core and the benchmark binaries —
+no DuckDB, no ZeroMQ, nothing downloaded — so it configures on any machine with
+CMake, a C++20 compiler, and Python. See [`bench/README.md`](bench/README.md) for
+the Windows path and
+[`docs/superpowers/specs/2026-08-10-cuda-cleaning-bench-design.md`](docs/superpowers/specs/2026-08-10-cuda-cleaning-bench-design.md)
+for the design.
+
+**Two timing modes.** `clean` times the transform alone (`--no-store`,
+`bench_cpu`, the Python `extract()` calls); `e2e` includes the DuckDB write. At
+GPU speeds the store is ~33× the transform, so reporting only `e2e` would
+flatten every architecture into the same number.
+
+**Measured — Windows target box (RTX 4070 Laptop), 28 day-files, median of 3,
+`clean` mode, corrected timers (sweep 2026-08-13):**
+
+| Arch | clean_s, median [min–max] |
+|------|---------------------------|
+| `cuda` | 6.43 [6.33–8.34] |
+| `cpp-MT` (8 threads) | 8.21 [8.12–8.32] |
+| `cpp-1T` | 46.26 [45.91–46.57] |
+| `py-naive` (`oracle.py`) | 74.64 [74.32–76.31] |
+| `py-numpy` (`clean_vectorized.py`) | 85.82 [84.53–86.99] |
+
+Every arch at every volume × repeat emitted identical event counts (21,872,663
+for the month); the sweep aborts if any two disagree. With `materialize_s`
+timed, the CUDA row is directly comparable: **1.3× the 8-thread C++ and 7.2×
+the single-thread** — and **1.18× end to end**, because the DuckDB store is
+~82% of the wall clock. The full analysis, intervals included, is in
+[`docs/bench/results.md`](docs/bench/results.md).
+
+**The vectorized Python contender is slower than the naive loop** — the reverse
+of what was expected. The cost is not vectorization failing to pay, it is float
+parsing: `oracle.py` uses `float()`, which is correctly rounded, while pandas'
+default C parser is not and lands one ulp off on values like `2.002`.
+`float_precision="round_trip"` is the only setting that agrees, and it costs
+1.18 s of the 1.79 s. The remaining ~0.6 s is materializing 765,711 Python
+tuples, which numpy does not remove either. The wrong-but-fast parse was not
+kept — see [`docs/validation-log.md`](docs/validation-log.md) for the full
+write-up, including why the sweep's own cross-arch gate would *not* have caught
+it.
+
+**The number that matters is the end-to-end one.** 7.2× on the clean phase
+moves the month's pipeline by 1.18×, because persistence dominates — which is
+the finding, not a footnote. The 2026-08-13 re-run with the corrected stage
+timers replaced the ~ estimates with these measurements.
+
+---
+
+## Chaos E2E Testing
+
+[`scripts/chaos_e2e.sh`](scripts/chaos_e2e.sh) validates resilience under
+real failure conditions:
+
+1. Starts a coordinator + 2 workers on real day-files
+2. **`kill -9`** worker 1 after 2 seconds (mid-processing)
+3. Waits for the coordinator to detect the death (30 s threshold), re-dispatch items, and complete
+4. Merges both worker stores (dead worker's store is harmlessly skipped or idempotently absorbed)
+5. Asserts merged row count matches the oracle
+
+**Result:** PASS — 2,290,233 events across 3 day-files, even with one worker
+killed mid-run. Wall clock ~57 s (30 s death threshold dominates).
+
+**Defect found:** Chaos testing exposed a 121 s teardown bug in orphan workers — connect-mode PUSH sockets with 60 s linger held undeliverable heartbeats. Fixed with `linger_ms=0`, regression-guarded by a unit test.
+
+---
+
+## Build & Run
+
+### Prerequisites
+
+- **CMake** ≥ 3.16
+- **C++20** compiler (clang 14+, gcc 12+) on macOS or Linux x86-64 — the DuckDB
+  prebuilt asset is fetched for those two platforms only (see `CMakeLists.txt`)
+- **Java** (for rendering PlantUML diagrams, optional)
+- **Python 3** (for validation oracle and benchmark, optional)
+- **CUDA Toolkit** (only for `-DMAS_ENABLE_CUDA=ON`; ships CUB, which the kernels use)
+
+On a Windows box missing MSVC or the CUDA Toolkit, `scripts\setup_windows_toolchain.ps1`
+(elevated) installs both; CMake can come from the venv (`pip install cmake`).
+
+All C++ dependencies are fetched automatically via CMake `FetchContent`:
+- Google Test v1.14.0
+- libzmq 4.3.5 + cppzmq 4.10.0
+- DuckDB v1.2.2 (prebuilt binary — Windows amd64, macOS universal, or Linux amd64)
+
+### Build
+
+```bash
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+```
+
+### Build Options
+
+| Option | Default | Effect |
+|--------|---------|--------|
+| `MAS_BENCH_ONLY` | `OFF` | Build only the cleaning core and the benchmark binaries. Fetches no DuckDB asset and no libzmq source, and forces `MAS_ENABLE_ZMQ=OFF`. |
+| `MAS_ENABLE_ZMQ` | `ON` | Build the ZeroMQ agent runtime (`mas_transport`, `mas_worker`, `mas_coordinator`) and its 40 tests. |
+| `MAS_ENABLE_CUDA` | `OFF` | Build `mas_cuda_clean`, and (in the full build) compile the GPU cleaner into `mas_monolith` so `--engine=cuda` works. Requires the CUDA Toolkit. |
+| `MAS_BUILD_TESTS` | `ON` | Build the GoogleTest suite. `OFF` drops the last dependency that needs network. |
+
+The default triple (`OFF, ON, OFF, ON`) is the build this project has always
+had: **110 tests green**. With `MAS_BENCH_ONLY=ON` the suite is the 45 tests that
+need neither DuckDB nor ZeroMQ; with `MAS_BUILD_TESTS=OFF` on top of that,
+`_deps/` is never created at all — nothing is downloaded:
+
+```bash
+# Portable benchmark build: configures anywhere with CMake + a C++20 compiler
+cmake -S . -B build -DMAS_BENCH_ONLY=ON -DMAS_BUILD_TESTS=OFF
+cmake --build build --config Release
+```
+
+ZeroMQ is **compiled out, never deleted** — it carries the processes-vs-threads
+axis of the scalability proof. `MAS_ENABLE_ZMQ=OFF` is the only mechanism for
+dropping it.
+
+### Run Tests
+
+```bash
+cd build && ctest --output-on-failure
+```
+
+### Single-File Processing
+
+```bash
+# Output as CSV
+./build/clean telemetry_*/2026-02-01.csv events.csv MCC
+
+# Output as DuckDB
+./build/clean telemetry_*/2026-02-01.csv events.duckdb MCC
+```
+
+### Monolith Multi-Threaded Processing
+
+```bash
+# Single-threaded baseline (mono-1T)
+./build/mas_monolith unified.duckdb MCC 1 telemetry_*/*.csv
+
+# 4-thread parallel (mono-MT)
+./build/mas_monolith unified.duckdb MCC 4 telemetry_*/*.csv
+```
+
+### Distributed Multi-File Processing
+
+```bash
+# Terminal 1 — start 2 workers (note: 3 endpoints now)
+./build/mas_worker tcp://127.0.0.1:5591 tcp://127.0.0.1:5592 tcp://127.0.0.1:5593 \
+    w1.duckdb w1 MCC &
+./build/mas_worker tcp://127.0.0.1:5591 tcp://127.0.0.1:5592 tcp://127.0.0.1:5593 \
+    w2.duckdb w2 MCC &
+
+# Terminal 2 — start coordinator
+./build/mas_coordinator tcp://127.0.0.1:5591 tcp://127.0.0.1:5592 tcp://127.0.0.1:5593 \
+    telemetry_*/2026-02-01.csv telemetry_*/2026-02-02.csv
+
+# After completion — merge per-worker stores
+./build/mas_merge unified.duckdb MCC w1.duckdb w2.duckdb
+```
+
+### Validation Against Python Oracle
+
+```bash
+# Count-only check
+python3 python/oracle.py telemetry_*/2026-02-01.csv
+
+# Cross-check C++ output
+python3 python/validate_real.py telemetry_*/2026-02-01.csv events.csv
+```
+
+### Chaos E2E Test
+
+```bash
+scripts/chaos_e2e.sh telemetry_*/2026-02-01.csv telemetry_*/2026-02-02.csv telemetry_*/2026-02-03.csv
+```
+
+### Performance Benchmark
+
+```bash
+# Full sweep (1, 7, 28-day volumes × all architectures × 3 repeats)
+bench/run_bench.sh
+
+# Quick sweep (1-day volume only)
+bench/run_bench.sh --quick
+```
+
+### CUDA Benchmark (Python vs C++ vs CUDA)
+
+```bash
+cmake -S . -B build -DMAS_BENCH_ONLY=ON -DMAS_ENABLE_CUDA=ON
+cmake --build build --config Release
+pip install -r bench/requirements-bench.txt
+
+python bench/run_bench_cuda.py --data telemetry_..._2026-02.zip
+python bench/run_bench_cuda.py --data telemetry_..._2026-02 --quick   # 1-day only
+
+python python/bench_plots.py --cuda      # → docs/bench/cuda_*.png
+```
+
+`--data` takes either a month zip or an already-extracted directory. Arches
+whose binary is missing are skipped with a warning rather than aborting, which
+is what lets one script cover both the portable build and the full build — add
+`mas_monolith` (i.e. configure without `MAS_BENCH_ONLY`) and the `e2e` rows
+appear too. See [`bench/README.md`](bench/README.md) for the Windows path.
+
+---
+
+## Analytics CLI and Reports
+
+WP2–WP5. The C++ MAS above refines raw telemetry into a DuckDB store; this layer
+answers questions about it and writes reports a human can hand over.
+
+### Build the analytics environment
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r python/requirements.txt
+```
+
+### Generate a report
+
+```bash
+scripts/arol report kpi       --period 2026-02          --config arol.json
+scripts/arol report drift     --period 2026-02..2026-04 --config arol.json
+scripts/arol report anomalies --period 2026-02          --config arol.json
+```
+
+Each writes a self-contained directory: `report.md` (source of truth),
+`report.html` (portable, plots inlined as data URIs), `trace.json` (every tool
+call with its arguments and row counts), and PNGs.
+
+These three verbs run **fixed plans with no model in the loop** — the same store
+and period gives the same report every time, apart from the generation timestamp
+in the header. Committed examples are under
+[`docs/reports/`](docs/reports/), and every number in them is reconciled against
+a direct DuckDB query in the [validation log](docs/validation-log.md).
+
+### Ask a question
+
+```bash
+export ANTHROPIC_API_KEY=...
+scripts/arol ask "which head behaves differently, and why?" --period 2026-02
+```
+
+Claude chooses which tools to run and writes the narrative. **It never computes a
+number**: every figure comes from the same deterministic SQL the `report` verbs
+use, and the figures, the tool-call trace and the limits section are rendered
+from the tool results regardless of what the model says.
+
+With no API key, no network, a refusal, or a malformed plan, `ask` falls back to
+a keyword router and the report's *Confidence and limits* section names the
+reason. A model failure costs readability, never correctness.
+
+### Running the model locally
+
+`ask` works against a hosted model or one running on your machine. The only
+field that changes is `provider`:
+
+```bash
+ollama serve && ollama pull qwen2.5:7b
+
+scripts/arol ask "which head behaves differently?" --period 2026-02 \
+  --provider ollama --model qwen2.5:7b
+```
+
+Nothing below the planner knows the difference: both paths return the same plan
+type, the same executor runs it, and every number still comes from the same SQL.
+
+**How much of the planning the model does** is a separate choice, because a model
+can route reliably long before it can compose a plan:
+
+| `--planning` | the model produces | prompt | works on |
+|---|---|---:|---|
+| `plan` (default) | the whole sequence, arguments included | ~1,850 tok | a capable model |
+| `select` | which tools to run; their defaults supply the arguments | ~410 tok | a mid-size local model |
+| `classify` | one of the three report types; its fixed plan runs | ~16 tok | almost anything |
+
+All three produce registry-validated steps, so the tier is a cost choice, not a
+correctness one.
+
+**Measured on qwen2.5:7b** (Apple M3, 16 GB) — see the
+[validation log](docs/validation-log.md):
+
+- `classify` routed 5 of 6 natural questions correctly, including one in Italian.
+  The keyword router got **0 of 6** — it only fires on literal keywords.
+- `plan` produced registry-valid plans on 6 of 6 with the per-tool schema, and
+  only 3 of 6 with the flat one Anthropic requires.
+- Narration is the weak spot: the 7B returned *"Here's a summary of the findings
+  from both tools:"* and stopped, three times out of three. That is now detected
+  and replaced by the deterministic summary, with the reason printed in the
+  report's limits section.
+
+A local model is slower: expect ~2 s to classify but ~3 min for a full `ask` on
+the three-month store, most of it narration.
+
+### Configuration (WP5)
+
+No path, band, or threshold is hard-coded. `arol.json`:
+
+```json
+{
+  "store_path": "events_3mo.duckdb",
+  "machine_id": "MCC",
+  "torque_min": 1.5,
+  "torque_max": 2.5,
+  "mad_k": 3.0,
+  "idle_min_seconds": 300,
+  "provider": "anthropic",
+  "model": "claude-opus-5",
+  "effort": "high",
+  "planning": "plan"
+}
+```
+
+For a local model, three fields change and the rest stay:
+
+```json
+{
+  "provider": "ollama",
+  "model": "qwen2.5:7b",
+  "ollama_host": "http://localhost:11434",
+  "num_ctx": 8192,
+  "narrator_max_items": 20,
+  "max_anomaly_items": 5000,
+  "planning": "classify"
+}
+```
+
+`num_ctx` must be at least 4096 and is rejected below it: the planner prompt
+alone is ~2,600 tokens, Ollama defaults to 2048, and it **truncates silently**
+rather than erroring — which looks exactly like a stupid model.
+
+A configuration problem (unreadable config, unknown report type) exits 2 before
+any work starts. An analysis gap — an empty period, a period the tools cannot
+parse — is not an error: it produces a report whose limits section names the gap,
+because a report generated unattended must still land on disk.
+
+### Reproduce the demo
+
+```bash
+scripts/demo.sh
+```
+
+Loads the three-month store and generates all three report types into
+`docs/reports/` — 20.3 M rows, three reports, ~8 s.
+
+PDF export needs WeasyPrint (`pip install weasyprint`, plus Cairo/Pango); without
+it, `--pdf` logs how to install it and writes Markdown and HTML as normal.
+
+---
+
+## Testing
+
+The project has **124 C++ unit tests** across 17 Google Test files, plus **249
+Python tests** for the analytics tier. Both counts are asserted by
+`python/tests/test_readme_counts.py`, so adding a test and forgetting this
+paragraph fails the suite rather than quietly dating it.
+
+```bash
+cd build && ctest --output-on-failure           # 124 C++ tests
+cd python && ../.venv/bin/python -m pytest -q   # 249 Python tests (6 need the rebuilt store or a real day-file and skip without them)
+```
+
+Under `-DMAS_BENCH_ONLY=ON` the C++ suite is the 45 tests that need neither
+DuckDB nor ZeroMQ — the rest are excluded by design, not skipped. (Two of the
+45 skip without the extracted pool beside the binary.)
 
 | Test File | What It Tests |
 |-----------|---------------|
 | `test_cap_event.cpp` | The status bitmask: a closure is rejected iff its status is odd (bit 0), across every condition in the brief's slide-6 table |
 | `test_cap_event_extractor.cpp` | Increment, aggregated, reset, held-dedup, first-observation seeding |
+| `test_cap_event_extractor_flat.cpp` | The GPU precondition: `extract_flat` and the stateful extractor emit identical events, all nine fields, on the edge cases and on a real day-file. Plus header validation (wrong count *and* wrong name) and CRLF/LF equivalence |
+| `test_platform_metrics.cpp` | Wall/CPU/peak-RSS are plausible and the `metrics:` line is exactly parseable |
 | `test_csv_raw_reader.cpp` | Happy path, truncated rows, malformed numerics, missing file |
+| `test_bench_cpu_parity.cpp` | `bench_cpu`'s streamed loop == `load_columns` + `extract_flat`, event for event, on real data |
 | `test_pipeline.cpp` | End-to-end CSV→events flow, batch boundary, error codes |
 | `test_duckdb_smoke.cpp` | DuckDB library linkage sanity |
 | `test_duckdb_event_store.cpp` | Schema creation, write/count, idempotent upsert, merge_from, export_parquet |
@@ -1034,13 +1903,20 @@ a number.
 | **`FakeTickSource`** | Models interleaved recv timeouts (nullopt entries) for testing idle-exit countdown without real timers. |
 | **Monolith mode** | Thread-based alternative to the MAS for environments where multi-process ZeroMQ is overkill. Same file-grain work unit and shared-nothing store strategy. |
 | **try/catch DETACH in merge_from** | A failed INSERT from one corrupt store must not leave `src` attached, poisoning subsequent ATTACHes in the same loop. |
+| **`mas_clean_core` links nothing** | `Pipeline.cpp` sits with the DuckDB stores, so every consumer of the cleaning path used to drag in `duckdb_imported`. Splitting it out is what lets the benchmark configure on a machine with no DuckDB. `mas_core` survives as an INTERFACE alias, so no call site changed. |
+| **Element-wise extractor kept alongside the stateful one** | The stateful `CapEventExtractor` is what ships; `extract_flat` exists to be *compared against* it. Replacing the shipped one with the flat form would remove the very oracle that proves the GPU port is faithful. |
+| **Two timing modes (`clean` vs `e2e`)** | At GPU speeds the DuckDB write is two orders of magnitude larger than the transform and would flatten every architecture into the same number. `clean` is the comparison; `e2e` is the deployment truth. Both are reported; neither is presented alone. |
+| **Binaries report their own metrics** | `/usr/bin/time -l` is BSD-only, so the old harness could not run on Linux or Windows. Self-reporting also excludes process spawn from the measurement. |
+| **Correctly-rounded float parsing everywhere** | pandas' default CSV parser and a naive GPU parse are both one ulp off on values like `2.002`. Every contender is held to `float()`'s result bitwise, even where it costs speed — a fast implementation that is wrong must not produce a benchmark number. |
 
 ---
 
 ## Roadmap
 
 - [x] **Python analytics agents** — eight deterministic analysis tools, an LLM planner and narrator that cannot alter a number, and the `arol` CLI. See [Analytics CLI and Reports](#analytics-cli-and-reports).
-- [x] **Attack the merge bottleneck** — the benchmark's headline finding. `perf/merge-set-based` replaces the per-row `INSERT OR IGNORE` probes with one set-based dedup over the union: 65.9 s → 22.8 s in isolation (2.89×), same rows. Partitioned Parquet output or a concurrent-writer store remain the larger redesigns
+- [x] **CUDA cleaning pipeline and the three-way benchmark** — the transform is element-wise, proved by test, so it ports to the GPU; the portable driver measures Python, C++ and CUDA on one machine. See [CUDA cleaning benchmark](#cuda-cleaning-benchmark).
+- [x] **Run the CUDA sweep on real hardware** — done on an RTX 4070 Laptop (CUDA 13.3, Windows 11): first sweep 2026-08-10, re-measured 2026-08-13 with the corrected timers. `--verify` caught a real 1-ulp GPU parse defect on the first run. Clean phase measured 1.3× the 8-thread C++ and 7.2× the single-thread; 1.18× end to end because the store dominates — see [docs/bench/results.md](docs/bench/results.md).
+- [x] **Attack the merge bottleneck** — the benchmark's headline finding. `DuckDbEventStore::merge_all()` replaces the per-row `INSERT OR IGNORE` probes with one set-based dedup over the union: 65.9 s → 22.8 s in isolation (2.89×), ~2.1× across the M2 sweep, same rows; end to end on actively-cooled hardware the design lands at **3.83×** the sequential baseline (537.8 s → 140.4 s, MAS N=16, resweep 2026-08-13). Partitioned Parquet output or a concurrent-writer store remain the larger redesigns
 - [ ] **PUB/SUB fan-out and REQ/REP registration** — the two ZeroMQ patterns from the spec that the current 3-endpoint PUSH/PULL fabric does not yet use
 - [ ] **TRY_CAST + quarantine** — gracefully handle malformed timestamps (currently strict-CAST aborts the day-file)
 - [ ] **Monitoring dashboard** — live view of processing progress and per-head statistics

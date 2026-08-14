@@ -39,7 +39,7 @@ def main():
         text = render.render(ex, cfg, tmp, render.summarise(ex),
                              generated_at=FIXED_TIME)
     GOLDEN.parent.mkdir(parents=True, exist_ok=True)
-    GOLDEN.write_text(text)
+    GOLDEN.write_text(text, encoding="utf-8")
     print(f"wrote {GOLDEN} ({len(text)} bytes) -- now read the diff")
 
 

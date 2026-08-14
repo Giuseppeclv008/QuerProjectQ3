@@ -609,11 +609,621 @@ could not land on one side.
 the load-bearing check: a faster merge that loses rows is the defect this branch
 exists to prevent, in a new costume.
 
+**[SUPERSEDED 2026-08-13 — the full sweep it asks for exists, on actively-cooled
+hardware (i7-13700H): measured end-to-end, MAS N=16 is 3.83x over mono-1T there.
+The M2-frame figures in this paragraph (27.1 clean / 64.0 merge / 91.2 total /
+1.11x) were later shown thermally unstable and never became measurable on that
+chassis; see the resweep entry at the end of this file.]**
 Projected end-to-end, NOT yet measured: MAS N=16 at 28 days is 27.1 s clean +
 64.0 s merge = 91.2 s. At ~23 s of merge it would be ~50 s, i.e. ~2.0x over
 mono-1T instead of 1.11x. That projection needs a full sweep before it is
 written down as a result.
 
+## 2026-08-13 — Interleaved A/B: the clean-time anomaly is the machine, and the mono-MT/MAS gap does not survive it
+
+**HEAD:** `638478b`. **Hardware:** `Mac14,2` — MacBook Air M2, 8 cores, **no
+fan**. That last fact turns out to be the whole story.
+
+Two questions the PR #9 sweep left open: whether `clean_s` is repeatable within a
+session, and what the mono-MT/MAS gap is now that mono-MT's merge clock stops
+before its own cleanup (`638478b`).
+
+**Method.** One binary set, built before the run and untouched during it. Four
+rounds, each running mono-1T, mono-MT T=8 and MAS N=16 over the same 28 February
+day-files, in that order every time. Interleaving is the point: any drift in the
+machine hits all three configurations in the same round, so it appears as a trend
+across rounds rather than as a difference between architectures. All 12 runs
+produced exactly 21,872,663 rows.
+
+### `clean_s` is repeatable on one core and not on eight
+
+| config | r1 | r2 | r3 | r4 | median | spread |
+|---|---:|---:|---:|---:|---:|---:|
+| mono-1T | 105.4 | 107.4 | 105.7 | 108.8 | 106.6 | **3%** |
+| mono-MT T=8 | 31.3 | 34.2 | 33.6 | 38.0 | 33.9 | **21%** |
+| MAS N=16 | 30.6 | 40.6 | 36.9 | 47.0 | 38.8 | **53%** |
+
+Same binary, same input, same twenty minutes. The single-core baseline is flat to
+3% while both parallel configurations climb round on round — MAS by 53% from
+first to last. This is thermal accumulation on a fanless chassis, and it is not a
+caveat about precision: it means a parallel configuration's `clean_s` on this
+machine records *when in the sweep it ran*, not how fast it is.
+
+**This settles the "unexplained" inflation.** The PR #9 sweep reported `clean_s`
+7-34% higher than the sweep before it for every parallel configuration and none
+for mono-1T, with identical clean-path code, and presented 1.84x as a lower bound
+on the reasoning that the inflation could only depress the ratio. The reasoning
+does not hold: the sign of the effect is set by run order, not by the branch.
+Nothing was inflated *by the branch*; the two sweeps sampled different points on
+a thermal curve. **1.84x is not a floor. It is a number with tens of percent of
+uncertainty**, and the recorded ±0 on it should be read as such.
+
+### The 20.9 s gap is an artifact of the SIGTERM restart
+
+| | mono-MT T=8 | MAS N=16 | gap |
+|---|---:|---:|---:|
+| recorded (PR #9) | 76.26 | 55.39 | **20.9 s** |
+| interleaved, median of 4 | 70.4 | 72.6 | **−2.1 s** |
+
+Per round the gap is +4.3, +2.2, −4.8, −6.3 — **the sign flips**. The two
+architectures are tied inside the noise of this machine, and neither the
+"architectures do not converge" reading nor the earlier "~4 s" projection
+survives.
+
+Where the 20.9 s came from is recorded in `docs/bench/results.md` itself: that
+sweep was killed by SIGTERM at 65 of 81 rows, the completed monolith block was
+kept, and the MAS block was re-run in a fresh session. So mono-MT's numbers come
+from the tail of a long hot run and MAS's from a cold start. The caveat was
+written down; the conclusion was drawn across it anyway. Against the table above,
+mono-MT's recorded `clean_s` of 43.31 is high and MAS's 29.27 is low — exactly
+the direction a hot block versus a cold block predicts.
+
+Median merges, interleaved and with the clock fixed: mono-MT 35.8 s, MAS 33.7 s.
+The recorded 32.4 / 25.4 split had two causes, both now removed — mono-MT was
+charged for unlinking its own per-thread stores, and the two blocks were measured
+in different thermal states.
+
+### What still stands, and what does not
+
+Unaffected: every correctness result, `merge_all`'s 2.89x on its own benchmark,
+and the structural finding that merge cost stopped growing with source count.
+`clean_s` for mono-1T is stable enough to trust.
+
+Not established on this hardware: any end-to-end speedup ratio quoted to three
+significant figures, and any comparison between two parallel architectures
+measured in different sessions. The replacement is a full sweep on a machine with
+active cooling — the numbers in `bench/results.csv` should be read as shape, not
+as seconds, until then.
+
+Raw data, all 12 runs:
+
+| round | arch | clean_s | merge_s | total_s | rows |
+|---|---|---:|---:|---:|---:|
+| 1 | mono-1T | 105.4 | 0.0 | 105.4 | 21,872,663 |
+| 1 | mono-MT T=8 | 31.3 | 35.1 | 66.5 | 21,872,663 |
+| 1 | mas N=16 | 30.6 | 31.6 | 62.2 | 21,872,663 |
+| 2 | mono-1T | 107.4 | 0.0 | 107.4 | 21,872,663 |
+| 2 | mono-MT T=8 | 34.2 | 42.4 | 76.6 | 21,872,663 |
+| 2 | mas N=16 | 40.6 | 33.8 | 74.4 | 21,872,663 |
+| 3 | mono-1T | 105.7 | 0.0 | 105.7 | 21,872,663 |
+| 3 | mono-MT T=8 | 33.6 | 32.3 | 66.0 | 21,872,663 |
+| 3 | mas N=16 | 36.9 | 33.8 | 70.7 | 21,872,663 |
+| 4 | mono-1T | 108.8 | 0.0 | 108.8 | 21,872,663 |
+| 4 | mono-MT T=8 | 38.0 | 36.4 | 74.4 | 21,872,663 |
+| 4 | mas N=16 | 47.0 | 33.7 | 80.7 | 21,872,663 |
+---
+
+## CUDA cleaning pipeline and the three-way benchmark
+
+The dedup was ruled a poor GPU fit in the 2026-07-04 spec (§3: "GPU acceleration
+is optional stretch for analytics only, not the cleaning core") on the premise
+that it is a sequential per-head scan. It is not. Every branch of
+`CapEventExtractor::process` ends with `last = c`, and the held branch is entered
+only when `c == *last` — so `last_count_[h]` after row `i` is always
+`llround(count[i][h])`, and the transform never reads state older than one row.
+
+`tests/test_cap_event_extractor_flat.cpp` is that claim as a test: the
+element-wise `extract_flat` and the shipped stateful extractor produce identical
+`CapEvent` vectors — all nine fields — on the edge cases and on a real day-file
+(765,711 events). It runs with no GPU.
+
+Two timing modes, because at GPU speeds the DuckDB write is two orders of
+magnitude larger than the transform and would flatten every arch into the same
+number. `clean` is the comparison; `e2e` is the deployment truth. Measured on
+the M3 at one day-file: `mono-1T` cleans in 0.47 s and takes 3.2 s end to end,
+so the store is 85% of the wall clock.
+
+### The vectorized Python contender is slower than the naive loop
+
+The expectation going in was that `clean_vectorized.py` would beat `oracle.py`
+by a wide margin. It does not: median of three at one day-file, `py-naive`
+1.246 s against `py-numpy` 1.793 s. The cause is not vectorization failing to
+pay — it is float parsing.
+
+`oracle.py` uses `float()`, which is correctly rounded. pandas' default C parser
+uses `xstrtod`, which is not: on the real pool it lands one ulp off on values
+like `2.002`, and the differential test caught it at event 8055 of
+2026-02-01. `float_precision="high"` is bit-identical to the default (66,553
+differing cells on that same day-file), so only `float_precision="round_trip"`
+agrees with `oracle.py` — and round_trip costs 1.18 s of the 1.79 s against
+0.34 s for the wrong-but-fast path.
+
+The remaining ~0.6 s is materializing 765,711 Python tuples, which numpy does
+not remove either. So for this transform, at this output shape, vectorizing
+Python buys nothing: the cost is correct parsing plus object materialization,
+and both survive the rewrite. Reading the columns as strings and converting with
+`numpy.astype(float64)` is bit-exact and slightly cheaper (0.98 s), which would
+narrow the gap but not close it.
+
+The wrong-but-fast parse was not kept. Spec §10 R2 applies to the Python
+contender the same way it applies to the CUDA one: a parse that is one ulp out
+is a bug to fix, not a tolerance to widen. Note that it would not have been
+caught by the sweep's own cross-arch gate — the Count columns are integers and
+parse exactly in every mode, so the event *counts* agree; only the torque and
+status carried on each event differ.
+
+### Numbers: pending, for CUDA
+
+The development machine is an Apple M3 with no NVIDIA GPU and no `nvcc`, so the
+CUDA path has never been compiled, let alone measured. `cuda_clean_main.cpp` is
+plain C++ and does compile here; `CudaCleaner.cu` does not. It is written, and
+its correctness gate (`mas_cuda_clean --verify`, bitwise against
+`CapEventExtractorFlat`) runs as part of the sweep. To close this:
+
+    cmake -S . -B build -DMAS_BENCH_ONLY=ON -DMAS_ENABLE_CUDA=ON
+    cmake --build build --config Release
+    python bench/run_bench_cuda.py --data telemetry_..._2026-02.zip
+
+`py-naive` is measured at the 1-day volume only — 28 day-files is roughly two
+hours of interpreted loop — and its larger volumes are linear extrapolations,
+labelled as such. The transform is O(rows) with no cross-file state, so the
+extrapolation is sound for `clean`; it is not claimed for `e2e`.
+
+`bench/results_cuda.csv` and `docs/bench/cuda_*.png` currently hold the
+CPU-and-Python-only sweep from the M3. `cuda_stages.png` is absent because there
+are no CUDA rows yet; that is correct, not a failure.
+
+## 2026-08-10 — First session on the Windows target box: pool + Python gate PASS, toolchain absent
+
+- Machine: Windows 11 Pro (10.0.26200), RTX 4070 Laptop GPU 8 GB, driver 592.82,
+  Python 3.14.3. Pool: all three months extracted at the repo root.
+- **The CUDA gap stays open — the box cannot compile.** VS 2022 Community is
+  installed *without* the C++ workload (no MSVC toolset, no vcvars), there is no
+  CUDA Toolkit (driver only) and no system CMake. All three need elevation this
+  session did not have. `scripts/setup_windows_toolchain.ps1` (new) adds the C++
+  workload to the existing VS and the CUDA Toolkit via winget; CMake 4.4.2 +
+  ninja are already in the repo venv via pip. After it runs once, the three
+  README commands close the pending-numbers section above.
+
+### Pool integrity + Python side of the correctness gate — PASS
+
+- Per-file differential `oracle.extract` vs `clean_vectorized.extract`, all nine
+  tuple fields, on days 01, 02, 16, 17 (the counter-reset window): **bitwise
+  identical** — 765,711 / 998,920 / 1,109,468 / 858,651 events. Per-file event
+  counts agree between the two arches on all 28 day-files; total **21,872,663**
+  events, the exact count every earlier entry measured.
+- Union oracle on prefixes: 1 day = 765,711; 7 = 3,900,837; 28 = **14,372,237**
+  — all three exact. The reset signature reproduces (day 17 adds 15 new
+  (head, cap_seq) keys out of 858,651 events), so this box's copy of the pool is
+  equivalent to the one the M3 sweeps measured.
+- Indicative clean-mode timings on this box (not results_cuda rows — spec §6.5
+  says that file is regenerated whole, one machine, once CUDA rows can join):
+  py-naive 1d median-of-3 2.645 s; py-numpy 1d 3.134 s, 7d 20.7 s, 28d 89.2 s.
+
+### Two Windows-only defects found and fixed
+
+- **Python suite 229 passed, 5 skipped** (real-data analytics tests skip while
+  `events_3mo.duckdb` is absent) — after fixing two failures no macOS run could
+  see: `test_render.py` read the UTF-8 golden fixture and the written report
+  back with the locale codec, which on Windows is cp1252, so every em-dash
+  compared as mojibake. All report read-backs in tests now pass
+  `encoding="utf-8"`, and `tests/regen_golden.py` writes the golden as UTF-8
+  (regenerating it on Windows would have produced a cp1252 fixture).
+- **The §4 CRLF risk happened.** This clone has `core.autocrlf=true` and was
+  made from `main`, which predates the branch's `.gitattributes`: switching
+  branches rewrites only files that differ, so the tracked `*.sh` scripts sat
+  CRLF in the working tree (bash would die on `$'\r'`). Re-checked out with
+  attributes → LF. Committed CSVs were unaffected (all changed on-branch, so
+  the eol=lf rule applied at switch).
+
+### Static review of the never-compiled path (no blocking defect)
+
+`CudaCleaner.cu` + `cuda_clean_main.cpp` against `CapEventExtractorFlat`, and
+`platform_metrics.hpp` on its `_WIN32` branch, reviewed line by line. Recorded
+for the record, none blocking on this pool: the GPU parser diverges from
+`load_columns` only on rows the CPU would skip or roll back (short rows,
+unparsable cells — zero exist in the pool, and `--verify` is the bitwise gate);
+the CUB `DeviceSelect` calls take `int` item counts, capping a single file at
+2 GB (day-files are 58 MB); GPU `clean_s` sums the seven stage timers and so
+excludes host-side event materialization; `provenance()` records
+platform/python/gpu/nvcc but not the §6.5 compiler-id/cores/RAM extras.
+
+## 2026-08-10 — CUDA numbers closed: first compile, first GPU run, full sweep on the target box
+
+Same box as the entry above, later the same day, after the user ran
+`scripts/setup_windows_toolchain.ps1`: MSVC 14.41 (VS 2022 Community) +
+CUDA Toolkit 13.3 (V13.3.73), CMake 4.4.2 from the repo venv. The script took
+three iterations against the real installer — setup.exe hands off and returns
+immediately (fixed by polling for the toolset), this installer version rejects
+`--wait` with exit 87, and PowerShell 5.1's `Start-Process` splits unquoted
+spaced paths (`--installPath C:\Program`). All three fixes are in the script.
+
+### First MSVC/CUDA compile — spec R3 predicted "a one-line fix"; it took three
+
+1. CUDA 13's CCCL refuses cl.exe's traditional preprocessor (fatal C1189) →
+   `-Xcompiler=/Zc:preprocessor` on the `.cu` compilation.
+2. CCCL 3.0 removed `cub::CountingInputIterator` → `thrust::counting_iterator`.
+3. `platform_metrics.hpp` included `windows.h` without `NOMINMAX`; the min/max
+   macros broke the first TU calling `std::min` after it (`cuda_clean_main`).
+
+Everything else — the whole monolith + DuckDB + store stack — compiled clean on
+MSVC at first try. The Windows DuckDB v1.2.2 asset downloaded, worked, and its
+SHA256 is now pinned (closing the "fill in after first verified download" note).
+C++ suites from the repo root: bench-only **34/34**, full **50/50**, both
+including the two real-data tests. R9 (Windows DuckDB asset misbehaving) never
+triggered.
+
+### `--verify` earned its keep twice
+
+- **GPU parse, real defect.** First `--verify` run failed at event 25,194 of
+  day 1: GPU torque one ulp under CPU on a cell reading `2.0020000000000002`.
+  The §4 "plain decimal, ≤ 3 dp" premise is false on the real pool (see the
+  correction note in the spec): 66,553 AppTorque cells on day 1 (~2%, zero in
+  Count/Status) carry full 17-digit double reprs, whose mantissas exceed 2^53
+  and double-round through the kernel's integer-mantissa-then-divide path. A
+  ucrtbase probe confirmed MSVC's strtod correctly rounded — the CPU was right,
+  the GPU wrong. Fix: the kernel flags rows whose mantissa exceeds 2^53
+  (Count-block hits are fatal by design; none exist), and the host re-reads
+  flagged events' torque/status from the raw line with strtod. Post-fix:
+  `--verify` bitwise-green on days 01, 02, 16 — 2,874,099 events.
+- **Driver, real defect.** The sweep's cross-arch gate then killed the run at
+  the 7-day volume: `cuda=765711` vs `3901017` everywhere else. Not a GPU bug —
+  with `--verify` the binary prints per-file `verify ok: … (N events)` lines
+  before its summary, and the driver's `_EVENTS.search` took the *first* "N
+  events" in the blob (day 1's), passing at one day by coincidence. The driver
+  now takes the last match; every contender prints its summary last.
+
+### Full sweep — 68 measured rows + 2 extrapolated, every count oracle-exact
+
+`python bench/run_bench_cuda.py --data telemetry_…_2026-02` (extracted dir).
+Every arch at every volume × repeat emitted identical event counts: 765,711 /
+3,901,017 / 21,872,663 — the cross-arch gate held for all 9 volume×repeat
+cells. `clean_s` medians of 3 (seconds):
+
+| arch [mode] | 1 day | 7 days | 28 days |
+|---|---:|---:|---:|
+| py-naive [clean] | 2.686 | (18.8) | (75.2) — extrapolated |
+| py-numpy [clean] | 3.142 | 19.694 | 91.003 |
+| cpp-1T [clean] | 1.641 | 10.689 | 46.772 |
+| cpp-MT 8T [clean] | 1.666 | 2.014 | 7.677 |
+| **cuda [clean]** | **0.059** | **0.377** | **1.821** |
+| mono-1T [clean, no-store] | 1.646 | 10.754 | 46.510 |
+| mono-1T [e2e] | 8.334 | 44.433 | 230.449 |
+| mono-MT 8T [e2e] | 8.560 | 11.854 | 42.064 |
+
+- **Headline: CUDA cleans the month in 1.82 s — 12.0 M events/s — 25.7× the
+  single-thread C++, 4.2× the 8-thread C++, 50× vectorized Python.** The stage
+  breakdown says the transform has stopped being the cost: at 28 days
+  (hot cache) disk read is 1.17 s of the 1.82, and the four GPU compute stages
+  (index+parse+delta+compact) total ~0.29 s for 2.4 GB / 21.9 M events.
+- The `e2e` truth is unchanged: the single-writer DuckDB store is 79.8% of
+  mono-1T's month wall-clock (230.4 s vs 46.5 s clean). 8-thread e2e lands at
+  42.1 s — per-thread stores + merge parallelize the write far better here
+  (5.5×) than on the M3's numbers.
+- py-naive beats py-numpy here too (2.686 vs 3.142 at 1 day) — the M3 finding
+  about round_trip parse + tuple materialization replicates on Windows.
+- Caveats: laptop thermals; cuda 28-day rep 1 measured 3.887 s against 1.8 s
+  for reps 2-3 (cold file cache on the first pass, and rep 1 also carries
+  `--verify`'s CPU-side load in wall time though not in `clean_s`); `cpp-MT` at
+  1 day equals `cpp-1T` (one file, file-grain threading); the `# nvcc` line in
+  the CSV header was corrected by hand after the run — the sweep ran from a
+  shell predating the CUDA install, so PATH had no `nvcc` (value taken from
+  `nvcc --version` on the same box; `provenance()` now falls back to
+  `CUDA_PATH` so this cannot recur).
+- Outputs: `bench/results_cuda.csv`, `bench/results_cuda_stages.csv`, and
+  `docs/bench/cuda_{throughput,scaling,stages}.png` — the stages plot exists
+  for the first time.
+
+Remaining gaps, deliberate: the 5 real-data Python analytics tests still skip
+(`events_3mo.duckdb` not built on this box — `scripts/build_store.sh`, ~5 min,
+any time it is wanted); the ZeroMQ runtime stays off on Windows by design
+(spec §2 non-goal).
+
+## 2026-08-13 — Review of the CUDA branch: the CUDA clean window was smaller than everyone else's
+
+A line-by-line review of `feat/cuda-cleaning-bench` (35 files, +6k lines)
+against the tree and the raw CSVs. Three findings correct entries above; the
+rest are closed in code on the branch. The numbers below were established on
+the M3 (no GPU), so everything GPU-timed awaits the re-run.
+
+### The headline correction: `clean_s` for CUDA measured less work
+
+Supersedes the CUDA numbers in the 2026-08-10 "CUDA numbers closed" entry, and
+the ratios derived from them. The seven stage timers all stop before the host
+loop that materializes the `CapEvent` vector — the "materialize events in
+memory" half of spec §6.1's definition of `clean` mode — and before
+`check_header`, the 58 MB `cudaHostAlloc` and every `cudaMalloc`.
+`cuda_clean_main` summed exactly those seven timers; every other contender
+times its whole per-file work.
+
+Two independent measurements put the untimed part at roughly the size of the
+timed one:
+
+- A host-side replica of the materialize loop (same per-event `std::string`
+  timestamp, same reserve+push_back) on the M3: 0.059 s at 765,711 events,
+  1.775 s at 21,872,663 — against recorded CUDA `clean_s` of 0.059 s and
+  1.821 s at the same volumes.
+- The recorded 28-day CUDA row itself: `cpu_pct=469%` on a 1.805 s window is
+  8.5 s of process CPU; the cpp-1T row alongside reads 98%.
+
+So the published clean-phase ratios halve, roughly: 4.2x over cpp-MT → ~2x,
+25.7x over cpp-1T → ~13x. The end-to-end conclusion survives almost unmoved
+(~1.24x → ~1.23x over mono-1T), because persistence dominates — the branch's
+own finding, which never depended on the flattered number.
+
+Fixed on the branch: an eighth `materialize_s` stage (host clock — it is CPU
+work), included in `clean_s` and in the stages line; the driver records the
+process wall clock as `total_s` for the cuda and cpp rows as it always did for
+mono; `docs/bench/results.md` re-states the tables as median [min–max] with
+the window correction marked as an estimate until the re-run.
+
+### The GPU parser was the only contender that fabricated data on short rows
+
+`parse_rows` indexed rows by newline only; a row whose fields end early parsed
+every remaining field from an empty range, and `parse_num` returns 0.0 for an
+empty range without raising `inexact`. A truncated row therefore became a row
+of zeros: a fabricated reset against the previous row and a fabricated
+aggregated event against the next, silently, where `CsvRawReader`,
+`CapEventExtractorFlat`'s loader and `oracle.py` all skip the row. The pool is
+clean, so nothing bites today; the kernel now counts columns per row and the
+host refuses the file on a mismatch, the same treatment as the 2^53 Count
+case. `clean_vectorized.py` had the mirror-image defect (pandas raises on a
+malformed cell, NaN-pads a short row) and now delegates dirty input to
+`oracle.extract`; two differential tests pin both cases.
+
+### Corrections to entries above
+
+- **"bench-only 34/34, full 50/50"** (2026-08-10 entry): not reproducible from
+  the tree — no CMake configuration of this branch yields 34 or 50. Measured
+  here today: bench-only is **37 tests** (35 pass + 2 that skip without the
+  pool; 37/37 with it). The full-build counts on Windows should be re-recorded
+  by the re-run.
+- **"28 day-files is roughly two hours of interpreted loop"** (pre-sweep CUDA
+  entry, and spec §6.3): the branch's own 1-day measurement says 2.686 s, so
+  the month is ~75 s per repeat — two orders of magnitude off. The
+  extrapolation machinery this estimate justified is removed; `py-naive` now
+  runs measured at every volume, and the two extrapolated rows in the
+  committed CSV are filtered out of the plots until the re-run replaces the
+  file.
+- **Line endings** (spec §4 said LF): the pool is CRLF on every row, header
+  included, inside the zips — 86,400 CR against 86,400 LF per day-file. The
+  trailing-`\r` strip in the two new parsers is load-bearing, not defensive;
+  `CsvRawReader` survives via `stod` stopping at the `\r`. Spec corrected in
+  place with a dated note.
+
+### What must be re-measured on the RTX box
+
+One sweep, corrected timers: CUDA rows with `materialize_s` included and wall
+`total_s`; `merge_s` recorded for mono-MT (the driver used to hardcode 0.000
+— the 28-day mono-MT merge is ~150 s of measured work that read as zero);
+py-naive measured at 7 and 28 day-files; the full-build C++ suite count. Until
+then, every GPU number above is a shape, not a measurement — the same reading
+the 2026-08-13 M2 entry already established for the parallel CPU rows.
+
+## 2026-08-13 — Re-run on the RTX box with the corrected timers: the estimates become measurements
+
+Supersedes the numeric estimates in the "Review of the CUDA branch" entry
+above (~2x / ~13x / ~1.23x, and its "roughly half" reading of the recorded
+CUDA rows); the review's finding about *what* was mistimed stands. Same box
+as 2026-08-10: RTX 4070 Laptop 8 GB (driver 592.82), MSVC 14.41, CUDA 13.3,
+mains power, fans free, ordinary desktop background load. Branch tip
+`622c4d2`; `bench/run_bench_cuda.py`, volumes 1/7/28 × 3 repeats.
+
+Operational note, recorded because it cost one sweep: the first run died
+mid-flight when a concurrent session on the same machine checked out a
+different branch under it (`main` does not carry
+`python/clean_vectorized.py`, so the py-numpy contender vanished from disk
+between two subprocess launches). Everything below comes from a second, clean
+run executed in a dedicated git worktree of `feat/cuda-cleaning-bench`, with
+binaries rebuilt and all three suites re-run inside that worktree while the
+main checkout stayed with the other session.
+
+Suite counts on the worktree that produced the swept binaries — the counts
+the review entry said must replace the unreproducible "34/34, full 50/50":
+bench-only **37/37 pass** (pool present, via junction next to the binary);
+full build with ZMQ off **62/62 pass**; Python **235 passed + 5 skipped =
+240 collected**.
+
+Gates, all green: `--verify` passed at repeat 1 — its CPU differential is
+visible as wall, not clean (repeat-1 CUDA `total_s` 58.9 s against 8.4 s
+`clean_s`, repeats 2–3 ~8.3 s total); event counts identical across every
+arch at every volume (765,711 / 3,901,017 / 21,872,663) and every e2e
+configuration landed exactly on the oracle_union counts; `materialize_s`
+populated in the stages CSV; mono-MT `merge_s` > 0; no `extrapolated` rows.
+One expected asymmetry, recorded so the next reader does not chase it:
+`bench_cpu`'s `total_s` equals its `clean_s` to the millisecond in every row.
+That is two clocks over the same span — the store-free binary does nothing
+outside its clean loop — not a missing wall measurement (its `metrics:` line
+parses; rss and cpu% are populated).
+
+28-day medians [min–max], clean mode, corrected timers:
+
+| arch | clean_s | vs cuda |
+|---|---:|---:|
+| cuda | 6.43 [6.33–8.34] | — |
+| cpp-MT 8T | 8.21 [8.12–8.32] | 1.3x |
+| cpp-1T | 46.26 [45.91–46.57] | 7.2x |
+| py-naive | 74.64 [74.32–76.31] | 11.6x |
+| py-numpy | 85.82 [84.53–86.99] | 13.4x |
+
+The correction is larger than the review estimated. Materialize alone is
+4.64 s at 28 days — 72% of the corrected clean, not "roughly half" — while
+the seven original stages still sum to 1.80 s: the old 1.82 s recording was
+accurate for what it measured, and it measured about a quarter of the phase.
+The M3 host-side replica (1.775 s) underestimated this box's materialize
+loop by 2.6x — MSVC's allocator and the per-event string build price the
+same code differently, which is exactly why the entry above refused to let
+the replica stand in for the measurement. Ratio corrections, estimate →
+measured: cpp-MT ~2x → 1.3x; cpp-1T ~13x → 7.2x; py-naive "~75 s per 28-day
+repeat" → 74.6 s [74.3–76.3] (that one held).
+
+End to end at 28 days: mono-1T 257.6 s [254.5–266.6] against 45.5 s
+store-free clean → persistence 212.1 s, 82% of wall. cuda clean + store =
+218.5 s → **1.18x** vs mono-1T (review estimate ~1.23x); cpp-MT 220.3 s →
+1.17x; CUDA over cpp-MT end to end ~1.01x. mono-MT e2e 108.4 s [107.1–111.6]
+with `merge_s` **58.7 s [57.7–62.5] measured** — the hardcoded 0.000 is gone,
+and the "~150 s" this entry's predecessor guessed for the hidden merge was
+itself off by 2.6x. Guesses go in brackets; sweeps get re-run.
+
+CUDA stage medians at 28 days (s): read 1.199, h2d 0.179, index 0.060,
+parse 0.165, delta 0.021, compact 0.041, d2h 0.137, materialize 4.636. GPU
+compute is 0.287 s — the pre-correction "~0.29 s" reading of the kernels held
+exactly. Context and allocations stay outside `clean_s` and inside the wall
+(8.43 s median total against 6.43 clean), which is where spec §6.1 puts them.
+`docs/bench/results.md`, the README benchmark table, the roadmap line and the
+three `cuda_*.png` plots now carry these measured numbers.
+
+## 2026-08-13 — Resweep on actively-cooled hardware: the ratios are settled, and the harness had one more thumb on the scale
+
+**HEAD:** `ba6d4f8` (branch `bench/resweep-on-cooled-hardware`). **Hardware:**
+HP Victus 16-r0xxx — Intel i7-13700H, 6 P-cores + 8 E-cores (20 threads),
+16 GB, NVMe SSD, dual-fan **active cooling**, on AC power, Windows 11
+("Balanced" plan), machine otherwise idle. **Toolchain:** MSVC 19.41 Release
+(`/O2 /Ob2 /DNDEBUG`), DuckDB v1.2.2 official `windows-amd64` binary, libzmq
+4.3.5 from source — the first ZMQ build this repo has done on Windows;
+`ctest` **85/85** before the sweep, on the first run. **Command:**
+`BUILD_DIR=build-sweep/Release bash bench/run_bench.sh` under Git Bash, timed
+by `bench/win_time.cpp` (QPC + `GetProcessTimes` + `PeakWorkingSetSize`,
+printed in the BSD `time -l` shape `parse_time()` already reads), because
+`/usr/bin/time` does not exist on Windows — the portability defect the resweep
+prompt flagged, now closed for macOS + Windows and a loud abort elsewhere.
+
+**Runs: 81 of 81, one uninterrupted session.** Binaries built before the run
+and untouched during it; no SIGTERM splice, no re-measured block — the first
+sweep in this log that carries neither caveat. **Correctness gate: every run
+exact.** 21,872,663 distinct `(head_id, ts)` events at 28 days, 3,901,017 at
+7, 765,711 at 1 — all three repeats of all nine configurations per volume,
+against the independent Python oracle.
+
+### Found on the way in: mono and MAS were not writing the same rows
+
+The smoke run surfaced it before the sweep could: a MAS worker cleaned a
+day-file in ~10 s of wall while `mas_monolith` spent 18.4 s of pure CPU on the
+same file — half the cycles for "the same work" means it was not the same
+work. `run_bench.sh` never passed a machine id to `mas_worker`, whose argv
+default is `MCC`; the monolith and `mas_merge` got the full 35-character id.
+That id is the first column of `UNIQUE(machine_id, head_id, ts)` and is
+written 21.9M times per month: 3 chars stay inside DuckDB's inline string
+representation, 35 go out of line, and on this build that is the difference
+between 9.1 s and 18.3 s for `clean.exe` on one day-file with nothing else
+changed. On the M2 the asymmetry was timing-neutral (v=1 mono and MAS clean
+within noise, long id and short), so no Mac figure is retroactively tainted —
+but here it would have handed MAS a 2× head start on the clean phase, and the
+sweep would have measured a default argument. Fixed in `ba6d4f8` before any
+measured row: workers now write the real id everywhere. Same defect class as
+`638478b` — two configurations timed doing different work.
+
+### 28-day medians (3 repeats each)
+
+| config | clean_s | merge_s | total_s | spread (total) | vs mono-1T |
+|---|---:|---:|---:|---:|---:|
+| mono-1T | 537.79 | — | 537.79 | 1.1% | 1.00x |
+| mono-MT T=2 | 264.91 | 72.18 | 338.34 | 1.5% | 1.59x |
+| mono-MT T=4 | 134.91 | 69.67 | 204.58 | 0.3% | 2.63x |
+| mono-MT T=8 | 86.04 | 70.59 | 157.35 | 1.1% | 3.42x |
+| mas N=1 | 514.59 | 430.40 | 944.32 | 0.6% | 0.57x |
+| mas N=2 | 279.52 | 69.08 | 348.14 | 0.3% | 1.54x |
+| mas N=4 | 151.48 | 68.62 | 219.83 | 0.4% | 2.45x |
+| mas N=8 | 111.88 | 70.81 | 182.59 | 1.5% | 2.95x |
+| mas N=16 | 74.90 | 64.85 | 140.44 | 4.8% | **3.83x** |
+
+### What this settles
+
+- **Repeatability.** `clean_s` spreads 0.1–1.8% across every 28-day
+  configuration; `total_s` 0.3–4.8% (worst: MAS N=16). The same harness on the
+  M2 spread 21% (mono-MT) and 53% (MAS) in the interleaved A/B. On this
+  machine a number records the code, not the run order.
+- **The end-to-end ratio is a measurement, not a bound: 3.83x at N=16**
+  (537.8 s → 140.4 s), clean phase alone 7.2x across 16 workers on 20 hardware
+  threads. This replaces 1.84x-with-tens-of-percent-uncertainty as the repo's
+  reference number. It does not "correct" 1.84x: different machine, different
+  cost mix — the M2 spent 70% of MAS's wall in the merge, this box 46%,
+  because the per-row clean path costs ~5x more here while the set-based merge
+  costs the same (64.8 s vs the M2's 64.0 s — DuckDB's internal pass is close
+  to platform-neutral; the per-row application code is not).
+- **The mono-MT/MAS gap has an owner: parallelism, not process isolation.** At
+  equal N the thread pool wins — MAS N=8 trails mono-MT T=8 by 25.2 s (182.59
+  vs 157.35) — and MAS takes the matrix top only because it is swept to N=16
+  (140.44, 16.9 s ahead of T=8, well clear of the 1.1–4.8% spreads). The PR #9
+  sweep's 20.9 s "MAS ahead at same-ish parallelism" was the merge-clock
+  artifact (`638478b`) plus two thermal states; the A/B called the tie
+  correctly on the M2, and this measurement gives the sign a mechanism.
+- **Merge cost is flat across N≥2 on a second platform** (69.1 / 68.6 / 70.8 /
+  64.8 s for N=2..16; 72.2 / 69.7 / 70.6 s for T=2..8): `merge_all` costs what
+  the volume costs. The N=1 control, which falls back to per-row `merge_from`,
+  pays **430.4 s — 6.2x the set-based pass** over the same total volume (the
+  same fallback was ~10% over set-based on the M2). Per-row index probing is
+  precisely the work this platform taxes, which is the strongest evidence yet
+  for the set-based design.
+- **Absolute seconds do not transfer between machines.** mono-1T's month:
+  537.8 s here, ~101–108 s on the M2, same source, both Release. Shape
+  transfers; seconds do not. Anyone quoting this repo's performance quotes a
+  machine.
+
+### Supersession
+
+The reference numbers for every end-to-end ratio and the mono-MT/MAS
+comparison are now this entry's table; `docs/bench/results.md` (table +
+analysis) and the README's benchmarking section were rewritten from this
+sweep, and the four plots regenerated from the new `bench/results.csv`. The
+2026-08-11 merge_all projection paragraph is marked superseded in place; the
+2026-08-13 interleaved A/B above stands as the M2 measurement that made this
+resweep necessary, and its "until then" closes here. The M2's like-for-like
+merge A/B (65.9 → 22.8 s, 2.89x) remains valid as measured.
+
+## 2026-08-13 — The CUDA branch lands on main, and the engine becomes a flag
+
+**HEAD:** `6fe1d9b` (`main`, via PR #11). `feat/cuda-cleaning-bench` was
+rebased onto `main` — 49 commits, linear, no merge commit — and `main`
+fast-forwarded to the result, so the SHAs on `main` are the ones verified
+here. The branch had solved Windows support once (`MAS_BENCH_ONLY` and the
+option matrix) and `main`'s PR #12 had solved it again flat; the rebase kept
+the option-matrix shape and re-applied the two pieces only `main` had, inside
+the guards that preserve the bench-only build's no-download property:
+`win_time_exe` under plain `WIN32` (it needs neither DuckDB nor libzmq) and
+the libzmq DLL copy under `MAS_ENABLE_ZMQ AND WIN32`. The Windows DuckDB
+asset hash, pinned independently and identically on both sides, is pinned
+once now. `win_time.cpp` stays deliberately: it is what timed this morning's
+resweep through `bench/run_bench.sh`, and the self-reported `metrics:` lines
+cover only the binaries the Python driver runs. One timing mechanism per
+harness; collapsing to one harness is an open item, not a merge-time edit.
+
+**The engine is now explicit.** `mas_monolith --engine=cpu|cuda` (default
+`cpu`) selects the cleaner at runtime; `MAS_ENABLE_CUDA` still decides at
+configure time whether the kernels exist in the binary at all. A request the
+binary cannot honor — `--engine=cuda` without the kernels compiled in, or a
+CUDA failure at runtime — aborts naming the remedy; there is no fallback,
+and the summary line now ends in `engine cpu|cuda` so a pasted log cannot
+detach a number from its engine. The policy lives in
+`core/include/mas/util/engine.hpp` as pure functions, tested from builds
+that have no GPU (eight tests, including cuda-without-support asserting on
+the remedy text).
+
+Measured this session, on the M3: bench-only **45/45** (pool present, the
+two data tests ran), full **110/110**, full with `MAS_ENABLE_ZMQ=OFF`
+**70/70** — the Windows session's 62 plus the eight new, first time that
+count is confirmed off-Windows. Python **235 passed, 5 skipped**, including
+the README-count assertions after 102 → 110 and 37 → 45. The monolith ran a
+real day-file under default, `--engine=cpu`, `--no-store` and T=2: same
+765,711 events, `engine cpu` stamped, and both harnesses' field parsers
+verified against the suffixed line.
+
+**What is not verified here:** everything `nvcc`. The `mas_cuda_cleaner`
+library split, the MSVC `/Zc:preprocessor` flag on it, and the monolith's
+`#if MAS_CUDA_ENABLED` block have never met a CUDA toolchain — the block is
+syntax-checked with the define forced on, never linked, never run. The first
+`-DMAS_ENABLE_CUDA=ON` configure on the RTX box decides whether those three
+survive contact; until then `--engine=cuda` is verified only in refusal.
 
 
 ## 2026-08-13 — Parquet vs DuckDB: faster to write, dearer to read, net worse

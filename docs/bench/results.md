@@ -2,97 +2,178 @@
 
 | arch | n_workers | threads | files | clean_s | merge_s | total_s | events_per_s | peak_rss_mb | cpu_pct |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| mas | 1 | 1 | 1 | 3.515 | 2.2 | 5.715 | 133983 | 222.3 | 177.9 |
-| mas | 1 | 1 | 7 | 18.528 | 11.146 | 29.677 | 131449 | 665.6 | 176.8 |
-| mas | 1 | 1 | 28 | 98.144 | 70.554 | 168.613 | 129721 | 2818.9 | 185.1 |
-| mas | 2 | 1 | 1 | 3.474 | 0.912 | 4.386 | 174581 | 289.7 | 140.8 |
-| mas | 2 | 1 | 7 | 12.206 | 4.216 | 16.422 | 237548 | 1055.5 | 277.5 |
-| mas | 2 | 1 | 28 | 72.263 | 29.281 | 100.642 | 217331 | 3662.4 | 289.8 |
-| mas | 4 | 1 | 1 | 3.531 | 0.964 | 4.495 | 170347 | 340.2 | 150.9 |
-| mas | 4 | 1 | 7 | 10.808 | 4.435 | 15.243 | 255922 | 1194.7 | 419.9 |
-| mas | 4 | 1 | 28 | 43.699 | 26.87 | 69.389 | 315218 | 4384.4 | 520.5 |
-| mas | 8 | 1 | 1 | 3.581 | 0.984 | 4.579 | 167222 | 445.3 | 152.7 |
-| mas | 8 | 1 | 7 | 8.251 | 4.437 | 12.695 | 307288 | 1424.3 | 611.8 |
-| mas | 8 | 1 | 28 | 32.635 | 25.456 | 58.091 | 376524 | 4849.2 | 708 |
-| mas | 16 | 1 | 1 | 3.614 | 0.953 | 4.567 | 167662 | 652.7 | 158.6 |
-| mas | 16 | 1 | 7 | 8.357 | 4.168 | 12.652 | 308332 | 1632.7 | 606.2 |
-| mas | 16 | 1 | 28 | 29.275 | 25.367 | 55.394 | 394856 | 5688.4 | 814.1 |
-| mono-1T | 0 | 1 | 1 | 3.573 | 0 | 3.573 | 214305 | 80 | 103.6 |
-| mono-1T | 0 | 1 | 7 | 18.469 | 0 | 18.469 | 211220 | 108.7 | 111 |
-| mono-1T | 0 | 1 | 28 | 101.814 | 0 | 101.814 | 214830 | 224.4 | 113 |
-| mono-MT | 0 | 2 | 1 | 3.584 | 0.88 | 4.468 | 171377 | 212.7 | 113.2 |
-| mono-MT | 0 | 2 | 7 | 10.398 | 4.576 | 14.967 | 260641 | 829.8 | 198 |
-| mono-MT | 0 | 2 | 28 | 71.465 | 31.391 | 102.856 | 212653 | 3419.9 | 213.7 |
-| mono-MT | 0 | 4 | 1 | 3.451 | 0.929 | 4.365 | 175421 | 195.4 | 112.8 |
-| mono-MT | 0 | 4 | 7 | 7.508 | 4.398 | 11.842 | 329422 | 844.3 | 328.1 |
-| mono-MT | 0 | 4 | 28 | 54.065 | 32.561 | 85.895 | 254644 | 3605.4 | 367.5 |
-| mono-MT | 0 | 8 | 1 | 3.448 | 1.017 | 4.463 | 171569 | 231.8 | 115 |
-| mono-MT | 0 | 8 | 7 | 7.204 | 4.387 | 11.591 | 336556 | 894.4 | 405.7 |
-| mono-MT | 0 | 8 | 28 | 43.315 | 32.447 | 76.263 | 286806 | 3789.5 | 452.3 |
+| mas | 1 | 1 | 1 | 18.939 | 15.067 | 34.008 | 22515.6 | 203.5 | 186.8 |
+| mas | 1 | 1 | 7 | 94.042 | 76.042 | 169.857 | 22966.5 | 655.9 | 190.6 |
+| mas | 1 | 1 | 28 | 514.587 | 430.401 | 944.32 | 23162.3 | 3197.5 | 192.9 |
+| mas | 2 | 1 | 1 | 19.031 | 2.614 | 21.675 | 35326.9 | 290.4 | 124.9 |
+| mas | 2 | 1 | 7 | 49.726 | 11.951 | 61.544 | 63385.8 | 975.2 | 234.9 |
+| mas | 2 | 1 | 28 | 279.52 | 69.076 | 348.14 | 62827.2 | 4460.3 | 238.4 |
+| mas | 4 | 1 | 1 | 19.001 | 2.576 | 21.632 | 35397.1 | 340.2 | 124.6 |
+| mas | 4 | 1 | 7 | 37.776 | 12.031 | 49.838 | 78273.9 | 1073.4 | 312.5 |
+| mas | 4 | 1 | 28 | 151.484 | 68.621 | 219.834 | 99496.3 | 4287.9 | 439.8 |
+| mas | 8 | 1 | 1 | 19.071 | 2.741 | 21.812 | 35105 | 427.9 | 127.5 |
+| mas | 8 | 1 | 7 | 24.763 | 11.366 | 36.295 | 107481 | 1192.2 | 516.9 |
+| mas | 8 | 1 | 28 | 111.884 | 70.814 | 182.591 | 119790 | 4577.6 | 721.4 |
+| mas | 16 | 1 | 1 | 19.262 | 2.665 | 21.993 | 34816.1 | 607 | 134.7 |
+| mas | 16 | 1 | 7 | 24.942 | 11.513 | 36.482 | 106930 | 1376.8 | 515.1 |
+| mas | 16 | 1 | 28 | 74.9 | 64.847 | 140.438 | 155746 | 4858.6 | 1488.1 |
+| mono-1T | 0 | 1 | 1 | 18.441 | 0 | 18.441 | 41522.2 | 71.6 | 106 |
+| mono-1T | 0 | 1 | 7 | 97.617 | 0 | 97.617 | 39962.5 | 103.4 | 106.6 |
+| mono-1T | 0 | 1 | 28 | 537.787 | 0 | 537.787 | 40671.6 | 220.5 | 111.2 |
+| mono-MT | 0 | 2 | 1 | 18.618 | 2.46 | 21.105 | 36281 | 191.6 | 110.5 |
+| mono-MT | 0 | 2 | 7 | 48.937 | 11.868 | 60.961 | 63992 | 796.9 | 196.5 |
+| mono-MT | 0 | 2 | 28 | 264.91 | 72.184 | 338.338 | 64647.4 | 3371.6 | 197 |
+| mono-MT | 0 | 4 | 1 | 18.61 | 2.398 | 21.008 | 36448.5 | 193.2 | 107.2 |
+| mono-MT | 0 | 4 | 7 | 28.086 | 11.185 | 39.264 | 99353.5 | 733.4 | 307.2 |
+| mono-MT | 0 | 4 | 28 | 134.907 | 69.672 | 204.579 | 106916 | 3569.8 | 317.7 |
+| mono-MT | 0 | 8 | 1 | 18.731 | 2.402 | 21.16 | 36186.7 | 199.2 | 109.6 |
+| mono-MT | 0 | 8 | 7 | 26.828 | 11.439 | 38.301 | 101852 | 731 | 393.7 |
+| mono-MT | 0 | 8 | 28 | 86.043 | 70.592 | 157.347 | 139009 | 3855.7 | 521 |
 
-Caveats: laptop thermals (no fan control), median-of-3, N=16 on 8 cores is a deliberate oversubscription point, merge phase reported separately; mono-MT uses a std::thread atomic-counter pool (dynamic load balancing, slightly fairer than PUSH/PULL round-robin).
+Caveats: measured on an actively-cooled i7-13700H laptop (6P+8E cores, 20 threads — N=16 exceeds the P-cores but not the hardware threads), median-of-3, merge phase reported separately; mono-MT uses a std::thread atomic-counter pool (dynamic load balancing, slightly fairer than PUSH/PULL round-robin).
 
-## Data notes (real month, re-measured 2026-08-11 under the ts event identity)
+## Data notes (resweep 2026-08-13: same month, actively-cooled hardware)
 
-- **The store used to discard real capping events, and this benchmark used to
-  reward it.** The previous version of this file recorded that "days 16-24
-  replay cap_seq ranges already emitted in days 1-15" and that
-  `UNIQUE(machine_id, head_id, cap_seq)` "dedupes replayed sequences", so
-  21,872,663 processed events "persist as 14,372,237 distinct rows". The replay
-  hypothesis was never tested and is false: of head 1's 23,851 day-17 closures
-  whose `cap_seq` collides with days 1-15, **18,721 carry a different torque**.
-  They are distinct physical caps. The PLC's Count register resets and climbs
-  again through values it has already used. Identity is now
-  `(machine_id, head_id, ts)` — one head closes at most once per poll — and all
-  28 day-files persist in full: **21,872,663 events, 21,872,663 rows**.
-- **Every number in the table is therefore larger than the version it replaces,
-  and that is the correction, not a regression.** The old run wrote 14.4M rows
-  where this one writes 21.9M for the same input, so it was timing 66% of the
-  work. 28-day medians, old -> new: mono-1T 87.5 -> 101.0 s, MAS N=16
-  75.7 -> 91.2 s, mono-MT T=8 87.3 -> 99.4 s.
-- **The correctness oracle now checks something.** `oracle_union.py` counted
-  distinct `(head_id, cap_seq)` — precisely the quantity the defect leaves
-  stable — so all 81 runs reported "oracle-exact" while a third of February was
-  being dropped. It counts distinct `(head_id, ts)` now, and the 28-day
-  expectation moved from 14,372,237 to 21,872,663. All 81 runs match it.
-- **The merge cost stopped growing with N, and that is diagnostic.** Old
-  merge_s at 28 days climbed with store count (N=1 35.1 s -> N=16 50.9 s);
-  it is now flat (N=1 65.2, N=2 63.0, N=4 63.3, N=8 62.8, N=16 64.0 s). The
-  old growth *was the defect doing work*: more stores meant more colliding
-  `cap_seq` for `INSERT OR IGNORE` to resolve, and every resolution threw away
-  a real closure. With disjoint sources the merge only moves rows, so its cost
-  follows total volume and not how the volume is partitioned.
-- **The scaling conclusion survives, slightly weaker.** Clean parallelises
-  better than before (mono-1T 101.0 s -> MAS N=16 27.1 s, **3.73x**, up from
-  3.50x, because there is more write work to spread). End-to-end MAS still tops
-  out over mono-1T but at **1.11x** (91.2 s vs 101.0 s) rather than 1.16x.
-  mono-MT still never meaningfully beats mono-1T at month scale, though its
-  optimum moved from T=4 to T=8 (T=2 127.4, T=4 106.1, T=8 99.4 s) for the same
-  reason: more write work per thread rewards more threads.
-- **The merge is now 70% of MAS N=16's wall time** (64.0 s of 91.2 s), up from
-  67%. The Amdahl wall of spec §14 Q4's "per-worker single-writer stores, merge
-  at the sink" did not move; it got taller. `merge_from` is N sequential
-  `INSERT OR IGNORE` passes, each probing the UNIQUE index once per row against
-  a growing destination — ~22M probes that, sources now being disjoint, almost
-  never find anything. Branch `perf/merge-set-based` replaces them with one
-  hash-based `DISTINCT` over the union; **not yet measured**, because measuring
-  it during this sweep would have falsified both.
-- **`events_per_s` counts processed events**, identical input work for every
-  config. Row persistence now equals it exactly — nothing is dropped between
-  extraction and the store.
-- **Initial dispatch is gated on worker registration** (`--workers N`): without
-  the gate, ZMQ PUSH's slow-joiner behavior queued every file into the first
-  connected worker and MAS timings measured a serialized pipeline (sweep #1,
-  discarded).
-- **`rows_per_s` uses a nominal 86,399 rows/day**; real days range 58,772 to
-  86,401 raw rows, so it is approximate for the 7- and 28-day volumes —
-  `events_per_s` is the measured throughput.
-- **MAS `clean_s` includes worker spawn, ZMQ connect, and the registration
-  wait**. Empirically small — v=1 clean_s is flat ~3.2-3.4 s across N=1..16 —
-  but it is part of the measured number.
+The table above is the full 81-run matrix re-measured on a machine that can
+hold its clock: an HP Victus 16 (i7-13700H, 6P+8E cores / 20 threads, 16 GB,
+active cooling, on AC). It replaces the `Mac14,2` series — a fanless MacBook
+Air M2 whose parallel `clean_s` spread 21–53% across four interleaved rounds
+of the same binary (validation log, 2026-08-13), which is what forced this
+re-measurement. Every prior figure quoted from the M2 sweeps survives only as
+history; the reference numbers are now these.
+
+- **Repeatability is back, and that is the headline.** Across the 3 repeats of
+  every 28-day configuration, `clean_s` spreads 0.1–1.8% and `total_s` spreads
+  0.3–4.8% (worst: MAS N=16 at 4.8%). On the M2 the same harness spread 21%
+  (mono-MT) and 53% (MAS) — there a number recorded *when in the sweep it ran*;
+  here it records the code.
+- **One sweep, one session, for the first time.** All 81 rows come from a
+  single uninterrupted pass: binaries built before the run and untouched during
+  it, no SIGTERM splice, no re-measured blocks — the two prior sweeps each
+  carried one of those caveats. Every run matched the oracle exactly:
+  21,872,663 distinct `(head_id, ts)` events over 28 days, 3,901,017 over 7,
+  765,711 over 1, persisted 1:1 (the `ts` identity of 2026-08-11 holds; nothing
+  is dropped between extraction and the store).
+- **The comparison is like-for-like only since this sweep.** `run_bench.sh`
+  never passed a machine id to workers, so MAS stores carried the 3-char argv
+  default `MCC` while the monolith wrote the full 35-char id — the first column
+  of `UNIQUE(machine_id, head_id, ts)`, written 21.9M times. On the M2 this was
+  timing-neutral (at v=1, mono and MAS clean within noise of each other). On
+  this box it is not: a 35-char VARCHAR leaves DuckDB's inline-string
+  representation, and `clean.exe` on one day-file goes from 9.1 s (`MCC`) to
+  18.3 s (full id) with nothing else changed. The harness now passes the real
+  id everywhere; without that fix the sweep would have handed MAS a 2× head
+  start on the clean phase and measured a default argument.
+- **The merge cost is flat across N≥2 — reconfirmed on a second platform.** At
+  28 days: 69.1 / 68.6 / 70.8 / 64.8 s for N=2/4/8/16, and 72.2 / 69.7 / 70.6 s
+  for mono-MT T=2/4/8. `merge_all`'s set-based pass costs what the volume
+  costs, not what the partitioning costs. The N=1 row is the control:
+  `merge_all` falls back to the per-row `merge_from` path for a single source,
+  and that path costs **430.4 s here — 6.2× the set-based pass** over the same
+  total volume. On the M2 the same fallback was ~10% over set-based. Per-row
+  index probing is exactly the kind of work this platform taxes, which makes
+  the case for the set-based merge stronger, not weaker.
+- **The merge is 46% of MAS N=16's wall, and that is unchanged from the M2.**
+  64.8 s of 140.4 s here; 25.4 s of 55.4 s there, i.e. 45.8%. The "down from
+  70%" this bullet first claimed compared against the M2's *pre-*`merge_all`
+  sweep, where the merge was the old per-row `merge_from` — a different
+  algorithm, not a different machine. Like for like, with `merge_all` on both,
+  clean and merge scale between the two platforms by the *same* factor at
+  N=16 (29.3 → 74.9 s and 25.4 → 64.8 s, both 2.56×), which is exactly why the
+  fraction does not move. The set-based pass is not platform-neutral either: it
+  costs 2.56× more here, the same as everything else.
+- **MAS `clean_s` still includes worker spawn, ZMQ connect, and the
+  registration wait** — measurably ~0.5 s here (v=1: MAS 19.0–19.3 s against
+  mono-1T's 18.4 s). Initial dispatch stays gated on `--workers N`
+  registrations; the slow-joiner capture that flattened sweep #1 cannot recur.
+- **`rows_per_s` uses a nominal 86,399 rows/day** as before; `events_per_s` is
+  the measured throughput (mono-1T 40.7k/s, MAS N=16 155.7k/s at 28 days).
+
+### The measured ratio (closes "1.84× is a lower bound")
+
+The M2 sweep measured MAS N=16 end-to-end at 1.84× mono-1T, argued it was a
+floor, then withdrew the argument when the interleaved A/B showed tens of
+percent of thermal uncertainty on every parallel configuration. This sweep
+replaces that number with a measurement:
+
+| 28-day medians | total_s | spread over 3 reps | vs mono-1T |
+|---|---:|---:|---:|
+| mono-1T | 537.8 | 1.1% | 1.00× |
+| mono-MT T=8 | 157.3 | 1.1% | **3.42×** |
+| mas N=8 | 182.6 | 1.5% | 2.95× |
+| mas N=16 | 140.4 | 4.8% | **3.83×** |
+
+**MAS N=16 runs the month end-to-end at 3.83× the sequential baseline**
+(537.8 s → 140.4 s), with the ratio's inputs repeatable to 1.1% and 4.8%. The
+clean phase alone parallelizes at 7.2× (537.8 → 74.9 s across 16 workers on 20
+hardware threads).
+
+3.83× is not "the true value of 1.84×", but the reason is not a different cost
+mix — the mix is the same. With `merge_all` on both machines the merge is 46% of
+MAS N=16's wall on either, and clean and merge scale between them by an
+identical 2.56×. What differs is how far apart the two *ends* of the ratio move:
+
+| 28-day median | M2 | this box | factor |
+|---|---:|---:|---:|
+| mono-1T (the baseline) | 101.8 | 537.8 | **5.28×** |
+| MAS N=16 (the parallel end) | 55.4 | 140.4 | **2.54×** |
+| ratio | 1.84× | 3.83× | |
+
+The baseline degrades by 5.28× while sixteen workers degrade by only 2.54×,
+because this box answers a more expensive per-row path with 20 hardware threads
+against the M2's 8. The speedup therefore measures the machine's serial
+penalty as much as the design's parallel efficiency, and neither 1.84× nor
+3.83× transfers to a third machine. Quote the ratio with the box attached.
+
+What this measurement does settle is the part the M2 could not: on hardware that
+holds its clock, the end-to-end gain is real and repeatable — inputs stable to
+1.1% and 4.8% — rather than an artifact of run order.
+
+### The mono-MT vs MAS gap, measured clean
+
+The 20.9 s gap recorded by the PR #9 sweep was inflated twice over: mono-MT's
+merge clock included deleting its own per-thread stores (fixed in `638478b`,
+before this sweep) and its rows came from a hotter part of the M2's thermal
+curve than MAS's (the SIGTERM-split sessions). The interleaved A/B then showed
+the two architectures tied on that machine, gap −2.1 s with the sign flipping
+round to round.
+
+Measured here, with both clocks stopping at the same place and 1.1–4.8%
+spreads: **the gap is real but belongs to parallelism, not to process
+isolation.** At equal parallelism MAS loses — N=8 trails mono-MT T=8 by 25.2 s
+(182.6 vs 157.3), the cost of 8 processes, ZMQ transport and per-worker stores
+against 8 threads on an atomic counter. MAS's win at the top of the matrix
+(140.4 vs 157.3, 16.9 s) is bought by N=16, a parallelism the thread pool was
+not swept to. Same file-grain work, same store strategy: threads are the
+cheaper vehicle at like-for-like N on this box.
 
 ### Measurement integrity
 
+- **Hardware:** HP Victus 16-r0xxx, Intel i7-13700H (6 P-cores + 8 E-cores, 20
+  threads, up to 5.0 GHz), 16 GB DDR5, NVMe SSD, **active cooling** (dual fan),
+  on AC power, Windows "Balanced" plan, otherwise idle. The RTX 4070 Laptop GPU
+  is present but unused — this is the CPU build. This sweep exists because the
+  previous machine was a fanless MacBook Air M2 whose thermal accumulation made
+  parallel timings a function of run order; on this chassis the spreads above
+  say that effect is gone.
+- **Toolchain:** MSVC 19.41 `/O2 /Ob2 /DNDEBUG` (VS 2022, Release), DuckDB
+  v1.2.2 official `windows-amd64` binary, libzmq 4.3.5 built from source —
+  first time on Windows for this repo; all 85 unit tests pass. Harness = Git
+  Bash + `bench/win_time.cpp` (QPC + `GetProcessTimes` +
+  `PeakWorkingSetSize`), which prints the two lines `parse_time()` reads from
+  BSD `time -l`.
+- **Absolute seconds do not transfer between this table and any Mac figure.**
+  mono-1T's month is 537.8 s here against ~101–108 s on the M2 — same source,
+  both Release: the per-row store path (out-of-line VARCHAR machine id, MSVC
+  stdlib parsing) is ~5× dearer on this platform, the DuckDB-internal merge is
+  not. Cross-machine comparisons of shape are fine; cross-machine comparisons
+  of seconds are not the deliverable of this file.
+- **History:** the M2 series (its identity-fix before/after, the merge_all
+  A/B and its 2.89× isolated merge measurement, the thermal post-mortem) is in
+  [`docs/validation-log.md`](../validation-log.md), entries 2026-08-11 through
+  2026-08-13. The 2.89× like-for-like merge comparison stands as measured — it
+  alternated binaries within one session — and its effect is visible here as
+  the 6.2× N=1-fallback delta above.
 - The two series are not a controlled comparison. Same machine and same
   harness, but the disk was in a different state (2.6 GB freed before this run)
   and it is a laptop without fan control. Shape — how it scales with N, where
@@ -138,17 +219,41 @@ before the measurement:
 - **`mas N=1` gains nothing, by construction.** `merge_all` returns to
   `merge_from` for a single source, so its 0.92x is the same code path measured
   twice, not a regression.
-- **The architectures do not converge.** A projection assuming a flat 22.8 s
+- **The architectures do not converge.** ~~A projection assuming a flat 22.8 s
   merge everywhere put mono-MT T=8 and MAS N=16 within ~4 s. Measured, the gap is
-  20.9 s, because MAS's merge benefits more (25.4 s) than mono-MT's (32.4 s).
+  20.9 s, because MAS's merge benefits more (25.4 s) than mono-MT's (32.4 s).~~
+  **[WITHDRAWN 2026-08-13 — see below.]** Interleaved on the same machine the gap
+  is −2.1 s and its sign flips round to round. Both this claim and the ~4 s
+  projection it corrected were reading noise.
 
-**1.84x is a lower bound.** `clean_s` came out higher on this branch than on
-`main` for every parallel configuration (+7% to +34%, unevenly). `merge_all` does
-not touch the clean phase, and MAS `clean_s` is documented above as including
-worker spawn, ZMQ connect and the registration wait — a jittery component. So the
-new totals carry inflated clean time; with clean at `main`'s levels the ratio
-would be higher, not lower. The inflation is unexplained and is the reason the
-figure is presented as a floor.
+**~~1.84x is a lower bound.~~ Superseded 2026-08-13: it is a number with tens of
+percent of uncertainty.** The original reasoning ran: `clean_s` came out higher
+on this branch than on `main` for every parallel configuration (+7% to +34%,
+unevenly) and for none of mono-1T, `merge_all` cannot touch the clean phase, so
+the totals carry inflated clean time and the true ratio can only be higher.
+
+That inference does not hold, and an interleaved A/B says why. Four rounds of
+mono-1T, mono-MT T=8 and MAS N=16 over the same 28 day-files, one binary set,
+twenty minutes: mono-1T's `clean_s` spread 3% while mono-MT spread 21% and MAS
+53%, both climbing round on round. This is a `Mac14,2` — a MacBook Air M2, with
+**no fan**. A parallel configuration's `clean_s` here records when in the sweep it
+ran, not how fast it is, and the sign of the difference between two sweeps is set
+by run order rather than by the code under test. Nothing was inflated *by the
+branch*; the two sweeps sampled different points on a thermal curve.
+
+The same effect explains the 20.9 s gap withdrawn above. Per the measurement
+caveat below, mono-MT's rows come from the tail of a long hot run and MAS's from
+a fresh session after the SIGTERM — and mono-MT's recorded `clean_s` of 43.31 is
+correspondingly high against 33.9 interleaved, MAS's 29.27 correspondingly low
+against 38.8. The caveat was recorded; the conclusion was drawn across it anyway.
+
+Full measurement in [`docs/validation-log.md`](../validation-log.md), entry
+2026-08-13. What survives: every correctness result, `merge_all`'s 2.89x on its
+own benchmark, the structural finding that merge cost stopped growing with source
+count, and mono-1T's timings. What does not: any end-to-end ratio quoted to three
+significant figures, and any comparison between two parallel architectures
+measured in different sessions. Read the table below as shape, not as seconds,
+until the sweep is repeated on hardware with active cooling.
 
 **Measurement caveat.** The first attempt at this sweep was killed by SIGTERM at
 65 of 81 rows, mid-MAS. The monolith block had completed and no binary changed
@@ -157,6 +262,105 @@ same harness (`run_bench.sh --only mas`). The two blocks therefore come from
 different sessions on the same machine — the same limitation already noted for
 the 30 re-measured rows in the previous sweep.
 
+### What the CUDA speedup is worth end to end (Amdahl)
+
+The clean-phase numbers are large and the end-to-end number is not, and the gap
+between them is the finding.
+
+**Correction (2026-08-13, review): the recorded CUDA `clean_s` measured less
+work than every other contender's.** The seven stage timers stopped before the
+loop that materializes the `CapEvent` vector — the "materialize events in
+memory" half of spec §6.1's clean mode — and before `check_header`, the pinned
+allocation and every `cudaMalloc`. The code now times an eighth
+`materialize_s` stage and reports the process wall clock alongside.
+Re-measured the same day on the RTX box (below), the correction turned out
+*larger* than the review's "roughly half" estimate: at 28 day-files the
+materialize loop alone is 4.64 s against 1.80 s for the seven original stages
+— the untimed part was ~72% of the corrected number, not ~50%. (The seven
+stages still summing to 1.80 s also says the old 1.82 s recording was
+accurate for what it measured; it measured about a quarter of the phase.) The
+CPU and Python rows always measured their whole work.
+
+28-day results on the Windows target box (RTX 4070 Laptop, CUDA 13.3), sweep
+of 2026-08-13 with the corrected timers — median of 3, with the min–max
+spread, because n=3 on a laptop does not support three significant figures
+(the same lesson the entry above records for the M2):
+
+| arch | clean 28d, median [min–max] | vs CUDA |
+|---|---:|---:|
+| **cuda** | **6.43 s** [6.33–8.34] | — |
+| cpp-MT (8 threads) | 8.21 s [8.12–8.32] | 1.3x |
+| cpp-1T | 46.26 s [45.91–46.57] | 7.2x |
+| py-naive | 74.64 s [74.32–76.31] | 11.6x |
+| py-numpy | 85.82 s [84.53–86.99] | 13.4x |
+
+(py-naive is measured at every volume now that the extrapolation machinery is
+gone — and the estimate that machinery was built on measured true: "~75 s per
+28-day repeat" came out 74.6 s median.)
+
+Repeat 1 is still the caveat in miniature: its `clean_s` reads 8.34 s (cold
+file cache) and its *wall* reads 58.9 s, because `--verify` runs the full CPU
+differential in the same process on the first repeat. The median absorbs
+both; the spread is why the interval is published. The CUDA context and
+allocations sit outside `clean_s` and inside the wall clock, where spec §6.1
+puts them: total 8.43 s median against 6.43 s clean.
+
+`mono-1T` end to end is **257.6 s** [254.5–266.6] against 45.5 s of
+store-free clean, so persistence costs **~212 s — around 82% of wall-clock**.
+Substituting a faster clean leaves that untouched:
+
+| | clean + store | e2e vs mono-1T |
+|---|---:|---:|
+| cpp-1T | 46.3 + 212.1 = 258.4 s | 1.00x |
+| cpp-MT 8T | 8.2 + 212.1 = 220.3 s | 1.17x |
+| cuda | 6.4 + 212.1 = 218.5 s | **1.18x** |
+
+**CUDA against the 8-thread C++ already in the project: 1.3x on the clean
+phase becomes ~1.01x end to end.** The measurement-window correction shrank
+the clean-phase ratios by more than the review's halving estimate (cpp-MT
+~2x estimated, 1.3x measured; cpp-1T ~13x estimated, 7.2x measured) and moved
+the end-to-end number from ~1.23x to a measured 1.18x — which is the point:
+the conclusion never depended on the flattered number.
+
+This is Amdahl applied honestly. Speeding a phase that is ~18% of the total
+by 7.2x yields 1.18x, and 1.18x is what is measured. The stage breakdown, now
+with nothing left outside it, says the same thing from inside: of the 6.43 s,
+4.64 s is host-side event materialization, 1.20 s is disk read, 0.32 s is
+PCIe transfer both ways, and ~0.29 s is GPU compute (index + parse + delta +
+compact — the pre-correction "~0.29 s" estimate of the kernels' cost held
+exactly). The kernel stopped being the bottleneck before the pipeline did —
+and, measured, so did the rest of the GPU path: what remains is a
+single-threaded, allocation-bound host loop.
+
+**The defensible claim is not "the GPU makes cleaning faster" — it is that
+cleaning has stopped being the problem.** Three independent paths were measured
+— multithreaded CPU, distributed MAS, GPU — and all three land on the same
+place: the cost is persistence, not transformation. `merge_all` attacked it
+from one side (2.89x on the merge in isolation); CUDA proved it from the
+other, by driving GPU compute to ~0.29 s and moving the total only to 1.18x.
+The re-run also put a measured number where a hardcoded zero had been:
+mono-MT's 28-day merge is 58.7 s [57.7–62.5], not the 0.000 the driver used
+to write — and not the ~150 s the review guessed while flagging the hardcode.
+
+Two qualifications this section keeps:
+
+- The clean-phase ratios are also a statement about the CPU baseline.
+  `cpp-1T` parses at ~35 MB/s because `CsvRawReader` builds an
+  `std::istringstream` per row and calls `std::stod` 108 times per row; a
+  `std::from_chars` parser over the same buffer would plausibly close much of
+  the gap on its own. "7.2x over C++ 1T" measures the distance between a tuned
+  GPU pipeline and an untuned CPU parser — which strengthens, not weakens, the
+  persistence conclusion: with a competent CPU parser the clean phase shrinks
+  further below the store cost. And the same reading now applies to the GPU
+  row itself: 72% of its clean time is a single-threaded host loop building
+  strings.
+- Every number in this section is n=3 on a laptop with ordinary desktop
+  background load. The intervals are the honest resolution; the medians are
+  the claim.
+
+It also settles the question the kernel was written to answer: **how much
+headroom was left in the clean phase? Almost none, and that is now measured
+rather than assumed.**
 
 
 ## Parquet vs DuckDB: where the persistence cost actually goes (2026-08-13, branch `feat/parquet-store`)
