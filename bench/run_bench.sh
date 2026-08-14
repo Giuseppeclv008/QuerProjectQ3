@@ -99,6 +99,16 @@ for v in "${VOLUMES[@]}"; do
     echo "oracle[$v days] = $n rows"
 done
 
+# duckdb lives in the project venv, not necessarily in the system interpreter.
+# Resolved once, loudly, rather than failing inside a run three volumes deep.
+PY_DUCKDB="$(pwd)/.venv/bin/python"
+[ -x "$PY_DUCKDB" ] || PY_DUCKDB=python3
+if ! "$PY_DUCKDB" -c "import duckdb" 2>/dev/null; then
+    echo "error: no python with duckdb ($PY_DUCKDB). Create the venv first:" >&2
+    echo "  python3 -m venv .venv && .venv/bin/pip install -r python/requirements.txt" >&2
+    exit 1
+fi
+
 mkdir -p bench
 echo "arch,n_workers,threads,files,repeat,clean_s,merge_s,total_s,events,rows_per_s,events_per_s,peak_rss_mb,cpu_pct" > "$OUT_CSV"
 
@@ -155,6 +165,36 @@ for v in "${VOLUMES[@]}"; do
             emit_row "$arch" 0 "$th" "$v" "$rep" "$clean" "$merge" "$total" "$ev" "$rss" "$user" "$sys" "$real"
             echo "done: $arch T=$th v=${v}d rep=$rep total=${total}s"
         done
+    done
+done
+
+# --- parquet runs -------------------------------------------------------------
+# Same clean path, different persistence: no index, no WAL, no merge. The
+# comparison is against mono-1T's e2e. The 79.8% store share that motivated
+# this was measured on the RTX 4070 host (183.9 s of a 230.45 s run), not on
+# this harness; see docs/bench/results.md for what it measures here.
+#
+# NOTE: the committed bench/results.csv carries NO parquet rows -- this block
+# has never been run into it. The month-scale Parquet/DuckDB comparison was
+# taken by the dedicated harness instead (bench/parquet-comparison/, whose
+# numbers are the ones docs/bench/results.md quotes). Running this script
+# rewrites results.csv from scratch, so it would add them.
+for v in "${VOLUMES[@]}"; do
+    for rep in 1 2 3; do
+        R="$T/run" && rm -rf "$R" && mkdir -p "$R/pq"
+        /usr/bin/time -l "$BUILD/mas_monolith" --format parquet "$R/pq" "$MACHINE" 1 \
+            "${FILES[@]:0:$v}" 2>"$R/log" || { cat "$R/log"; exit 1; }
+        line=$(grep '^monolith:' "$R/log")
+        ev=$(echo "$line"    | sed -n 's/.* files, \([0-9]*\) events.*/\1/p')
+        clean=$(echo "$line" | sed -n 's/.*clean \([0-9.]*\) s.*/\1/p')
+        total=$(echo "$line" | sed -n 's/.*total \([0-9.]*\) s.*/\1/p')
+        rows=$($PY_DUCKDB -c "
+import duckdb,sys
+print(duckdb.sql(\"SELECT COUNT(DISTINCT (machine_id, head_id, ts)) FROM read_parquet('$R/pq/*.parquet')\").fetchone()[0])")
+        check_count "$rows" "$v" "parquet v=$v rep=$rep"
+        read -r real user sys rss < <(parse_time "$R/log")
+        emit_row "parquet" 0 1 "$v" "$rep" "$clean" "0" "$total" "$ev" "$rss" "$user" "$sys" "$real"
+        echo "done: parquet v=${v}d rep=$rep total=${total}s"
     done
 done
 

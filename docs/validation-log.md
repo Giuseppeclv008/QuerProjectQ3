@@ -1224,3 +1224,109 @@ library split, the MSVC `/Zc:preprocessor` flag on it, and the monolith's
 syntax-checked with the define forced on, never linked, never run. The first
 `-DMAS_ENABLE_CUDA=ON` configure on the RTX box decides whether those three
 survive contact; until then `--engine=cuda` is verified only in refusal.
+
+
+## 2026-08-14 — Parquet vs DuckDB, and a sort that defended nothing
+
+`feat/parquet-store` built a second `IEventStore` with no index, no WAL and no
+per-row constraint, to measure what those cost. The spec required the benchmark
+to be able to conclude that Parquet loses. It does — by a smaller margin than
+the first write-up claimed, because that write-up charged Parquet for a sort
+that bought nothing.
+
+### Commands
+
+```bash
+ORDER=duckdb-first bash bench/parquet-comparison/write_sweep.sh out.txt
+.venv/bin/python bench/read_bench.py /tmp/duck-month.duckdb /tmp/pq-month 3
+.venv/bin/python bench/parquet-comparison/decompose.py \
+    /tmp/duck-month.duckdb /tmp/pq-month 7
+```
+
+Artifacts in `bench/parquet-comparison/`: `write_single.out`,
+`write_single_duckdbfirst.out`, `parity.out`, `decompose_final.out`,
+`calibrate.out`, `write_raw_perday.csv`, plus `bench/read_results.csv`.
+
+### The two stores agree
+
+```
+duckdb 21,872,663  parquet distinct 21,872,663  parquet raw 21,872,663  MATCH
+```
+
+Raw equals distinct, so no day-file was processed twice and the read-side
+`DISTINCT ON` deduplicates nothing here. It still costs on every query, which is
+what the read table measures. Both `mas_monolith` runs independently reported
+`28 files, 21872663 events`.
+
+### Results
+
+Write, both orderings (the volume slows DuckDB when free space runs low):
+
+| | DuckDB first | Parquet first |
+|---|---:|---:|
+| Parquet | 35.48 s | 34.02 s |
+| DuckDB | 98.96 s | 98.86 s |
+| ratio | **2.79x** | 2.91x |
+
+Stores: 233.4 MB against 1183.6 MB, 5.07x. Read, median of the 3 suite totals:
+DuckDB 5.139 s against Parquet 12.400 s, **2.41x**.
+
+Saving 63.48 s once, penalty 7.26 s per report run, **break-even 8.7 runs**.
+
+### The withdrawal, and it is the third on this branch
+
+Until today the Parquet view ended in `ORDER BY machine_id, head_id, ts`, and
+three documents plus a benchmark docstring justified it the same way: a bare
+`DISTINCT ON` compiles to `HASH_GROUP_BY` + `first()`, so without an explicit
+order *which* row of a duplicate group survives is undefined.
+
+The final whole-branch review checked it instead of believing it:
+
+- `EXPLAIN` puts `ORDER_BY` **above** `HASH_GROUP_BY`. It runs after the group
+  is collapsed and cannot pick its survivor.
+- The sort key was the `DISTINCT ON` key, so all rows in a duplicate group
+  compare equal on it. There is no tie to break.
+- Reproducing it here: two files sharing an identity key with different
+  payloads gave `999` bare, `111` with the shipped ASC order, and `111` with
+  DESC. So the ORDER BY did change the outcome — but ASC and DESC agreeing
+  shows what moved was the plan, not a tie-break. That is worse than either
+  story: the survivor was never principled, it merely differed.
+- And it was never needed. Duplicates come only from a re-dispatched work item,
+  and those rows are byte-identical by construction (same input, same
+  extraction — `DuckDbEventStore::merge_all`, spec §3). Any survivor has the
+  same content.
+
+Cost of defending it: **2.98x on the read path** (1.358 s against 0.456 s on the
+month store, median of 7). Removing it moved the read penalty from 5.24x to
+2.41x and the break-even from 3.0 report runs to 8.7. **Every read number in the
+previous entry was measured through that sort.**
+
+The conclusion survives — DuckDB is still the right default for a store that is
+queried repeatedly — but it is now a much closer call, and the honest split is
+DuckDB for the queried store, Parquet for the handed-over copy, which is what
+`mas_export` exists for.
+
+### Two more corrections from the same review
+
+- **`mas_export` would export a store onto itself.** `COPY ... TO` truncates its
+  destination and does not care that the destination is the database it is
+  reading, so `mas_export s.duckdb s.duckdb` replaced a 536 KB store with a
+  1.7 KB Parquet, then verified that Parquet against itself and exited 0. It now
+  refuses both self-export and any existing destination, with two tests.
+- **"Predicate pushdown does not reach past the sort" was false.** `EXPLAIN`
+  puts `FILTER` below it, and a one-hour-scoped aggregate measured 0.027 s
+  against 0.122 s for the full scan on 2M rows. Stated wrongly in three places;
+  the committed numbers are whole-month so they do not move.
+
+### Pattern, stated because it is now four for four
+
+Every defect this branch found in itself has the same shape: **something green
+for a reason other than the one it claims.** A heartbeat test satisfied by idle
+ticks. A parity test that agreed only because an 8-row fixture ran
+single-threaded. A benchmark that would have timed an empty store. And now a
+sort defended by a query plan that does not contain it.
+
+None was found by reading the code that contained it. Each was found by an
+independent check of the claim — running `EXPLAIN`, breaking the test on
+purpose, changing a variable nobody had listed. That is the only method here
+with a record.

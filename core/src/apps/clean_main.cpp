@@ -1,5 +1,7 @@
+#include "mas/apps/CliArgs.hpp"
 #include "mas/store/CsvRawReader.hpp"
 #include "mas/store/DuckDbEventStore.hpp"
+#include "mas/store/ParquetEventStore.hpp"
 #include "mas/domain/Pipeline.hpp"
 #include <iostream>
 #include <string>
@@ -16,12 +18,60 @@ int report_missing_input(const std::string& in_path) {
 } // namespace
 
 int main(int argc, char** argv) {
-    if (argc < 3) {
-        std::cerr << "usage: clean <raw_in.csv> <events_out.csv|events_out.duckdb> [machine_id]\n";
+    // Deliberately 2, not 3: the arity this command needs is checked after the
+    // flags are parsed. Rejecting argc < 3 here made "--format needs a value"
+    // unreachable, so `clean --format` answered with the generic usage.
+    if (argc < 2) {
+        std::cerr << "usage: clean [--format duckdb|parquet] <raw_in.csv> "
+                     "<events_out.csv|.duckdb|out_dir> [machine_id]\n";
         return 2;
     }
-    const std::string in = argv[1], out = argv[2];
-    const std::string machine = (argc > 3) ? argv[3] : "MCC";
+    int argi = 1;
+    bool parquet = false;
+    if (std::string(argv[argi]) == "--format") {
+        if (argi + 1 >= argc) { std::cerr << "error: --format needs a value\n"; return 2; }
+        const std::string fmt = argv[argi + 1];
+        if (fmt == "parquet") parquet = true;
+        else if (fmt != "duckdb") { std::cerr << "error: --format must be duckdb or parquet\n"; return 2; }
+        argi += 2;
+    }
+    if (const auto bad = mas::unconsumed_flag(argc, argv, argi)) {
+        std::cerr << "error: " << *bad << "\n";
+        return 2;
+    }
+    // Both bounds, not just the lower one: a fourth positional is as much a
+    // typo as a missing second one, and silently ignoring it is how the
+    // dropped "parquet" above went unnoticed.
+    if (argc - argi < 2 || argc - argi > 3) {
+        std::cerr << "usage: clean [--format duckdb|parquet] <raw_in.csv> "
+                     "<events_out.csv|.duckdb|out_dir> [machine_id]\n";
+        return 2;
+    }
+    const std::string in = argv[argi], out = argv[argi + 1];
+    const std::string machine = (argc > argi + 2) ? argv[argi + 2] : "MCC";
+
+    if (parquet) {
+        mas::CsvRawReader probe(in);
+        if (!probe.is_open()) return report_missing_input(in);
+        try {
+            mas::ParquetEventStore store(mas::parquet_path_for(out, in), machine);
+            const long long n = mas::clean_file(in, store);
+            if (n < 0) {
+                // No file for a day that failed: the reader globs the
+                // directory and a valid empty Parquet reads as a real, empty
+                // day.
+                store.abandon();
+                std::cerr << "error: cannot clean " << in << "\n";
+                return 1;
+            }
+            store.close();
+            std::cerr << "wrote " << n << " cap events to parquet\n";
+        } catch (const std::exception& e) {
+            std::cerr << "error: " << e.what() << "\n";
+            return 1;
+        }
+        return 0;
+    }
 
     if (std::string_view(out).ends_with(".duckdb")) {
         // Probe before constructing the store: DuckDbEventStore's constructor

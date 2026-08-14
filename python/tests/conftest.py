@@ -61,6 +61,26 @@ def tiny_cfg(tiny_store):
 
 
 @pytest.fixture
+def tiny_store_parquet(tmp_path, tiny_store):
+    """The tiny store's rows, written out as Parquet.
+
+    Built from the DuckDB fixture rather than duplicated, so the two backends
+    are provably reading the same events and a parity failure means a backend
+    defect rather than a fixture that drifted.
+    """
+    out = tmp_path / "tiny_parquet"
+    out.mkdir()
+    con = duckdb.connect(tiny_store, read_only=True)
+    # Doubled quotes for the same reason store.py doubles them: this path is a
+    # SQL literal, and the directory it lands in is not guaranteed quote-free
+    # (test_both_backends_open_a_path_containing_a_quote copies into one).
+    dest = str(out / "part-0.parquet").replace("'", "''")
+    con.execute(f"COPY (SELECT * FROM cap_events) TO '{dest}' (FORMAT PARQUET)")
+    con.close()
+    return str(out)
+
+
+@pytest.fixture
 def reject_without_load_store(tmp_path):
     """A store where a rejected closure carries no load.
 

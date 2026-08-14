@@ -25,7 +25,8 @@ TEST(CleaningWorker, ProcessesItemsInOrderThenStopsOnStop) {
     FakeStore store;
     std::vector<std::string> cleaned;
     mas::CleaningWorker w(work, results, hb, store, "w1",
-        [&](const std::string& path, mas::IEventStore&) -> long long {
+        [&](const std::string& path, mas::IEventStore&,
+            const std::function<void()>&) -> long long {
             cleaned.push_back(path);
             return path == "day1.csv" ? 10 : 20;
         });
@@ -53,7 +54,8 @@ TEST(CleaningWorker, MalformedWorkItemIsSkippedWithoutResult) {
     mas::test::FakeSink results, hb;
     FakeStore store;
     mas::CleaningWorker w(work, results, hb, store, "w1",
-        [](const std::string&, mas::IEventStore&) -> long long { return 7; });
+        [](const std::string&, mas::IEventStore&,
+           const std::function<void()>&) -> long long { return 7; });
     EXPECT_EQ(w.run(), 1);
     ASSERT_EQ(results.sent.size(), 1u);
     const auto r = mas::decode_result(results.sent[0]);
@@ -70,7 +72,8 @@ TEST(CleaningWorker, UnreadableInputForwardsMinusOne) {
     mas::test::FakeSink results, hb;
     FakeStore store;
     mas::CleaningWorker w(work, results, hb, store, "w1",
-        [](const std::string&, mas::IEventStore&) -> long long { return -1; });
+        [](const std::string&, mas::IEventStore&,
+           const std::function<void()>&) -> long long { return -1; });
     EXPECT_EQ(w.run(), 1);
     ASSERT_EQ(results.sent.size(), 1u);
     const auto r = mas::decode_result(results.sent[0]);
@@ -87,7 +90,8 @@ TEST(CleaningWorker, StampsWorkerIdAndHeartbeatsAroundWork) {
     mas::test::FakeSink results, hb;
     FakeStore store;
     mas::CleaningWorker worker(work, results, hb, store, "w7",
-        [](const std::string&, mas::IEventStore&) { return 5LL; });
+        [](const std::string&, mas::IEventStore&,
+           const std::function<void()>&) { return 5LL; });
 
     EXPECT_EQ(worker.run(), 1);
 
@@ -113,7 +117,8 @@ TEST(CleaningWorker, HeartbeatsEveryEmptyTickAndExitsAfterBudget) {
     mas::test::FakeSink results, hb;
     FakeStore store;
     mas::CleaningWorker worker(work, results, hb, store, "w1",
-        [](const std::string&, mas::IEventStore&) { return 0LL; });
+        [](const std::string&, mas::IEventStore&,
+           const std::function<void()>&) { return 0LL; });
 
     EXPECT_EQ(worker.run(), 0);
 
@@ -133,12 +138,42 @@ TEST(CleaningWorker, IdleCounterResetsWhenWorkArrives) {
     mas::test::FakeSink results, hb;
     FakeStore store;
     mas::CleaningWorker worker(work, results, hb, store, "w1",
-        [](const std::string&, mas::IEventStore&) { return 1LL; });
+        [](const std::string&, mas::IEventStore&,
+           const std::function<void()>&) { return 1LL; });
 
     // 2*(budget-1) empty ticks straddle one item: never 60 consecutive,
     // so the worker survives to the STOP and handles the item.
     EXPECT_EQ(worker.run(), 1);
     ASSERT_EQ(results.sent.size(), 1u);
+}
+
+TEST(CleaningWorker, CleanFnReceivesABeatCallbackItCanUse) {
+    // The parquet path supplies its own store, so it must be handed the beat
+    // to decorate it with. If CleanFn stops carrying one, that path goes
+    // silent for a whole file and the coordinator tombstones a live worker.
+    mas::test::FakeSource work;
+    mas::test::FakeSink results, hbs;
+    FakeStore store;
+    work.queue.push_back(mas::encode(mas::WorkItem{"d1.csv"}));
+    // STOP right after the one item: run() terminates deterministically
+    // instead of idling out through kIdleExitTicks empty-tick beats, which
+    // would pad hbs.sent and hide a clean_fn that ignores the beat callback
+    // it's handed.
+    work.queue.push_back(mas::make_stop());
+    int beats_from_fn = 0;
+    mas::CleaningWorker w(work, results, hbs, store, "w1",
+        [&](const std::string&, mas::IEventStore&,
+            const std::function<void()>& beat) {
+            beat();
+            ++beats_from_fn;
+            return 5LL;
+        });
+    w.run();
+    EXPECT_EQ(beats_from_fn, 1);
+    // hello + the fn's beat + the post-result beat -- exact, not a lower
+    // bound, so a clean_fn that swallows the callback instead of calling it
+    // makes this fail rather than pass on idle-tick beats alone.
+    EXPECT_EQ(hbs.sent.size(), 3u);
 }
 
 } // namespace

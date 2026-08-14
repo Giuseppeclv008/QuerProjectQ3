@@ -1,5 +1,6 @@
 #include "mas/domain/Pipeline.hpp"
 #include "mas/store/DuckDbEventStore.hpp"
+#include "mas/store/ParquetEventStore.hpp"
 #include "mas/store/EventStore.hpp"
 #include "mas/util/engine.hpp"
 #include "mas/util/platform_metrics.hpp"
@@ -8,6 +9,8 @@
 #endif
 #include <atomic>
 #include <chrono>
+#include <filesystem>
+#include <map>
 #include <cstddef>
 #include <cstdio>
 #include <exception>
@@ -66,11 +69,23 @@ int main(int argc, char** argv) {
     mas::metrics_init();
     int argi = 1;
     bool no_store = false;
+    bool parquet = false;
     mas::Engine engine = mas::Engine::Cpu;
     while (argi < argc && std::string(argv[argi]).rfind("--", 0) == 0) {
         const std::string arg = argv[argi];
         if (arg == "--no-store") {
             no_store = true;
+        } else if (arg == "--format") {
+            if (argi + 1 >= argc) {
+                std::cerr << "error: --format needs a value\n";
+                return 2;
+            }
+            const std::string fmt = argv[++argi];
+            if (fmt == "parquet") parquet = true;
+            else if (fmt != "duckdb") {
+                std::cerr << "error: --format must be duckdb or parquet\n";
+                return 2;
+            }
         } else if (arg.rfind("--engine=", 0) == 0) {
             auto choice = mas::parse_engine(arg.substr(9));
             if (choice.ok) choice = mas::resolve_engine(choice.engine, kCudaCompiled);
@@ -87,8 +102,16 @@ int main(int argc, char** argv) {
     }
     if (argc - argi < 4) {
         std::cerr << "usage: mas_monolith [--no-store] [--engine=cpu|cuda] "
-                     "<out.duckdb> <machine_id> "
+                     "[--format duckdb|parquet] <out.duckdb|out_dir> <machine_id> "
                      "<threads> <day1.csv> [day2.csv ...]\n";
+        return 2;
+    }
+    // --format parquet is the benchmark's second backend, not a way to run the
+    // system: it writes one Parquet per day-file and keeps no index, which is
+    // what makes it fast to write and slow to read (docs/bench/results.md).
+    if (no_store && parquet) {
+        std::cerr << "error: --no-store and --format parquet contradict each "
+                     "other (one persists nothing, the other persists Parquet)\n";
         return 2;
     }
     const std::string out = argv[argi++], machine = argv[argi++];
@@ -116,6 +139,27 @@ int main(int argc, char** argv) {
     }
     std::vector<std::string> files;
     for (int i = argi; i < argc; ++i) files.emplace_back(argv[i]);
+
+    // The Parquet output is named after the input's basename, and that name IS
+    // the idempotency mechanism -- so two inputs sharing one, from different
+    // directories, silently collapse into a single output file. At threads > 1
+    // they also race, two COPY ... TO writing the same path. Refused up front
+    // rather than discovered as a short row count.
+    if (parquet) {
+        std::map<std::string, std::string> seen;
+        for (const auto& f : files) {
+            const auto stem = std::filesystem::path(f).stem().string();
+            const auto [it, fresh] = seen.emplace(stem, f);
+            if (!fresh) {
+                std::cerr << "error: --format parquet names its output after the "
+                             "input basename, and two inputs share '" << stem
+                          << "':\n  " << it->second << "\n  " << f
+                          << "\nthey would write the same file; rename one or "
+                             "run them separately\n";
+                return 2;
+            }
+        }
+    }
 
     // Cleans one day-file into `store` with the selected engine and returns
     // the event count, or -1 after printing the error. The GPU branch refuses
@@ -147,7 +191,6 @@ int main(int argc, char** argv) {
         long long rows = 0;
 
         if (threads == 1) {
-            // Baseline arch "mono-1T": one store, one file after another.
             if (no_store) {
                 NullEventStore store;
                 for (const auto& f : files) {
@@ -168,7 +211,29 @@ int main(int argc, char** argv) {
                     return 1;
                 }
                 rows = 0;   // nothing persisted; "store holds 0 rows" is true
+            } else if (parquet) {
+                // A store per input file, not per run: IEventStore::write()
+                // never learns that a file is finished, so a shared store
+                // would have to buffer all 21.9M events before it could name
+                // anything (spec §3.1).
+                for (const auto& f : files) {
+                    mas::ParquetEventStore store(mas::parquet_path_for(out, f), machine);
+                    const long long n = clean_into(f, store);
+                    if (n < 0) {
+                        // Leave no file behind for a day that failed: the
+                        // reader globs the directory and a valid empty Parquet
+                        // is indistinguishable from a day with no events.
+                        store.abandon();
+                        std::cerr << "error: cannot clean " << f << "\n";
+                        return 1;
+                    }
+                    store.close();
+                    events += n;
+                }
+                clean_s = seconds_since(t0);
+                rows = events;
             } else {
+                // Baseline arch "mono-1T": one store, one file after another.
                 mas::DuckDbEventStore store(out, machine);
                 for (const auto& f : files) {
                     const long long n = clean_into(f, store);
@@ -193,10 +258,27 @@ int main(int argc, char** argv) {
             std::atomic<bool> failed{false};
             // A previous run's per-thread stores are removed before the pool
             // opens: DuckDbEventStore appends, so reusing one would fold an
-            // earlier run's events into this one.
-            for (int t = 0; t < threads; ++t) remove_store(thread_store(out, t));
+            // earlier run's events into this one. Only the DuckDB path has
+            // them -- under parquet this would unlink <out>.tN.duckdb, a path
+            // this run neither writes nor owns.
+            if (!parquet)
+                for (int t = 0; t < threads; ++t) remove_store(thread_store(out, t));
             auto pull = [&](int t) {
                 try {
+                    if (parquet) {
+                        for (std::size_t i; (i = next.fetch_add(1)) < files.size();) {
+                            mas::ParquetEventStore local(
+                                mas::parquet_path_for(out, files[i]), machine);
+                            per_file[i] = mas::clean_file(files[i], local);
+                            if (per_file[i] < 0) {
+                                local.abandon();   // see the 1T branch
+                                failed = true;
+                            } else {
+                                local.close();
+                            }
+                        }
+                        return;
+                    }
                     mas::DuckDbEventStore local(thread_store(out, t), machine);
                     for (std::size_t i;
                          (i = next.fetch_add(1)) < files.size();) {
@@ -224,30 +306,35 @@ int main(int argc, char** argv) {
             }
             for (const auto n : per_file) events += n;
 
-            // Thread stores are closed (destroyed) here — merge_from's
-            // closed/checkpointed precondition holds.
-            const auto tm = std::chrono::steady_clock::now();
-            {
-                mas::DuckDbEventStore store(out, machine);
-                std::vector<std::string> sources;
-                sources.reserve(static_cast<std::size_t>(threads));
-                for (int t = 0; t < threads; ++t)
-                    sources.push_back(thread_store(out, t));
-                store.merge_all(sources);
-                rows = store.count();
-            }   // close the destination before deleting its sources
-            // Stop the clock BEFORE the cleanup. mas_merge does not delete its
-            // sources — run_bench.sh clears them outside its timing window — so
-            // charging mono-MT for ~1.5 GB of unlinks and leaving the MAS
-            // untimed made merge_s measure two different things and biased the
-            // architecture comparison toward the MAS by however long the
-            // unlinks take.
-            merge_s = seconds_since(tm);
-            // The per-thread stores used to survive the run. Since the store
-            // appends, a later run over a *different* file set re-merged the
-            // previous run's rows into the new one, silently — build_store.sh
-            // removed only the destination.
-            for (int t = 0; t < threads; ++t) remove_store(thread_store(out, t));
+            if (parquet) {
+                merge_s = 0.0;
+                for (const auto n : per_file) rows += n;
+            } else {
+                // Thread stores are closed (destroyed) here — merge_from's
+                // closed/checkpointed precondition holds.
+                const auto tm = std::chrono::steady_clock::now();
+                {
+                    mas::DuckDbEventStore store(out, machine);
+                    std::vector<std::string> sources;
+                    sources.reserve(static_cast<std::size_t>(threads));
+                    for (int t = 0; t < threads; ++t)
+                        sources.push_back(thread_store(out, t));
+                    store.merge_all(sources);
+                    rows = store.count();
+                }   // close the destination before deleting its sources
+                // Stop the clock BEFORE the cleanup. mas_merge does not delete its
+                // sources — run_bench.sh clears them outside its timing window — so
+                // charging mono-MT for ~1.5 GB of unlinks and leaving the MAS
+                // untimed made merge_s measure two different things and biased the
+                // architecture comparison toward the MAS by however long the
+                // unlinks take.
+                merge_s = seconds_since(tm);
+                // The per-thread stores used to survive the run. Since the store
+                // appends, a later run over a *different* file set re-merged the
+                // previous run's rows into the new one, silently — build_store.sh
+                // removed only the destination.
+                for (int t = 0; t < threads; ++t) remove_store(thread_store(out, t));
+            }
         }
 
         // The engine stamp rides the summary line so a pasted log can never

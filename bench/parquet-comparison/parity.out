@@ -1,0 +1,6 @@
+# produced by the parity step of write_sweep.sh (added there after this run,
+# which was taken by hand with the same query):
+#   SELECT COUNT(*) FROM cap_events                                    -- duckdb
+#   SELECT COUNT(DISTINCT (machine_id, head_id, ts)) FROM read_parquet(...)
+#   SELECT COUNT(*) FROM read_parquet(...)                             -- raw
+duckdb 21,872,663  parquet distinct 21,872,663  parquet raw 21,872,663  MATCH

@@ -50,6 +50,7 @@ Chaos E2E resilience testing · Benchmark sweep harness
   - [mas_coordinator — Ventilator + Sink + Liveness Monitor](#mas_coordinator--ventilator--sink--liveness-monitor)
   - [mas_worker — Cleaning Agent](#mas_worker--cleaning-agent)
   - [mas_merge — Post-Run Store Unification](#mas_merge--post-run-store-unification)
+  - [mas_export — Parquet Export](#mas_export--parquet-export)
   - [bench_cpu — Store-Free Cleaning Contender](#bench_cpu--store-free-cleaning-contender)
   - [mas_cuda_clean — GPU Cleaning Pipeline](#mas_cuda_clean--gpu-cleaning-pipeline)
 - [Resilience: Heartbeats, Death Detection, and Re-Dispatch](#resilience-heartbeats-death-detection-and-re-dispatch)
@@ -133,6 +134,7 @@ database stores, and the testing/validation scripts.
 | `mas_coordinator` | C++ CLI | Ventilator + sink + liveness monitor with death detection |
 | `mas_worker` | C++ CLI | Cleaning agent with heartbeat emission and idle-exit |
 | `mas_merge` | C++ CLI | Merges per-worker/thread DuckDB stores (skips corrupt ones) |
+| `mas_export` | C++ CLI | Exports a store to Parquet, read-only, row count verified |
 | ZeroMQ Fabric | libzmq 4.3.5 | 3-endpoint PUSH/PULL: work, results, heartbeats |
 | DuckDB Store | DuckDB | Persistent `cap_events` table with idempotent upserts |
 | `chaos_e2e.sh` | Bash | Resilience test: SIGKILL a worker, verify full recovery |
@@ -207,10 +209,11 @@ organized by layer.
 │           ├── coordinator_main.cpp        # → mas_coordinator
 │           ├── worker_main.cpp             # → mas_worker
 │           ├── merge_main.cpp              # → mas_merge
+│           ├── export_main.cpp             # → mas_export      (store → Parquet, read-only)
 │           ├── bench_cpu_main.cpp          # → bench_cpu       (store-free contender)
 │           └── cuda_clean_main.cpp         # → mas_cuda_clean  (GPU contender, --verify)
 │
-├── tests/                                  # Google Test unit tests (15 files, 110 tests)
+├── tests/                                  # Google Test unit tests (17 files, 127 tests)
 │   ├── test_cap_event.cpp
 │   ├── test_cap_event_extractor.cpp
 │   ├── test_cap_event_extractor_flat.cpp   # The GPU precondition, proved against the stateful one
@@ -586,12 +589,33 @@ ATTACHes. `mas_merge` skips corrupt stores loudly instead of aborting.
 
 ### Parquet Export
 
+**DuckDB is the persistent format. Parquet is for handing the data to something
+else.** Exporting is what `mas_export` does, and it is the only supported use of
+Parquet in normal operation:
+
+```
+mas_export events.duckdb out.parquet [--since TS] [--until TS]
+```
+
+Under the hood:
+
 ```sql
 COPY (SELECT * FROM cap_events ORDER BY head_id, ts)
 TO 'output.parquet' (FORMAT PARQUET);
 ```
 
-Produces a columnar Parquet file for downstream analytics tools.
+The `ORDER BY` makes the file deterministic — two exports of one store compare
+equal. Roughly a fifth of the bytes: a February store is 1183.6 MB as `.duckdb`
+and 233.4 MB as Parquet.
+
+There is also a `--format parquet` flag on `clean`, `mas_monolith` and
+`mas_worker` that writes Parquet *instead of* DuckDB during cleaning. That
+exists to make the two backends measurable against each other
+(`docs/bench/results.md`) and is **not** the recommended way to run the system:
+Parquet writes 2.79x faster and reads 2.41x slower, and the write saving is
+gone after 8.7 report runs — a close call, which is why the split the numbers
+recommend is DuckDB for the store that gets queried and Parquet for the copy
+that gets handed over.
 
 ---
 
@@ -600,7 +624,7 @@ Produces a columnar Parquet file for downstream analytics tools.
 ### `clean` — Single-File Batch Pipeline
 
 ```
-usage: clean <raw_in.csv> <events_out.csv|events_out.duckdb> [machine_id]
+usage: clean [--format duckdb|parquet] <raw_in.csv> <events_out.csv|events_out.duckdb|out_dir> [machine_id]
 ```
 
 Processes a single raw CSV day-file. Detects output format by file extension:
@@ -612,7 +636,7 @@ Default `machine_id`: `"MCC"`.
 ### `mas_monolith` — Multi-Threaded In-Process Pipeline
 
 ```
-usage: mas_monolith [--no-store] [--engine=cpu|cuda] <out.duckdb> <machine_id> <threads> <day1.csv> [day2.csv ...]
+usage: mas_monolith [--no-store] [--engine=cpu|cuda] [--format duckdb|parquet] <out.duckdb|out_dir> <machine_id> <threads> <day1.csv> [day2.csv ...]
 ```
 
 Two operating modes:
@@ -657,7 +681,7 @@ Death detection: workers silent > 30 s are tombstoned, their completed items re-
 ### `mas_worker` — Cleaning Agent
 
 ```
-usage: mas_worker <work_endpoint> <result_endpoint> <hb_endpoint> <out.duckdb> <worker_id> [machine_id]
+usage: mas_worker [--format duckdb|parquet] <work_endpoint> <result_endpoint> <hb_endpoint> <out.duckdb|out_dir> <worker_id> [machine_id]
 ```
 
 Connects to all three coordinator endpoints. Key behaviors:
@@ -673,6 +697,37 @@ usage: mas_merge <dst.duckdb> <machine_id> <src1.duckdb> [src2.duckdb ...]
 ```
 
 Merges one or more per-worker stores into a unified destination. **Crash-tolerant:** a corrupt source store (from a killed worker) is skipped with a warning instead of aborting. Idempotent: running twice produces the same result.
+
+### `mas_export` — Parquet Export
+
+```
+usage: mas_export <store.duckdb> <out.parquet> [--since TS] [--until TS]
+```
+
+Exports `cap_events` to Parquet for tools that do not read `.duckdb`. Three
+properties worth knowing:
+
+- **The store is opened `READ_ONLY`.** Exporting must not modify what it
+  exports, and must work against a store on read-only media. This is why it is
+  not a method on `DuckDbEventStore`, whose constructor creates tables and
+  writes `store_meta` — routing the export through it would make the exporter a
+  writer. A test chmods the store `444` and exports from it.
+- **The written file is verified before exit 0.** Its row count is read back and
+  compared with the store's for the same predicate; a mismatch throws instead of
+  leaving a plausible, wrong file behind.
+- **A bare date as `--until` covers that whole day.** `--until 2026-02-03` read
+  literally means midnight and would drop the 3rd while still succeeding and
+  still printing a count. Give a time to bound it exactly.
+
+```
+$ mas_export events.duckdb feb03.parquet --since 2026-02-03 --until 2026-02-03
+exported 451898 rows to feb03.parquet
+```
+
+451,898 is the 3rd's real count, not a truncated day: production varies widely
+across the month (the 1st is 961,147, the 4th is 353,498) against a mean near
+781k. `max(ts)` on that export is 23:56:05, so the bare date did cover the whole
+day.
 
 ### `bench_cpu` — Store-Free Cleaning Contender
 
@@ -983,7 +1038,7 @@ cmake --build build --parallel
 | `MAS_BUILD_TESTS` | `ON` | Build the GoogleTest suite. `OFF` drops the last dependency that needs network. |
 
 The default triple (`OFF, ON, OFF, ON`) is the build this project has always
-had: **110 tests green**. With `MAS_BENCH_ONLY=ON` the suite is the 45 tests that
+had: **135 tests green**. With `MAS_BENCH_ONLY=ON` the suite is the 51 tests that
 need neither DuckDB nor ZeroMQ; with `MAS_BUILD_TESTS=OFF` on top of that,
 `_deps/` is never created at all — nothing is downloaded:
 
@@ -1233,17 +1288,17 @@ it, `--pdf` logs how to install it and writes Markdown and HTML as normal.
 
 ## Testing
 
-The project has **110 C++ unit tests** across 15 Google Test files, plus **240
+The project has **135 C++ unit tests** across 18 Google Test files, plus **250
 Python tests** for the analytics tier. Both counts are asserted by
 `python/tests/test_readme_counts.py`, so adding a test and forgetting this
 paragraph fails the suite rather than quietly dating it.
 
 ```bash
-cd build && ctest --output-on-failure           # 110 C++ tests
-cd python && ../.venv/bin/python -m pytest -q   # 240 Python tests (5 need the rebuilt store and skip without it)
+cd build && ctest --output-on-failure           # 135 C++ tests
+cd python && ../.venv/bin/python -m pytest -q   # 250 Python tests (5 need the rebuilt store or a real day-file and skip without them)
 ```
 
-Under `-DMAS_BENCH_ONLY=ON` the C++ suite is the 45 tests that need neither
+Under `-DMAS_BENCH_ONLY=ON` the C++ suite is the 51 tests that need neither
 DuckDB nor ZeroMQ — the rest are excluded by design, not skipped. (Two of the
 45 skip without the extracted pool beside the binary.)
 
@@ -1258,6 +1313,7 @@ DuckDB nor ZeroMQ — the rest are excluded by design, not skipped. (Two of the
 | `test_pipeline.cpp` | End-to-end CSV→events flow, batch boundary, error codes |
 | `test_duckdb_smoke.cpp` | DuckDB library linkage sanity |
 | `test_duckdb_event_store.cpp` | Schema creation, write/count, idempotent upsert, merge_from, export_parquet |
+| `test_parquet_export.cpp` | mas_export: all ten columns round-trip, exports from a chmod-444 store without writing to it, since/until bounds, bare-date upper bound covers the whole day, empty range still readable, quoted paths |
 | `test_zmq_smoke.cpp` | ZeroMQ library linkage sanity |
 | `test_zmq_transport.cpp` | PUSH/PULL round-trip, timeout behavior, zero-linger teardown regression |
 | `test_message.cpp` | Encode/decode for WorkItem, WorkResult, Heartbeat, STOP; malformed payload rejection |

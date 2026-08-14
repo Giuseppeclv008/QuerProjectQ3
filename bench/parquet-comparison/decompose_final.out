@@ -1,0 +1,13 @@
+parquet store 233.4 MB in 28 files (233443916 B)
+duckdb  store 1182.8 MB (1182806016 B)
+duckdb / parquet on disk: 5.067x
+
+duckdb native table                            median  0.030s   runs 0.036, 0.031, 0.031, 0.030, 0.029, 0.030, 0.030
+parquet, plain scan, no dedup                  median  0.062s   runs 0.062, 0.061, 0.061, 0.062, 0.060, 0.062, 0.118
+parquet + DISTINCT ON (the shipped view)       median  0.456s   runs 0.462, 0.438, 0.438, 0.450, 0.474, 0.458, 0.456
+parquet + DISTINCT ON + ORDER BY (removed 2026-08-14) median  1.358s   runs 1.284, 1.311, 1.337, 1.358, 1.399, 1.384, 1.362
+
+plain scan / native                2.046x
+DISTINCT ON / plain scan           7.375x
+shipped view / native              15.088x
+[withdrawn] ORDER BY / DISTINCT ON 2.976x

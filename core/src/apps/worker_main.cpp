@@ -1,20 +1,62 @@
 #include "mas/agent/CleaningWorker.hpp"
+#include "mas/apps/CliArgs.hpp"
+#include "mas/store/BeatingStore.hpp"
 #include "mas/store/DuckDbEventStore.hpp"
+#include "mas/store/ParquetEventStore.hpp"
 #include "mas/domain/Pipeline.hpp"
 #include "mas/transport/ZmqTransport.hpp"
 #include <exception>
 #include <iostream>
+#include <optional>
+#include <span>
 #include <string>
 
+namespace {
+
+// In parquet mode the store CleaningWorker is constructed with is never
+// written to: clean_fn builds and closes its own ParquetEventStore per work
+// item (Task 3 spec §3.1) and ignores the store handed to it. This exists
+// only so CleaningWorker always has a real IEventStore& to wrap in its own
+// BeatingStore, without opening a DuckDB file at what is, in parquet mode, a
+// directory path.
+struct NullStore : mas::IEventStore {
+    void write(std::span<const mas::CapEvent>) override {}
+};
+
+} // namespace
+
 int main(int argc, char** argv) {
-    if (argc < 6) {
-        std::cerr << "usage: mas_worker <work_endpoint> <result_endpoint> "
-                     "<hb_endpoint> <out.duckdb> <worker_id> [machine_id]\n";
+    // 2, not 6: arity is checked after flag parsing, below. The old guard made
+    // "--format needs a value" unreachable.
+    if (argc < 2) {
+        std::cerr << "usage: mas_worker [--format duckdb|parquet] <work_endpoint> "
+                     "<result_endpoint> <hb_endpoint> <out.duckdb|out_dir> "
+                     "<worker_id> [machine_id]\n";
         return 2;
     }
-    const std::string work_ep = argv[1], result_ep = argv[2], hb_ep = argv[3];
-    const std::string out = argv[4], worker_id = argv[5];
-    const std::string machine = (argc > 6) ? argv[6] : "MCC";
+    int argi = 1;
+    bool parquet = false;
+    if (std::string(argv[argi]) == "--format") {
+        if (argi + 1 >= argc) { std::cerr << "error: --format needs a value\n"; return 2; }
+        const std::string fmt = argv[argi + 1];
+        if (fmt == "parquet") parquet = true;
+        else if (fmt != "duckdb") { std::cerr << "error: --format must be duckdb or parquet\n"; return 2; }
+        argi += 2;
+    }
+    if (const auto bad = mas::unconsumed_flag(argc, argv, argi)) {
+        std::cerr << "error: " << *bad << "\n";
+        return 2;
+    }
+    if (argc - argi < 5 || argc - argi > 6) {
+        std::cerr << "usage: mas_worker [--format duckdb|parquet] <work_endpoint> "
+                     "<result_endpoint> <hb_endpoint> <out.duckdb|out_dir> "
+                     "<worker_id> [machine_id]\n";
+        return 2;
+    }
+    const std::string work_ep = argv[argi], result_ep = argv[argi + 1],
+                       hb_ep = argv[argi + 2];
+    const std::string out = argv[argi + 3], worker_id = argv[argi + 4];
+    const std::string machine = (argc > argi + 5) ? argv[argi + 5] : "MCC";
     try {
         zmq::context_t ctx(1);
         // Liveness (resilience spec §7): the 1 s work recv timeout is the
@@ -34,14 +76,36 @@ int main(int argc, char** argv) {
                                  /*send_timeout_ms=*/60000, /*linger_ms=*/0);
         mas::ZmqPushSink heartbeats(ctx, hb_ep, /*bind=*/false,
                                     /*send_timeout_ms=*/60000, /*linger_ms=*/0);
-        mas::DuckDbEventStore store(out, machine);
+        std::optional<mas::DuckDbEventStore> duck;
+        NullStore null_store;
+        if (!parquet) duck.emplace(out, machine);
+        mas::IEventStore& store = parquet
+            ? static_cast<mas::IEventStore&>(null_store)
+            : static_cast<mas::IEventStore&>(*duck);
         mas::CleaningWorker worker(work, results, heartbeats, store, worker_id,
-            [](const std::string& path, mas::IEventStore& s) {
-                return mas::clean_file(path, s);
+            [&](const std::string& path, mas::IEventStore& s,
+                const std::function<void()>& beat) {
+                if (!parquet) return mas::clean_file(path, s);
+                mas::ParquetEventStore pq(mas::parquet_path_for(out, path), machine);
+                // Same decorator the worker applies to its injected store, so
+                // the parquet path is not silent for the length of a file.
+                mas::BeatingStore beating(pq, beat, mas::CleaningWorker::kBeatEvery);
+                const long long n = mas::clean_file(path, beating);
+                if (n < 0) {
+                    pq.abandon();   // no file for a work item that failed
+                    return n;
+                }
+                pq.close();
+                return n;
             });
         const int handled = worker.run();
-        std::cerr << "worker " << worker_id << " done: " << handled
-                  << " work items, store holds " << store.count() << " rows\n";
+        if (parquet) {
+            std::cerr << "worker " << worker_id << " done: " << handled
+                      << " work items\n";
+        } else {
+            std::cerr << "worker " << worker_id << " done: " << handled
+                      << " work items, store holds " << duck->count() << " rows\n";
+        }
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";
         return 1;

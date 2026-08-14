@@ -110,6 +110,8 @@ if(NOT MAS_BENCH_ONLY)
   add_library(mas_store
     core/src/store/CsvEventStore.cpp
     core/src/store/DuckDbEventStore.cpp
+    core/src/store/ParquetEventStore.cpp
+    core/src/store/ParquetExport.cpp
     core/src/domain/Pipeline.cpp)
   target_link_libraries(mas_store PUBLIC mas_clean_core PRIVATE duckdb_imported)
 
@@ -138,6 +140,10 @@ if(NOT MAS_BENCH_ONLY)
   add_executable(merge_exe core/src/apps/merge_main.cpp)
   target_link_libraries(merge_exe PRIVATE mas_core)
   set_target_properties(merge_exe PROPERTIES OUTPUT_NAME mas_merge)
+
+  add_executable(export_exe core/src/apps/export_main.cpp)
+  target_link_libraries(export_exe PRIVATE mas_core)
+  set_target_properties(export_exe PROPERTIES OUTPUT_NAME mas_export)
 
   add_executable(monolith_exe core/src/apps/monolith_main.cpp)
   target_link_libraries(monolith_exe PRIVATE mas_core Threads::Threads)
@@ -213,13 +219,16 @@ if(MAS_BUILD_TESTS)
     tests/test_platform_metrics.cpp
     tests/test_csv_raw_reader.cpp
     tests/test_bench_cpu_parity.cpp
-    tests/test_engine_select.cpp)
+    tests/test_engine_select.cpp
+    tests/test_cli_args.cpp)
   set(MAS_TEST_LIBS mas_clean_core GTest::gtest_main)
   if(NOT MAS_BENCH_ONLY)
     list(APPEND MAS_TEST_SOURCES
       tests/test_pipeline.cpp
       tests/test_duckdb_smoke.cpp
-      tests/test_duckdb_event_store.cpp)
+      tests/test_duckdb_event_store.cpp
+      tests/test_parquet_event_store.cpp
+      tests/test_parquet_export.cpp)
     list(APPEND MAS_TEST_LIBS mas_core duckdb_imported)
   endif()
   if(MAS_ENABLE_ZMQ)
@@ -241,7 +250,7 @@ endif()
 if(NOT MAS_BENCH_ONLY AND NOT WIN32)
   # Built as a list: which of these targets exist depends on MAS_BUILD_TESTS and
   # MAS_ENABLE_ZMQ, and set_target_properties errors on a name that is not one.
-  set(MAS_RPATH_TARGETS clean_exe merge_exe monolith_exe)
+  set(MAS_RPATH_TARGETS clean_exe merge_exe monolith_exe export_exe)
   if(MAS_BUILD_TESTS)
     list(APPEND MAS_RPATH_TARGETS unit_tests)
   endif()
@@ -254,7 +263,7 @@ endif()
 
 if(NOT MAS_BENCH_ONLY AND WIN32)
   # No rpath on Windows: the loader looks next to the .exe.
-  foreach(tgt clean_exe merge_exe monolith_exe bench_cpu_exe unit_tests
+  foreach(tgt clean_exe merge_exe monolith_exe export_exe bench_cpu_exe unit_tests
               worker_exe coordinator_exe)
     if(TARGET ${tgt})
       add_custom_command(TARGET ${tgt} POST_BUILD

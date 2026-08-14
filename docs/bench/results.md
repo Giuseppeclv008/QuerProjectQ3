@@ -361,3 +361,125 @@ Two qualifications this section keeps:
 It also settles the question the kernel was written to answer: **how much
 headroom was left in the clean phase? Almost none, and that is now measured
 rather than assumed.**
+
+
+## Parquet vs DuckDB: where the persistence cost actually goes (2026-08-14, branch `feat/parquet-store`)
+
+The Parquet backend exists to ask one question: the DuckDB store maintains a
+UNIQUE index per row, a write-ahead log and a checkpoint — is removing them
+worth what it costs? It is not a migration. DuckDB remains the default and the
+persistent format, and Parquet's supported use is `mas_export`.
+
+One `mas_monolith` invocation per backend over the same 28 day-files of
+February 2026, `machine_id` `MCC`, one thread. Both stores hold **21,872,663
+events**, raw equal to distinct.
+
+Every figure has an artifact in `bench/parquet-comparison/`:
+`write_single.out` and `write_single_duckdbfirst.out` (the two orderings),
+`parity.out`, `decompose_final.out` (median of 7), `calibrate.out`, and
+`bench/read_results.csv` (the 18 read repeats).
+
+### Write
+
+| backend | DuckDB first | Parquet first | store on disk |
+|---|---:|---:|---:|
+| Parquet | **35.48 s** | 34.02 s | 233.4 MB (28 files) |
+| DuckDB | 98.96 s | 98.86 s | 1183.6 MB |
+| ratio | **2.79x** | 2.91x | 5.07x smaller |
+
+Run in both orders because this volume slows DuckDB's larger sequential writes
+when free space runs low, and each backend's store eats the space the next one
+sees. **2.79x is the counterbalanced figure and the one to quote**; the 4%
+spread between the orderings is the size of that effect.
+
+### Read — the three canned reports over the whole month, 3 repeats
+
+| report | DuckDB | Parquet | ratio |
+|---|---:|---:|---:|
+| kpi | 2.252 s | 5.304 s | 2.36x |
+| drift | 1.323 s | 3.340 s | 2.52x |
+| anomalies | 1.574 s | 3.760 s | 2.39x |
+| all three, median of the 3 suite totals | **5.139 s** | **12.400 s** | **2.41x** |
+
+Suite totals: DuckDB 5.113 / 5.139 / 5.448 s, Parquet 12.072 / 12.400 /
+12.659 s.
+
+### The net
+
+Writing the month once saves **63.48 s** (98.96 − 35.48). Every later run of the
+three reports costs an extra **7.26 s** (12.400 − 5.139). **The saving is gone
+after 8.7 report runs** (63.48 / 7.26).
+
+**DuckDB still wins, but by far less than this section claimed a day ago, and
+the reason is a defect that was in the measurement rather than in either
+backend** — see the withdrawal below. Eight or nine report runs is a threshold a
+working project crosses quickly and a one-off export never reaches, so the
+honest statement is: **DuckDB for the store that gets queried, Parquet for the
+copy that gets handed over.** That is what `mas_export` is for.
+
+### What the read cost is made of
+
+One `GROUP BY head_id` aggregate over all 21.9M rows, median of 7
+(`bench/parquet-comparison/decompose.py`, output beside it):
+
+| what is read | median | vs the layer above |
+|---|---:|---:|
+| DuckDB native table | 0.030 s | — |
+| Parquet, plain scan, no dedup | 0.062 s | 2.05x |
+| Parquet + `DISTINCT ON` (**the shipped view**) | 0.456 s | 7.38x |
+| *withdrawn:* + `ORDER BY` | 1.358 s | 2.98x |
+
+**Parquet-the-format is not the cost** — a plain scan is within 2.05x of the
+native table. The 15.1x the shipped view pays is the `DISTINCT ON` that replaced
+the write-time UNIQUE index. Moving idempotency from write time to read time
+moves the cost and multiplies it, because the write happens once and the read
+happens on every query. That finding survives; only its size changed.
+
+### Withdrawn: the `ORDER BY` this view used to carry
+
+Until 2026-08-14 the Parquet view ended in `ORDER BY machine_id, head_id, ts`,
+justified in three documents as making `DISTINCT ON` deterministic — *"which row
+of a duplicate group survives is genuinely undefined"* without it.
+
+That justification was false, and a final review caught it:
+
+- `EXPLAIN` puts `ORDER_BY` **above** `HASH_GROUP_BY`, so it runs after the
+  group has been collapsed and cannot choose its survivor.
+- The sort key was the `DISTINCT ON` key, so every row in a duplicate group
+  compares equal on it — there is no tie to break even in principle.
+- Adding it did change the surviving row in a two-file experiment (999 → 111),
+  but ASC and DESC agreed with each other. What moved was the query plan, not a
+  tie-break, and none of it was a guarantee.
+
+And the guarantee was never needed. Duplicates arise only from a re-dispatched
+work item, and those rows are byte-identical by construction — same input, same
+extraction. Whichever survives, the content is the same.
+
+**It cost 2.98x of the read path to defend a property that could not be provided
+and was not required.** With it removed, the read penalty falls from 5.24x to
+2.41x and the break-even moves from 3.0 report runs to 8.7. Every read figure in
+this file's previous revision was measured through that sort.
+
+### Measurement integrity
+
+- **The write was measured in both orderings** (above) rather than once, because
+  the disk-pressure effect below is real and order-dependent.
+- **A calibration that was itself measuring disk pressure, kept as a caution.**
+  An earlier attempt could not run one invocation per backend — 652 MB free
+  would not hold the 1.5 GB CSV pool and the 1.2 GB DuckDB store at once — and
+  ran 28 invocations per backend instead. Calibrating that on days 01-04 with
+  ~630 MB free said a single invocation cost DuckDB 1.28x and 1.26x. Repeated
+  with 2.3 GB free it gave 0.99x and 1.00x: **it had been measuring free space,
+  not invocation count.** Both pairs are in `calibrate.out`. The superseded
+  per-day figures are `write_raw_perday.csv` (Parquet 33.75 s, DuckDB 90.88 s).
+- Period predicates **do** push past the dedup: `EXPLAIN` puts `FILTER` below
+  it, and a one-hour-scoped aggregate measured 0.027 s against 0.122 s for the
+  full scan on a 2M-row table. An earlier revision of this file claimed the
+  opposite. The reports are whole-month, so the committed numbers are unaffected.
+- **The 79.8% that motivated this work was measured elsewhere.** It is 183.9 s
+  of persistence in a 230.45 s `mono-1T` run on the RTX 4070 host. On this
+  laptop the DuckDB month write is 98.96 s and `mono-1T` at 28 files is
+  101.814 s in the table at the top of this file, which is why the plan's
+  "expect DuckDB near 230 s" did not appear. The store's share on this laptop
+  was not measured; that needs the null-store build. The comparison itself is
+  unaffected — both backends, this laptop, one session, same input.
