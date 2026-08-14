@@ -612,8 +612,10 @@ There is also a `--format parquet` flag on `clean`, `mas_monolith` and
 `mas_worker` that writes Parquet *instead of* DuckDB during cleaning. That
 exists to make the two backends measurable against each other
 (`docs/bench/results.md`) and is **not** the recommended way to run the system:
-Parquet writes 2.91x faster and reads 5.24x slower, and the write saving is gone
-after three report runs.
+Parquet writes 2.79x faster and reads 2.41x slower, and the write saving is
+gone after 8.7 report runs — a close call, which is why the split the numbers
+recommend is DuckDB for the store that gets queried and Parquet for the copy
+that gets handed over.
 
 ---
 
@@ -622,7 +624,7 @@ after three report runs.
 ### `clean` — Single-File Batch Pipeline
 
 ```
-usage: clean <raw_in.csv> <events_out.csv|events_out.duckdb> [machine_id]
+usage: clean [--format duckdb|parquet] <raw_in.csv> <events_out.csv|events_out.duckdb|out_dir> [machine_id]
 ```
 
 Processes a single raw CSV day-file. Detects output format by file extension:
@@ -634,7 +636,7 @@ Default `machine_id`: `"MCC"`.
 ### `mas_monolith` — Multi-Threaded In-Process Pipeline
 
 ```
-usage: mas_monolith [--no-store] [--engine=cpu|cuda] <out.duckdb> <machine_id> <threads> <day1.csv> [day2.csv ...]
+usage: mas_monolith [--no-store] [--engine=cpu|cuda] [--format duckdb|parquet] <out.duckdb|out_dir> <machine_id> <threads> <day1.csv> [day2.csv ...]
 ```
 
 Two operating modes:
@@ -679,7 +681,7 @@ Death detection: workers silent > 30 s are tombstoned, their completed items re-
 ### `mas_worker` — Cleaning Agent
 
 ```
-usage: mas_worker <work_endpoint> <result_endpoint> <hb_endpoint> <out.duckdb> <worker_id> [machine_id]
+usage: mas_worker [--format duckdb|parquet] <work_endpoint> <result_endpoint> <hb_endpoint> <out.duckdb|out_dir> <worker_id> [machine_id]
 ```
 
 Connects to all three coordinator endpoints. Key behaviors:
@@ -721,6 +723,11 @@ properties worth knowing:
 $ mas_export events.duckdb feb03.parquet --since 2026-02-03 --until 2026-02-03
 exported 451898 rows to feb03.parquet
 ```
+
+451,898 is the 3rd's real count, not a truncated day: production varies widely
+across the month (the 1st is 961,147, the 4th is 353,498) against a mean near
+781k. `max(ts)` on that export is 23:56:05, so the bare date did cover the whole
+day.
 
 ### `bench_cpu` — Store-Free Cleaning Contender
 

@@ -28,6 +28,11 @@ def connect(cfg):
             f"{cfg.store_path} is a directory with no .parquet files in it; "
             "build one with `clean --format parquet` or point store_path at a "
             ".duckdb file")
+    # :memory: cannot take read_only=True -- there is nothing to protect, the
+    # database is created empty and holds only the view. What is actually
+    # read-only is the data: read_parquet() never writes its files, and no tool
+    # issues DML. The .duckdb branch above does pass read_only=True, where the
+    # flag protects a real file.
     con = duckdb.connect(":memory:")
     # DISTINCT ON replaces the UNIQUE constraint the DuckDB backend enforces at
     # write time. On disjoint files it removes nothing and still costs a hash

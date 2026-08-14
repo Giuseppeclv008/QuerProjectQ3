@@ -4,6 +4,18 @@ This is the test that makes the comparison honest. None of the eight tools know
 which backend they are reading, because `connect()` presents both as a table
 named `cap_events`. A difference in results is therefore a defect in one
 backend, not a difference in how it was queried.
+
+What this does NOT cover, stated so nobody reads more into a green run than is
+there: the Parquet fixture is written by DuckDB's own `COPY ... (FORMAT
+PARQUET)`, not by the C++ `ParquetEventStore`. So a schema or type divergence
+introduced by the C++ writer would not fail here -- it is caught, if at all, by
+`ParquetEventStore.RoundTripsEveryColumn` on the C++ side. Closing the gap means
+running a built binary from pytest, which nothing else in this suite does.
+
+The fixture is also small enough to run single-threaded, which is why float
+comparisons use a relative tolerance: at production row counts DuckDB
+parallelises the aggregate and the combine order is not fixed. A fixture that
+agreed exactly would be agreeing by accident of size.
 """
 import math
 

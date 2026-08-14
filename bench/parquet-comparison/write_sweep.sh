@@ -67,3 +67,15 @@ done
 
 echo "=== stores ==="
 du -sk "$PQ" "$DUCK"
+
+# Parity, in the same script that built the two stores: a comparison whose two
+# sides disagree on the row count is not a comparison, and finding that out in a
+# separate step invites quoting the timings before anyone has checked.
+echo "=== parity ==="
+"$(pwd)/.venv/bin/python" -c "
+import duckdb
+d = duckdb.connect('$DUCK', read_only=True).execute('SELECT COUNT(*) FROM cap_events').fetchone()[0]
+p = duckdb.sql(\"SELECT COUNT(DISTINCT (machine_id, head_id, ts)) FROM read_parquet('$PQ/*.parquet')\").fetchone()[0]
+r = duckdb.sql(\"SELECT COUNT(*) FROM read_parquet('$PQ/*.parquet')\").fetchone()[0]
+print(f'duckdb {d:,}  parquet distinct {p:,}  parquet raw {r:,}  {\"MATCH\" if d==p==r else \"MISMATCH\"}')
+raise SystemExit(0 if d == p == r else 1)"
