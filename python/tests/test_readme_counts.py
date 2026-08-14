@@ -46,8 +46,17 @@ def test_readme_cpp_test_count_matches_the_sources():
 
 
 def test_readme_python_test_count_matches_collection(request):
-    if request.config.option.keyword or request.config.option.markexpr:
+    config = request.config
+    if config.option.keyword or config.option.markexpr:
         pytest.skip("filtered run; the collected count is not the suite's")
+    # Naming a path is filtering too, and it is the filter that actually bites:
+    # two of the suite's files (test_bench_plots.py, test_oracle.py) sit in
+    # python/ rather than python/tests/, so `pytest python/tests` collects four
+    # fewer than the whole suite and this test read the shortfall as a stale
+    # README. Only the run that asked for everything is in a position to count.
+    targets = {Path(a.split("::")[0]).resolve() for a in config.args}
+    if targets != {_ROOT / "python"}:
+        pytest.skip("path-scoped run; the collected count is not the suite's")
     collected = len(request.session.items)
     assert _claimed(r"\*\*([\d,]+)\s*\nPython tests\*\*") == collected
     assert _claimed(r"#\s*([\d,]+) Python tests") == collected
