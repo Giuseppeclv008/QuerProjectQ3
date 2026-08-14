@@ -376,7 +376,9 @@ events**, raw equal to distinct.
 
 Every figure has an artifact in `bench/parquet-comparison/`:
 `write_single.out` and `write_single_duckdbfirst.out` (the two orderings),
-`parity.out`, `decompose_final.out` (median of 7), `calibrate.out`, and
+`parity.out`, `decompose_final.out` (median of 7), `calibrate.out`,
+`write_raw_perday.csv` (the superseded per-day regime, kept as an independent
+estimate), `run_bench_smoke.csv` (the 1-day `run_bench.sh` parquet block), and
 `bench/read_results.csv` (the 18 read repeats).
 
 ### Write
@@ -384,13 +386,54 @@ Every figure has an artifact in `bench/parquet-comparison/`:
 | backend | DuckDB first | Parquet first | store on disk |
 |---|---:|---:|---:|
 | Parquet | **35.48 s** | 34.02 s | 233.4 MB (28 files) |
-| DuckDB | 98.96 s | 98.86 s | 1183.6 MB |
-| ratio | **2.79x** | 2.91x | 5.07x smaller |
+| DuckDB | 98.96 s | 98.86 s | 1182.8 MB |
+| ratio | **2.79x** | 2.91x | 5.067x smaller |
+
+Both store sizes come from `decompose_final.out`, which sums `getsize` over the
+files. An earlier revision took the DuckDB half from `write_single.out`'s `du
+-sk` instead (1183.6 MB) — same pair of stores, two tools, and nothing that
+moved the ratio, but one row should not be sourced from two runs.
 
 Run in both orders because this volume slows DuckDB's larger sequential writes
 when free space runs low, and each backend's store eats the space the next one
-sees. **2.79x is the counterbalanced figure and the one to quote**; the 4%
-spread between the orderings is the size of that effect.
+sees. **2.79x is the ordering that does not flatter Parquet, and the one to
+quote**; the 4% spread between the orderings is the size of that effect. It is
+*not* "the counterbalanced figure", as this section used to call it — a
+counterbalanced estimate averages the orderings (~2.85x); 2.79x is deliberately
+the conservative one instead.
+
+**Each cell above is a single invocation** — n=1 per ordering, against the n=3
+this document holds itself to in the CUDA section above. A month-scale store
+does not fit on this volume three times over, which is the reason rather than
+an oversight. What stands in for the missing repeats is three further estimates
+of the same ratio, none of which the headline depends on but all of which agree
+with it:
+
+| estimate | artifact | ratio |
+|---|---|---:|
+| month, one invocation per backend, duckdb-first | `write_single_duckdbfirst.out` | **2.79x** |
+| month, one invocation per backend, parquet-first | `write_single.out` | 2.91x |
+| 28 per-day invocations per backend (superseded regime) | `write_raw_perday.csv` | 2.69x |
+| 1 day through `run_bench.sh`, n=3 per backend | `run_bench_smoke.csv` | 2.82x |
+
+(That last row predates the Appender hoist described below, as do all the
+month-scale figures. `run_bench_smoke_posthoist.csv` is the same run after it.)
+
+**The Parquet write figures are a floor, not a ceiling.** `ParquetEventStore`
+built a fresh `duckdb::Appender` on every `write()` — one catalog lookup and
+type bind per 8,192-event batch, about 2,670 of them per day-file. Hoisting it
+to one per store is `run_bench_smoke_posthoist.csv`: the 1-day parquet median
+goes 1.254 s → 1.195 s, **-4.7%**. Read that as a direction and not a
+magnitude — the DuckDB control in the same pair of runs drifted **+8.3%**
+(3.536 s → 3.828 s) with no code change touching its path, so the machine moved
+between them by more than the effect being measured. All the month-scale
+figures above predate the hoist, and a store written to measure what
+persistence costs was itself paying an avoidable tax while it measured.
+
+And `calibrate.out` supplies the within-condition spread the n=1 cells cannot:
+its later pair repeats to ~0.3% (parquet 4.38/4.42 s, duckdb 11.89/11.85 s).
+Run-to-run noise is an order of magnitude below the effect, so the conclusion
+survives the thin sampling even though the sampling should be stated.
 
 ### Read — the three canned reports over the whole month, 3 repeats
 
@@ -403,6 +446,16 @@ spread between the orderings is the size of that effect.
 
 Suite totals: DuckDB 5.113 / 5.139 / 5.448 s, Parquet 12.072 / 12.400 /
 12.659 s.
+
+**These are report wall times, not query times.** `read_bench.py` runs each
+report as a subprocess, so every measurement carries a Python interpreter start
+and the analytics package's imports; and unlike the write side, the backend
+order within a repeat is fixed (DuckDB, then Parquet) rather than
+counterbalanced. Both biases run the same way, and it is the safe way: a
+constant added to both sides *shrinks* a ratio, so 2.41x understates the
+query-only penalty and puts the break-even later than it truly is — against
+this document's own conclusion rather than for it. `decompose_final.out` is the
+query-only isolation for anyone who needs the unpadded number.
 
 ### The net
 
@@ -459,6 +512,12 @@ extraction. Whichever survives, the content is the same.
 and was not required.** With it removed, the read penalty falls from 5.24x to
 2.41x and the break-even moves from 3.0 report runs to 8.7. Every read figure in
 this file's previous revision was measured through that sort.
+
+That superseded data is committed as `bench/read_results_with_sort.csv`, not
+merely described: the withdrawn 5.24x and the 3.0-run break-even recompute from
+it exactly. The write side already kept its superseded regime this way
+(`write_raw_perday.csv`), and a withdrawal a reader cannot check is asking for
+the same trust the withdrawal was meant to stop asking for.
 
 ### Measurement integrity
 

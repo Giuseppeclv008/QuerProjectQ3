@@ -28,7 +28,11 @@ def main():
     files = sorted(glob.glob(os.path.join(pqdir, "*.parquet")))
     if not files:
         sys.exit(f"no .parquet files in {pqdir}")
-    g = os.path.join(pqdir, "*.parquet")
+    # Doubled quotes, like store.py and mas::sql_quote: read_parquet takes the
+    # glob as a SQL literal. This script measures the shipped view, so it has to
+    # build that view the way the shipped code does -- a decomposition that
+    # fails on a path the real reader opens is measuring something else.
+    g = os.path.join(pqdir, "*.parquet").replace("'", "''")
 
     layers = [
         ("duckdb native table", None),

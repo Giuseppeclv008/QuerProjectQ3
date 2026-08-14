@@ -7,6 +7,15 @@
 # sweep evidence for the CUDA benchmark, pasted back from the target machine:
 !bench/results_cuda.csv
 !bench/results_cuda_stages.csv
+# Parquet-vs-DuckDB evidence. Every figure in docs/bench/results.md has to
+# recompute from a committed artifact, and *.csv above silently swallowed two
+# of these -- listed one by one rather than un-ignoring the directory, because
+# the sweeps also drop scratch CSVs beside them.
+!bench/read_results.csv
+!bench/read_results_with_sort.csv
+!bench/parquet-comparison/write_raw_perday.csv
+!bench/parquet-comparison/run_bench_smoke.csv
+!bench/parquet-comparison/run_bench_smoke_posthoist.csv
 telemetry_*/
 *.duckdb
 *.parquet

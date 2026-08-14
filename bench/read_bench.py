@@ -70,7 +70,8 @@ def _row_count(store, machine_id):
     Goes through `analytics.store.connect` itself, not a reimplementation of
     its SQL, so a duckdb-file store and a parquet-directory store are counted
     through exactly the mechanism that gets timed below -- including the
-    parquet side's DISTINCT ON dedup and ORDER BY.
+    parquet side's DISTINCT ON dedup. (It said "and ORDER BY" until the sort was
+    removed, sixty lines under the docstring that explains the removal.)
     """
     from analytics.config import Config
     from analytics.store import connect
@@ -124,14 +125,19 @@ def run_report(store, kind, out_dir, machine_id):
             mode="w", suffix=".json", delete=False) as fh:
         json.dump({"store_path": store, "machine_id": machine_id}, fh)
         cfg_path = fh.name
-    t0 = time.perf_counter()
-    p = subprocess.run(
-        [sys.executable, "-m", "analytics.cli", "report", kind,
-         "--config", cfg_path, "--out", out_dir],
-        cwd="python", capture_output=True, text=True)
-    if p.returncode != 0:
-        sys.exit(f"{kind} on {store} failed:\n{p.stdout}{p.stderr}")
-    return time.perf_counter() - t0
+    try:
+        t0 = time.perf_counter()
+        p = subprocess.run(
+            [sys.executable, "-m", "analytics.cli", "report", kind,
+             "--config", cfg_path, "--out", out_dir],
+            cwd="python", capture_output=True, text=True)
+        if p.returncode != 0:
+            sys.exit(f"{kind} on {store} failed:\n{p.stdout}{p.stderr}")
+        return time.perf_counter() - t0
+    finally:
+        # delete=False above means nothing else removes it, and a full sweep is
+        # 18 report runs -- 18 stray JSON files per sweep.
+        os.unlink(cfg_path)
 
 
 def main():
