@@ -605,7 +605,7 @@ TO 'output.parquet' (FORMAT PARQUET);
 ```
 
 The `ORDER BY` makes the file deterministic — two exports of one store compare
-equal. Roughly a fifth of the bytes: a February store is 1183.6 MB as `.duckdb`
+equal. Roughly a fifth of the bytes: a February store is 1182.8 MB as `.duckdb`
 and 233.4 MB as Parquet.
 
 There is also a `--format parquet` flag on `clean`, `mas_monolith` and

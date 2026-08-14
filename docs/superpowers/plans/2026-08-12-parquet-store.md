@@ -1037,7 +1037,7 @@ Run: `cd python && grep -n '"-"' analytics/cli.py`
 Expected: a match. If there is none, `--config -` is unsupported; write the JSON
 to a temp file in `run_report` instead and pass its path.
 
-- [ ] **Step 4: Smoke-test both harnesses at the 1-day volume**
+- [x] **Step 4: Smoke-test both harnesses at the 1-day volume**
 
 Run:
 ```bash
@@ -1046,6 +1046,21 @@ grep '^parquet' /tmp/pqbench.csv
 ```
 Expected: three rows, and the sweep did not abort — meaning the row counts
 matched `oracle_union.py`.
+
+**Result (2026-08-14, run late — see the Self-review note on §9.3).** Three
+rows, counts oracle-exact at 765,711, committed as
+`bench/parquet-comparison/run_bench_smoke.csv`. The first attempt aborted:
+
+```
+bench/run_bench.sh: line 197: /Users/giuseppecalvello/dev/Polito/magistrale: No such file or directory
+```
+
+`$PY_DUCKDB` was spliced unquoted into the row-count check, so it split on the
+space in the checkout's path. The block had never been executed, which is the
+only reason a defect that fires on every run survived in it. Fixed by quoting.
+The parquet timings this produced (1.253–1.255 s against mono-1T's
+3.514–3.605 s, so **2.83x**) are a third independent estimate of the write
+ratio, alongside the month-scale 2.79x and the per-day 2.69x.
 
 - [ ] **Step 5: Commit**
 
@@ -1142,6 +1157,40 @@ git commit -m "bench: what the Parquet backend costs on write and on read"
 §4.2 flag → Task 3. §4.3 `connect()` → Task 4. §5 error handling → Task 2 (directory
 creation, empty file), Task 4 (empty directory). §6 T1–T5 → Task 2; T6 → Task 4.
 §7 write and read → Task 5, run in Task 6. §9 success criteria → Tasks 2, 4, 5, 6.
+
+**Execution record, added after the fact.** Only Task 6's boxes were ticked
+while the work ran, so this document reads as though Tasks 1–5 never executed.
+They did — `sql_quote`, `ParquetEventStore`, the three apps' `--format` flag,
+`connect()`'s directory branch and both harnesses are all shipped, and the git
+history is the reliable record of it. The boxes above are left as they were
+rather than back-filled from memory: a tick that nobody watched is worth less
+than the commit it claims to stand for.
+
+**§9.3, resolved honestly.** The criterion asked for a `parquet` row at all
+three volumes in `bench/results.csv`, and there is none: the month-scale
+comparison was taken by the dedicated harness in `bench/parquet-comparison/`
+instead, which is what `docs/bench/results.md` quotes. `bench/run_bench.sh`
+still carries the block, and Task 5 Step 4 above now has it running with
+oracle-exact counts (`run_bench_smoke.csv`) — but the committed
+`results.csv` stays as one coherent sweep rather than gaining three rows from
+a different day and a different thermal state. The criterion is superseded,
+not met.
+
+**What the plan itself missed.** Task 3 Step 6 specified `--format parquet` for
+`mas_worker` without asking how a multi-worker run reaches the single directory
+the analytics tier globs, or what two writers do to one filename on
+re-dispatch. The Resolved-before-execution note below caught the *heartbeat*
+consequence of that same step and not this one. The answer landed later: the
+name comes from the input, so `ParquetEventStore::close()` writes to a
+per-process temp and renames, and the header no longer claims re-dispatch
+produces two differently-named files.
+
+**One deviation worth naming.** `mas_export` is not in this plan at all, and
+the spec's Non-Goals arguably discouraged it. It exists because the measurement
+concluded DuckDB should stay the store, which makes Parquet an export format
+and leaves a user with no way to produce one. That was the right call, but it
+is a deviation, and a reader should not have to reconstruct why a tool exists
+that no task asked for.
 
 **Resolved before execution.** An earlier draft of Task 3 let the MAS parquet
 path lose its in-progress heartbeat, on the grounds that the benchmark uses

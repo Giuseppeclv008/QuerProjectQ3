@@ -1268,7 +1268,9 @@ Write, both orderings (the volume slows DuckDB when free space runs low):
 | DuckDB | 98.96 s | 98.86 s |
 | ratio | **2.79x** | 2.91x |
 
-Stores: 233.4 MB against 1183.6 MB, 5.07x. Read, median of the 3 suite totals:
+Stores: 233.4 MB against 1182.8 MB, 5.067x (both from `decompose_final.out`;
+an earlier revision took the DuckDB half from a `du -sk` in another run).
+Read, median of the 3 suite totals:
 DuckDB 5.139 s against Parquet 12.400 s, **2.41x**.
 
 Saving 63.48 s once, penalty 7.26 s per report run, **break-even 8.7 runs**.

@@ -15,7 +15,7 @@
 # enough free disk for a second month-scale store.
 set -euo pipefail
 
-ROOT="/Users/giuseppecalvello/dev/Polito/magistrale /secondosemestre20262027/System and Device Programming/Quer project"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"   # see write_sweep.sh
 cd "$ROOT"
 
 ZIP="telemetry_MCC777eda3db57348ef8a3113a642ae74db_2026-02.zip"

@@ -10,7 +10,11 @@
 # usage: write_sweep.sh <out.txt>
 set -euo pipefail
 
-ROOT="/Users/giuseppecalvello/dev/Polito/magistrale /secondosemestre20262027/System and Device Programming/Quer project"
+# Derived from this file's own location, not hardcoded: this script produced
+# the headline write figures, and a number nobody else can re-measure is a
+# number taken on trust. Quoted throughout -- the checkout's path contains a
+# space.
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 ZIP="telemetry_MCC777eda3db57348ef8a3113a642ae74db_2026-02.zip"

@@ -174,21 +174,31 @@ done
 # this was measured on the RTX 4070 host (183.9 s of a 230.45 s run), not on
 # this harness; see docs/bench/results.md for what it measures here.
 #
-# NOTE: the committed bench/results.csv carries NO parquet rows -- this block
-# has never been run into it. The month-scale Parquet/DuckDB comparison was
-# taken by the dedicated harness instead (bench/parquet-comparison/, whose
-# numbers are the ones docs/bench/results.md quotes). Running this script
+# NOTE: the committed bench/results.csv carries NO parquet rows. The
+# month-scale Parquet/DuckDB comparison was taken by the dedicated harness
+# instead (bench/parquet-comparison/, whose numbers are the ones
+# docs/bench/results.md quotes), and results.csv is kept as one coherent sweep
+# rather than gaining three rows from a different day. Running this script
 # rewrites results.csv from scratch, so it would add them.
+#
+# The block itself is exercised: bench/parquet-comparison/run_bench_smoke.csv
+# is a 1-day --only mono run of it, counts oracle-exact. That run is also what
+# caught the unquoted "$PY_DUCKDB" below -- a block nobody has executed is not
+# evidence of anything, however carefully it reads.
 for v in "${VOLUMES[@]}"; do
     for rep in 1 2 3; do
         R="$T/run" && rm -rf "$R" && mkdir -p "$R/pq"
-        /usr/bin/time -l "$BUILD/mas_monolith" --format parquet "$R/pq" "$MACHINE" 1 \
+        # "${TIMEIT[@]}", not a hardcoded /usr/bin/time -l: the guard above
+        # picked win_time on Windows for exactly this reason, and this block
+        # was the one place that ignored it.
+        "${TIMEIT[@]}" "$BUILD/mas_monolith" --format parquet "$R/pq" "$MACHINE" 1 \
             "${FILES[@]:0:$v}" 2>"$R/log" || { cat "$R/log"; exit 1; }
-        line=$(grep '^monolith:' "$R/log")
+        line=$(grep '^monolith:' "$R/log") \
+            || { echo "FAIL: no monolith summary line"; cat "$R/log"; exit 1; }
         ev=$(echo "$line"    | sed -n 's/.* files, \([0-9]*\) events.*/\1/p')
         clean=$(echo "$line" | sed -n 's/.*clean \([0-9.]*\) s.*/\1/p')
         total=$(echo "$line" | sed -n 's/.*total \([0-9.]*\) s.*/\1/p')
-        rows=$($PY_DUCKDB -c "
+        rows=$("$PY_DUCKDB" -c "
 import duckdb,sys
 print(duckdb.sql(\"SELECT COUNT(DISTINCT (machine_id, head_id, ts)) FROM read_parquet('$R/pq/*.parquet')\").fetchone()[0])")
         check_count "$rows" "$v" "parquet v=$v rep=$rep"
