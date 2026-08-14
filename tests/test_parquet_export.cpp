@@ -173,6 +173,34 @@ TEST_F(ParquetExportTest, HandlesAQuoteInEitherPath) {
     EXPECT_EQ(parquetCount(pq), 3);
 }
 
+// COPY ... TO truncates whatever it is pointed at. Pointed at the store, it
+// replaced a 536 KB DuckDB database with a 1.7 KB Parquet, then read that
+// Parquet back, agreed with itself on the row count, and exited 0.
+TEST_F(ParquetExportTest, RefusesToExportAStoreOntoItself) {
+    const auto db = makeStore(p("self.duckdb"));
+    const auto before = fs::file_size(db);
+
+    EXPECT_THROW(mas::export_store_to_parquet(db, db), std::runtime_error);
+    EXPECT_EQ(fs::file_size(db), before) << "the store was overwritten";
+
+    // Still a database, still readable, still holding its rows.
+    duckdb::DuckDB reopened(db);
+    duckdb::Connection con(reopened);
+    auto res = con.Query("SELECT COUNT(*) FROM cap_events");
+    ASSERT_FALSE(res->HasError()) << res->GetError();
+    EXPECT_EQ(res->GetValue(0, 0).GetValue<int64_t>(), 3);
+}
+
+TEST_F(ParquetExportTest, RefusesToOverwriteAnExistingDestination) {
+    const auto db = makeStore(p("ow.duckdb"));
+    const auto pq = p("taken.parquet");
+    ASSERT_EQ(mas::export_store_to_parquet(db, pq).rows, 3);
+    const auto first = fs::file_size(pq);
+
+    EXPECT_THROW(mas::export_store_to_parquet(db, pq), std::runtime_error);
+    EXPECT_EQ(fs::file_size(pq), first);
+}
+
 TEST_F(ParquetExportTest, MissingStoreFailsByName) {
     try {
         mas::export_store_to_parquet(p("nope.duckdb"), p("x.parquet"));

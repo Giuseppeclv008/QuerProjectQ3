@@ -213,7 +213,7 @@ organized by layer.
 │           ├── bench_cpu_main.cpp          # → bench_cpu       (store-free contender)
 │           └── cuda_clean_main.cpp         # → mas_cuda_clean  (GPU contender, --verify)
 │
-├── tests/                                  # Google Test unit tests (17 files, 124 tests)
+├── tests/                                  # Google Test unit tests (17 files, 127 tests)
 │   ├── test_cap_event.cpp
 │   ├── test_cap_event_extractor.cpp
 │   ├── test_cap_event_extractor_flat.cpp   # The GPU precondition, proved against the stateful one
@@ -1840,13 +1840,13 @@ it, `--pdf` logs how to install it and writes Markdown and HTML as normal.
 
 ## Testing
 
-The project has **124 C++ unit tests** across 17 Google Test files, plus **249
+The project has **127 C++ unit tests** across 17 Google Test files, plus **249
 Python tests** for the analytics tier. Both counts are asserted by
 `python/tests/test_readme_counts.py`, so adding a test and forgetting this
 paragraph fails the suite rather than quietly dating it.
 
 ```bash
-cd build && ctest --output-on-failure           # 124 C++ tests
+cd build && ctest --output-on-failure           # 127 C++ tests
 cd python && ../.venv/bin/python -m pytest -q   # 249 Python tests (6 need the rebuilt store or a real day-file and skip without them)
 ```
 

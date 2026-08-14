@@ -29,45 +29,48 @@ def connect(cfg):
             "build one with `clean --format parquet` or point store_path at a "
             ".duckdb file")
     con = duckdb.connect(":memory:")
-    # DISTINCT ON is what replaces the UNIQUE constraint the DuckDB backend
-    # enforces at write time. On disjoint files it removes nothing but still
-    # costs a full sort of the corpus on every query -- see the ORDER BY note
-    # below -- the price of moving the dedup to the read side, and the reason
-    # bench/read_bench.py exists.
+    # DISTINCT ON replaces the UNIQUE constraint the DuckDB backend enforces at
+    # write time. On disjoint files it removes nothing and still costs a hash
+    # aggregation over the whole corpus on every query: that is the price of
+    # moving the dedup to the read side, and the reason bench/read_bench.py
+    # exists.
     #
-    # The trailing ORDER BY is load-bearing for correctness, not just
-    # numerics: DuckDB implements a bare DISTINCT ON as HASH_GROUP_BY with
-    # first(), so without an explicit ORDER BY, *which* row of a duplicate
-    # group survives is genuinely undefined (this is documented Postgres
-    # DISTINCT ON behaviour too, which DuckDB's syntax mirrors). Ordering by
-    # (machine_id, head_id, ts) makes "first" mean "earliest by event
-    # identity", so a redispatched file's duplicate rows resolve the same way
-    # every time.
+    # There is deliberately NO trailing ORDER BY, and the reasoning that once
+    # put one here was wrong twice over.
     #
-    # What it does NOT guarantee: bit-identical floating-point aggregates
-    # against the DuckDB-native backend. STDDEV_SAMP/AVG/etc. still run as a
-    # parallel partial-aggregate/combine once DuckDB parallelises the scan
-    # (its default 8 threads, triggered by table size), and combine order is
-    # not tied to scan order -- ORDER BY sorts the rows fed to DISTINCT ON,
-    # not the order the aggregate's partial results are merged in. On this
-    # project's 8-row test fixture both backends happen to run single-
-    # threaded, so results are bit-identical there, but that is an artifact
-    # of fixture size, not a property this view provides. At production row
-    # counts, expect float aggregates to agree only to a relative tolerance,
-    # not exactly -- see test_backend_parity.py's comparison helper.
+    # It claimed the sort made "which row of a duplicate group survives"
+    # deterministic. EXPLAIN puts ORDER_BY *above* HASH_GROUP_BY, so it runs
+    # after the group has already been collapsed and cannot influence the
+    # choice. Sorting by the DISTINCT ON key could not break a tie in any case:
+    # every row in a duplicate group compares equal on it. Adding the ORDER BY
+    # did change the surviving row in a two-file experiment (999 -> 111), but
+    # ASC and DESC agreed with each other -- so what moved was the plan, not a
+    # tie-break, and nothing about it is a guarantee.
     #
-    # Cost: EXPLAIN shows this ORDER BY adds a full ORDER_BY operator on top
-    # of the HASH_GROUP_BY, not just "a hash aggregation" -- an O(n log n)
-    # sort of the whole matched corpus, on every query, regardless of the
-    # period filter (predicate/period pushdown does not reach past the sort).
-    # Measured ~4x slower than the unordered view on a 2M-row table (0.123s
-    # vs 0.031s). This is a real, non-trivial cost that the read-performance
-    # benchmark (bench/read_bench.py, and Tasks 5-6) must account for.
+    # And the guarantee was never needed. Duplicates arise only when a work
+    # item is re-dispatched after a worker is declared dead, and those rows are
+    # byte-identical by construction -- same input file, same extraction (see
+    # DuckDbEventStore::merge_all and spec §3). Whichever row survives, the
+    # content is the same.
+    #
+    # It cost 2.7-3.1x on the read path for that: 1.386 s against 0.516 s and
+    # 1.254 s against 0.402 s on the month store, measured in
+    # bench/parquet-comparison/decompose*.out.
+    #
+    # What was true, and still is: float aggregates are NOT bit-identical
+    # against the DuckDB-native backend. STDDEV_SAMP/AVG/... run as a parallel
+    # partial-aggregate/combine once DuckDB parallelises the scan, and combine
+    # order follows neither scan order nor any ORDER BY. The 8-row fixture runs
+    # single-threaded and agrees exactly, which is an artifact of its size, not
+    # a property of this view -- test_backend_parity.py compares floats with a
+    # relative tolerance for that reason.
+    #
+    # Tools that need ordered rows say so themselves (idle.py, anomaly.py,
+    # torque.py all carry their own ORDER BY), so none of them depended on this.
     con.execute(
         "CREATE VIEW cap_events AS "
         "SELECT DISTINCT ON (machine_id, head_id, ts) * "
-        f"FROM read_parquet('{glob}') "
-        "ORDER BY machine_id, head_id, ts")
+        f"FROM read_parquet('{glob}')")
     return con
 
 

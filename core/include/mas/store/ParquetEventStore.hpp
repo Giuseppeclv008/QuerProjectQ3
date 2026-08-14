@@ -24,6 +24,15 @@ public:
 
     void write(std::span<const CapEvent> events) override;   // buffers
     void close();                    // writes the file; throws on failure
+
+    // Discard the buffer and write nothing, ever -- close() and the destructor
+    // both become no-ops. For a day-file whose clean failed: without this the
+    // destructor still wrote a valid, empty Parquet, and the reader's glob
+    // cannot tell that file from a day that legitimately produced no events.
+    // The DuckDB backend has no equivalent hazard: a failed run simply lacks
+    // the rows, and count() shows the shortfall.
+    void abandon();
+
     long long count() const;         // events accepted so far
 
 private:

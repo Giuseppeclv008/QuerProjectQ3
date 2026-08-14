@@ -42,7 +42,20 @@ echo "input: ${#CSVS[@]} day-files"
 [ "${#CSVS[@]}" -eq 28 ] || { echo "expected 28 day-files, got ${#CSVS[@]}"; exit 1; }
 df -h . | tail -1
 
-for backend in parquet duckdb; do
+# Order is a variable here, not an accident: this volume slows DuckDB's larger
+# sequential writes when it runs low, and each backend's store eats into the
+# free space the next one sees. The first run took Parquet first (2.1 GiB free)
+# and DuckDB second (812 MiB) -- exactly the direction that flatters Parquet.
+# ORDER=duckdb-first counterbalances it.
+ORDER="${ORDER:-parquet-first}"
+case "$ORDER" in
+  parquet-first) BACKENDS="parquet duckdb" ;;
+  duckdb-first)  BACKENDS="duckdb parquet" ;;
+  *) echo "ORDER must be parquet-first or duckdb-first" >&2; exit 2 ;;
+esac
+echo "# order: $ORDER"
+
+for backend in $BACKENDS; do
     echo "=== $backend ==="
     if [ "$backend" = parquet ]; then
         /usr/bin/time -p ./build/mas_monolith --format parquet "$PQ" MCC 1 "${CSVS[@]}"

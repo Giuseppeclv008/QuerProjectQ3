@@ -2,6 +2,7 @@
 #include <duckdb.hpp>
 #include <gtest/gtest.h>
 #include <cstdio>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -28,6 +29,24 @@ long long rowsIn(const std::string& glob) {
     auto res = con.Query("SELECT COUNT(*) FROM read_parquet('" + glob + "')");
     EXPECT_FALSE(res->HasError()) << res->GetError();
     return res->GetValue(0, 0).GetValue<int64_t>();
+}
+
+// A day-file that fails to clean must leave nothing behind. The reader globs
+// the directory, so a valid empty Parquet is indistinguishable from a day that
+// legitimately produced no events -- and the apps call abandon() for exactly
+// this case.
+TEST(ParquetEventStore, AbandonWritesNoFileAtAll) {
+    const std::string path = "t_pq_abandoned.parquet";
+    std::remove(path.c_str());
+    {
+        mas::ParquetEventStore store(path, "MCC");
+        const std::vector<mas::CapEvent> evs{ev(1, "2026-02-01 10:00:00", 100)};
+        store.write(evs);
+        store.abandon();
+        store.close();          // no-op after abandon()
+    }                           // destructor must not resurrect the file
+    EXPECT_FALSE(std::filesystem::exists(path))
+        << "abandon() left a file the reader would treat as a real empty day";
 }
 
 } // namespace

@@ -9,6 +9,8 @@
 #endif
 #include <atomic>
 #include <chrono>
+#include <filesystem>
+#include <map>
 #include <cstddef>
 #include <cstdio>
 #include <exception>
@@ -138,6 +140,27 @@ int main(int argc, char** argv) {
     std::vector<std::string> files;
     for (int i = argi; i < argc; ++i) files.emplace_back(argv[i]);
 
+    // The Parquet output is named after the input's basename, and that name IS
+    // the idempotency mechanism -- so two inputs sharing one, from different
+    // directories, silently collapse into a single output file. At threads > 1
+    // they also race, two COPY ... TO writing the same path. Refused up front
+    // rather than discovered as a short row count.
+    if (parquet) {
+        std::map<std::string, std::string> seen;
+        for (const auto& f : files) {
+            const auto stem = std::filesystem::path(f).stem().string();
+            const auto [it, fresh] = seen.emplace(stem, f);
+            if (!fresh) {
+                std::cerr << "error: --format parquet names its output after the "
+                             "input basename, and two inputs share '" << stem
+                          << "':\n  " << it->second << "\n  " << f
+                          << "\nthey would write the same file; rename one or "
+                             "run them separately\n";
+                return 2;
+            }
+        }
+    }
+
     // Cleans one day-file into `store` with the selected engine and returns
     // the event count, or -1 after printing the error. The GPU branch refuses
     // to exist in a non-CUDA build rather than fall back: the summary line
@@ -196,7 +219,14 @@ int main(int argc, char** argv) {
                 for (const auto& f : files) {
                     mas::ParquetEventStore store(mas::parquet_path_for(out, f), machine);
                     const long long n = clean_into(f, store);
-                    if (n < 0) { std::cerr << "error: cannot clean " << f << "\n"; return 1; }
+                    if (n < 0) {
+                        // Leave no file behind for a day that failed: the
+                        // reader globs the directory and a valid empty Parquet
+                        // is indistinguishable from a day with no events.
+                        store.abandon();
+                        std::cerr << "error: cannot clean " << f << "\n";
+                        return 1;
+                    }
                     store.close();
                     events += n;
                 }
@@ -237,8 +267,12 @@ int main(int argc, char** argv) {
                             mas::ParquetEventStore local(
                                 mas::parquet_path_for(out, files[i]), machine);
                             per_file[i] = mas::clean_file(files[i], local);
-                            local.close();
-                            if (per_file[i] < 0) failed = true;
+                            if (per_file[i] < 0) {
+                                local.abandon();   // see the 1T branch
+                                failed = true;
+                            } else {
+                                local.close();
+                            }
                         }
                         return;
                     }

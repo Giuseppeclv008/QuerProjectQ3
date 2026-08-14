@@ -45,6 +45,14 @@ int main(int argc, char** argv) {
         try {
             mas::ParquetEventStore store(mas::parquet_path_for(out, in), machine);
             const long long n = mas::clean_file(in, store);
+            if (n < 0) {
+                // No file for a day that failed: the reader globs the
+                // directory and a valid empty Parquet reads as a real, empty
+                // day.
+                store.abandon();
+                std::cerr << "error: cannot clean " << in << "\n";
+                return 1;
+            }
             store.close();
             std::cerr << "wrote " << n << " cap events to parquet\n";
         } catch (const std::exception& e) {

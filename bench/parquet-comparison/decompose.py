@@ -34,10 +34,10 @@ def main():
         ("duckdb native table", None),
         ("parquet, plain scan, no dedup",
          f"CREATE VIEW cap_events AS SELECT * FROM read_parquet('{g}')"),
-        ("parquet + DISTINCT ON",
+        ("parquet + DISTINCT ON (the shipped view)",
          "CREATE VIEW cap_events AS SELECT DISTINCT ON (machine_id, head_id, ts) * "
          f"FROM read_parquet('{g}')"),
-        ("parquet + DISTINCT ON + ORDER BY (shipped view)",
+        ("parquet + DISTINCT ON + ORDER BY (removed 2026-08-14)",
          "CREATE VIEW cap_events AS SELECT DISTINCT ON (machine_id, head_id, ts) * "
          f"FROM read_parquet('{g}') ORDER BY machine_id, head_id, ts"),
     ]
@@ -65,10 +65,10 @@ def main():
               f"runs {', '.join(f'{t:.3f}' for t in ts)}")
 
     k = list(med)
-    print(f"\nplain scan / native            {med[k[1]]/med[k[0]]:.3f}x")
-    print(f"DISTINCT ON / plain scan       {med[k[2]]/med[k[1]]:.3f}x")
-    print(f"ORDER BY / DISTINCT ON         {med[k[3]]/med[k[2]]:.3f}x")
-    print(f"shipped view / native          {med[k[3]]/med[k[0]]:.3f}x")
+    print(f"\nplain scan / native                {med[k[1]]/med[k[0]]:.3f}x")
+    print(f"DISTINCT ON / plain scan           {med[k[2]]/med[k[1]]:.3f}x")
+    print(f"shipped view / native              {med[k[2]]/med[k[0]]:.3f}x")
+    print(f"[withdrawn] ORDER BY / DISTINCT ON {med[k[3]]/med[k[2]]:.3f}x")
 
 
 if __name__ == "__main__":

@@ -6,18 +6,17 @@ read time, so a write saving can be given back on every query. This measures
 that, and is allowed to conclude that DuckDB's write-time index is the cheaper
 place to pay.
 
-The Parquet-backed `cap_events` view (`analytics.store.connect`) carries a
-trailing `ORDER BY machine_id, head_id, ts` on top of its `DISTINCT ON`
-dedup: DuckDB compiles a bare `DISTINCT ON` to HASH_GROUP_BY + first(), so
-without an explicit order "which row survives a duplicate group" is
-undefined. That ORDER BY is a real ORDER_BY operator, not just the hash
-aggregation -- an O(n log n) sort of the whole matched corpus, on every
-query, and predicate/period pushdown does not reach past it (so a query
-scoped to one period still sorts the entire table). Measured ~4x slower than
-the unordered view on a 2M-row table (0.123s vs 0.031s). Every "parquet" row
-this script produces has that sort baked into it -- it is not an artifact of
-this harness, it is the cost `analytics.store.connect` actually pays, but
-anyone reading `read_results.csv` needs to know it's in there.
+The Parquet-backed `cap_events` view (`analytics.store.connect`) pays a
+`DISTINCT ON` hash aggregation over the whole corpus on every query, which the
+DuckDB backend pays once at write time as a UNIQUE index probe. That is the
+comparison.
+
+It used to carry a trailing `ORDER BY machine_id, head_id, ts` as well, and
+every number in earlier revisions of `read_results.csv` has that sort baked in
+-- 2.7-3.1x of the Parquet read cost. It was removed once the justification for
+it turned out to be false: the sort runs above the HASH_GROUP_BY, so it cannot
+decide which row of a duplicate group survives, and duplicates are byte-identical
+anyway. See the comment in `python/analytics/store.py`.
 
 Before timing anything, this script queries both stores for the row count
 scoped to --machine-id and refuses to run if either is zero, or if the two

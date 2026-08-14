@@ -39,8 +39,14 @@ struct ExportResult {
 // count the same predicate returns from the store. A mismatch throws rather
 // than leaving a plausible, wrong file on disk.
 //
+// Refuses to write a destination that already exists, and refuses outright when
+// the destination IS the store: COPY ... TO truncates its target, so exporting
+// a store onto itself replaced the database with the Parquet of its own
+// contents and then verified that Parquet against itself and exited 0.
+//
 // Throws std::runtime_error if the store cannot be opened read-only, if the
-// COPY fails, or if the verification does not match.
+// destination exists, if the COPY fails, or if the verification does not
+// match.
 ExportResult export_store_to_parquet(const std::string& db_path,
                                      const std::string& out_path,
                                      const std::string& since = "",

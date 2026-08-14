@@ -84,6 +84,10 @@ int main(int argc, char** argv) {
                 // the parquet path is not silent for the length of a file.
                 mas::BeatingStore beating(pq, beat, mas::CleaningWorker::kBeatEvery);
                 const long long n = mas::clean_file(path, beating);
+                if (n < 0) {
+                    pq.abandon();   // no file for a work item that failed
+                    return n;
+                }
                 pq.close();
                 return n;
             });

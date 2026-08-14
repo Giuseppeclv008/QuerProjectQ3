@@ -52,6 +52,21 @@ ExportResult export_store_to_parquet(const std::string& db_path,
     if (!std::filesystem::exists(db_path))
         throw std::runtime_error("no such store: " + db_path);
 
+    // COPY ... TO truncates its destination, and it does not care that the
+    // destination is the database it is reading. `mas_export s.duckdb s.duckdb`
+    // overwrote the store with the Parquet of its own contents, and then the
+    // verification below read that Parquet back, found the count it expected,
+    // and exited 0 -- silent destruction of the format this project persists
+    // into, reported as success.
+    std::error_code ec;
+    if (std::filesystem::exists(out_path) &&
+        std::filesystem::equivalent(db_path, out_path, ec) && !ec)
+        throw std::runtime_error("refusing to export " + db_path +
+                                 " onto itself: the destination is the store");
+    if (std::filesystem::exists(out_path))
+        throw std::runtime_error("refusing to overwrite " + out_path +
+                                 ": delete it first, or export to a new path");
+
     const auto parent = std::filesystem::path(out_path).parent_path();
     if (!parent.empty()) {
         std::error_code ec;

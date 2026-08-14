@@ -98,6 +98,10 @@ void ParquetEventStore::close() {
         sql_quote(impl_->path) + "' (FORMAT PARQUET)");
 }
 
+void ParquetEventStore::abandon() {
+    impl_->closed = true;   // close() and ~ParquetEventStore now do nothing
+}
+
 long long ParquetEventStore::count() const { return impl_->n; }
 
 std::string parquet_path_for(const std::string& out_dir, const std::string& in_path) {
