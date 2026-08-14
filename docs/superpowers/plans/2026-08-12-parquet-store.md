@@ -1076,6 +1076,10 @@ rm -f /tmp/duck-month.duckdb
 time ./build/mas_monolith /tmp/duck-month.duckdb MCC 1 "$D"/*.csv
 ```
 Record both wall times. Expect DuckDB near 230 s and Parquet well under it; if
+**[measured 2026-08-13: DuckDB 98.86 s, Parquet 34.02 s. The 230 s expectation
+was wrong -- it came from the RTX 4070 host's mono-1T run, not this laptop,
+whose mono-1T at 28 files is 101.814 s. The 2.91x ratio is the finding; the
+absolute was never going to match.]**
 Parquet is not faster on write, stop and report that — it is the result.
 
 - [x] **Step 2: Verify the two stores agree**
