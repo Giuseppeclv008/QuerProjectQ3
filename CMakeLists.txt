@@ -76,6 +76,7 @@ add_library(mas_core
   core/src/store/CsvEventStore.cpp
   core/src/store/DuckDbEventStore.cpp
   core/src/store/ParquetEventStore.cpp
+  core/src/store/ParquetExport.cpp
   core/src/domain/Pipeline.cpp
   core/src/agent/Message.cpp
   core/src/agent/CleaningWorker.cpp
@@ -103,6 +104,10 @@ add_executable(coordinator_exe core/src/apps/coordinator_main.cpp)
 target_link_libraries(coordinator_exe PRIVATE mas_core mas_transport)
 set_target_properties(coordinator_exe PROPERTIES OUTPUT_NAME mas_coordinator)
 
+add_executable(export_exe core/src/apps/export_main.cpp)
+target_link_libraries(export_exe PRIVATE mas_core)
+set_target_properties(export_exe PROPERTIES OUTPUT_NAME mas_export)
+
 add_executable(monolith_exe core/src/apps/monolith_main.cpp)
 target_link_libraries(monolith_exe PRIVATE mas_core Threads::Threads)
 set_target_properties(monolith_exe PROPERTIES OUTPUT_NAME mas_monolith)
@@ -116,6 +121,7 @@ add_executable(unit_tests
   tests/test_duckdb_smoke.cpp
   tests/test_duckdb_event_store.cpp
   tests/test_parquet_event_store.cpp
+  tests/test_parquet_export.cpp
   tests/test_zmq_smoke.cpp
   tests/test_message.cpp
   tests/test_zmq_transport.cpp
@@ -123,7 +129,7 @@ add_executable(unit_tests
   tests/test_coordinator.cpp)
 target_link_libraries(unit_tests PRIVATE mas_core mas_transport GTest::gtest_main duckdb_imported cppzmq)
 target_include_directories(unit_tests PRIVATE tests)
-set_target_properties(unit_tests clean_exe merge_exe worker_exe coordinator_exe monolith_exe PROPERTIES
+set_target_properties(unit_tests clean_exe merge_exe worker_exe coordinator_exe monolith_exe export_exe PROPERTIES
   BUILD_RPATH "${duckdb_prebuilt_SOURCE_DIR}")
 include(GoogleTest)
 gtest_discover_tests(unit_tests)
