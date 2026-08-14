@@ -71,8 +71,11 @@ def tiny_store_parquet(tmp_path, tiny_store):
     out = tmp_path / "tiny_parquet"
     out.mkdir()
     con = duckdb.connect(tiny_store, read_only=True)
-    con.execute(
-        f"COPY (SELECT * FROM cap_events) TO '{out / 'part-0.parquet'}' (FORMAT PARQUET)")
+    # Doubled quotes for the same reason store.py doubles them: this path is a
+    # SQL literal, and the directory it lands in is not guaranteed quote-free
+    # (test_both_backends_open_a_path_containing_a_quote copies into one).
+    dest = str(out / "part-0.parquet").replace("'", "''")
+    con.execute(f"COPY (SELECT * FROM cap_events) TO '{dest}' (FORMAT PARQUET)")
     con.close()
     return str(out)
 

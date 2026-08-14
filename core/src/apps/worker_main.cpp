@@ -1,4 +1,5 @@
 #include "mas/agent/CleaningWorker.hpp"
+#include "mas/apps/CliArgs.hpp"
 #include "mas/store/BeatingStore.hpp"
 #include "mas/store/DuckDbEventStore.hpp"
 #include "mas/store/ParquetEventStore.hpp"
@@ -42,7 +43,11 @@ int main(int argc, char** argv) {
         else if (fmt != "duckdb") { std::cerr << "error: --format must be duckdb or parquet\n"; return 2; }
         argi += 2;
     }
-    if (argc - argi < 5) {
+    if (const auto bad = mas::unconsumed_flag(argc, argv, argi)) {
+        std::cerr << "error: " << *bad << "\n";
+        return 2;
+    }
+    if (argc - argi < 5 || argc - argi > 6) {
         std::cerr << "usage: mas_worker [--format duckdb|parquet] <work_endpoint> "
                      "<result_endpoint> <hb_endpoint> <out.duckdb|out_dir> "
                      "<worker_id> [machine_id]\n";

@@ -72,10 +72,18 @@ def connect(cfg):
     #
     # Tools that need ordered rows say so themselves (idle.py, anomaly.py,
     # torque.py all carry their own ORDER BY), so none of them depended on this.
+    # read_parquet takes the glob as a SQL string literal, so the path is
+    # spliced, not bound -- the plan's Global Constraints require it to go
+    # through the same doubling `mas::sql_quote` applies on the C++ side. The
+    # C++ stores are tested against a path containing an apostrophe; without
+    # this the Python reader raised a ParserException on the identical path the
+    # DuckDB backend opened without complaint, which is a backend asymmetry the
+    # parity suite exists to catch.
+    quoted = glob.replace("'", "''")
     con.execute(
         "CREATE VIEW cap_events AS "
         "SELECT DISTINCT ON (machine_id, head_id, ts) * "
-        f"FROM read_parquet('{glob}')")
+        f"FROM read_parquet('{quoted}')")
     return con
 
 

@@ -1,3 +1,4 @@
+#include "mas/apps/CliArgs.hpp"
 #include "mas/store/CsvRawReader.hpp"
 #include "mas/store/DuckDbEventStore.hpp"
 #include "mas/store/ParquetEventStore.hpp"
@@ -34,7 +35,14 @@ int main(int argc, char** argv) {
         else if (fmt != "duckdb") { std::cerr << "error: --format must be duckdb or parquet\n"; return 2; }
         argi += 2;
     }
-    if (argc - argi < 2) {
+    if (const auto bad = mas::unconsumed_flag(argc, argv, argi)) {
+        std::cerr << "error: " << *bad << "\n";
+        return 2;
+    }
+    // Both bounds, not just the lower one: a fourth positional is as much a
+    // typo as a missing second one, and silently ignoring it is how the
+    // dropped "parquet" above went unnoticed.
+    if (argc - argi < 2 || argc - argi > 3) {
         std::cerr << "usage: clean [--format duckdb|parquet] <raw_in.csv> "
                      "<events_out.csv|.duckdb|out_dir> [machine_id]\n";
         return 2;

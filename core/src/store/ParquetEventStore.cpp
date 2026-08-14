@@ -4,6 +4,11 @@
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
+#ifdef _WIN32
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
 
 namespace mas {
 
@@ -23,6 +28,17 @@ namespace {
 void execOrThrow(duckdb::Connection& con, const std::string& sql) {
     auto res = con.Query(sql);
     if (res->HasError()) throw std::runtime_error(res->GetError());
+}
+
+// What makes the temp name private to this process, which is the granularity
+// that matters: the two writers that can collide are a tombstoned worker and
+// its replacement, in separate processes.
+int process_id() {
+#ifdef _WIN32
+    return _getpid();
+#else
+    return static_cast<int>(::getpid());
+#endif
 }
 
 } // namespace
@@ -93,9 +109,29 @@ void ParquetEventStore::close() {
     // Written even when empty: a day-file that yields no events must still
     // leave a file with the right schema, or a later read_parquet over the
     // directory fails because of it.
+    //
+    // Via a private name, then rename: the destination is derived from the
+    // input's basename, so a re-dispatched work item has two processes writing
+    // one path. Two concurrent COPY ... TO produce a torn file -- not the "two
+    // differently-named files the reader dedups" the header claims, because
+    // there is only one name. rename() is atomic within a filesystem and the
+    // temp sits in the destination's own directory, so whichever writer lands
+    // second replaces the first's file whole and every reader sees one
+    // complete copy. Idempotency stays a property of the filename.
+    const std::string tmp = impl_->path + ".tmp." + std::to_string(process_id());
     execOrThrow(impl_->con,
         "COPY (SELECT * FROM buf ORDER BY head_id, ts) TO '" +
-        sql_quote(impl_->path) + "' (FORMAT PARQUET)");
+        sql_quote(tmp) + "' (FORMAT PARQUET)");
+    std::error_code ec;
+    std::filesystem::rename(tmp, impl_->path, ec);
+    if (ec) {
+        // Never leave the temp behind: the reader globs *.parquet, which this
+        // name deliberately does not match, but a stale one is still litter.
+        std::error_code ignored;
+        std::filesystem::remove(tmp, ignored);
+        throw std::runtime_error("cannot rename " + tmp + " to " + impl_->path +
+                                 ": " + ec.message());
+    }
 }
 
 void ParquetEventStore::abandon() {

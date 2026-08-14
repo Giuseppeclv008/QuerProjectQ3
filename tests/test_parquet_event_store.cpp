@@ -101,6 +101,47 @@ TEST(ParquetEventStore, ReprocessingOverwritesTheSameFile) {
     std::remove(p.c_str());
 }
 
+TEST(ParquetEventStore, CloseLeavesNoTemporaryBehind) {
+    // close() writes through a private name and renames. The temp deliberately
+    // does not match *.parquet, but a leaked one is still litter in a directory
+    // the reader globs.
+    const std::string p = "t_pq_tmp.parquet";
+    std::remove(p.c_str());
+    {
+        mas::ParquetEventStore s(p, "MCC1");
+        s.write(std::vector<mas::CapEvent>{ev(1, "2026-02-01T00:00:01.000", 101)});
+        s.close();
+    }
+    for (const auto& e : std::filesystem::directory_iterator("."))
+        EXPECT_EQ(e.path().filename().string().find("t_pq_tmp.parquet.tmp."), std::string::npos)
+            << "close() left " << e.path().filename().string();
+    EXPECT_EQ(rowsIn(p), 1);
+    std::remove(p.c_str());
+}
+
+TEST(ParquetEventStore, TwoWritersOnOnePathLeaveOneWholeFile) {
+    // The re-dispatch case, minus the concurrency a unit test cannot stage: a
+    // tombstoned worker and its replacement both derive this path from the same
+    // input basename. Interleaving the writes and closing both is what a torn
+    // file would come from -- the rename makes the loser's file replace the
+    // winner's whole, so the reader sees one complete copy with one writer's
+    // full row count, never a partial one.
+    const std::string p = "t_pq_race.parquet";
+    std::remove(p.c_str());
+    {
+        mas::ParquetEventStore a(p, "MCC1");
+        mas::ParquetEventStore b(p, "MCC1");
+        a.write(std::vector<mas::CapEvent>{ev(1, "2026-02-01T00:00:01.000", 101),
+                                           ev(1, "2026-02-01T00:00:02.000", 102)});
+        b.write(std::vector<mas::CapEvent>{ev(1, "2026-02-01T00:00:01.000", 101),
+                                           ev(1, "2026-02-01T00:00:02.000", 102)});
+        a.close();
+        b.close();
+    }
+    EXPECT_EQ(rowsIn(p), 2) << "a torn or concatenated file, not one writer's copy";
+    std::remove(p.c_str());
+}
+
 TEST(ParquetEventStore, EmptyInputWritesAReadableFile) {
     // A day-file that yields no events must still leave something a glob can
     // read, or every later read_parquet('*.parquet') fails on its account.

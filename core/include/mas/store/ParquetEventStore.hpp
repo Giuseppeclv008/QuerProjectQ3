@@ -12,9 +12,13 @@ namespace mas {
 // end-to-end wall-clock (docs/bench/results.md).
 //
 // Idempotency is a property of the filename rather than of a UNIQUE key:
-// reprocessing an input writes the same path and replaces it. Duplicates from
-// a re-dispatched work item land in two differently-named files and are
-// removed by the reader's view (spec §3).
+// reprocessing an input writes the same path and replaces it. Note what this
+// does NOT mean, because the spec's §3 wording invites the wrong reading: a
+// re-dispatched work item does not land in two differently-named files here.
+// The name comes from the input, so both writers target one path -- and it is
+// close()'s write-to-temp-then-rename that makes the result one whole file
+// instead of a torn one. The reader's dedup covers duplicate *rows* across
+// different inputs; it cannot repair a half-written file.
 class ParquetEventStore : public IEventStore {
 public:
     // Throws std::runtime_error if the parent directory does not exist and
