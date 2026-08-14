@@ -15,6 +15,7 @@
 !bench/read_results_with_sort.csv
 !bench/parquet-comparison/write_raw_perday.csv
 !bench/parquet-comparison/run_bench_smoke.csv
+!bench/parquet-comparison/run_bench_smoke_posthoist.csv
 telemetry_*/
 *.duckdb
 *.parquet

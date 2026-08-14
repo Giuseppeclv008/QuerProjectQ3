@@ -1,4 +1,5 @@
 #include "mas/store/DuckDbEventStore.hpp"
+#include "mas/store/DuckDbExec.hpp"
 #include "mas/store/SqlQuote.hpp"
 #include <duckdb.hpp>
 #include <stdexcept>
@@ -13,23 +14,6 @@ struct DuckDbEventStore::Impl {
     Impl(const std::string& path, std::string mid)
         : db(path), con(db), machine_id(std::move(mid)) {}
 };
-
-namespace {
-
-void execOrThrow(duckdb::Connection& con, const std::string& sql) {
-    auto res = con.Query(sql);
-    if (res->HasError()) throw std::runtime_error(res->GetError());
-}
-
-// Same as execOrThrow, but returns the materialized result for callers that
-// need the data back (e.g. count()) instead of just checking for success.
-auto queryOrThrow(duckdb::Connection& con, const std::string& sql) {
-    auto res = con.Query(sql);
-    if (res->HasError()) throw std::runtime_error(res->GetError());
-    return res;
-}
-
-} // namespace
 
 DuckDbEventStore::DuckDbEventStore(const std::string& db_path,
                                    const std::string& machine_id) {
@@ -57,7 +41,7 @@ DuckDbEventStore::DuckDbEventStore(const std::string& db_path,
     // day-files are contiguous and non-overlapping. Reprocessing a file still
     // deduplicates exactly, so §10 idempotency holds -- without an epoch
     // counter, and without forcing the MAS to process files in timestamp order.
-    execOrThrow(impl_->con, R"sql(
+    exec_or_throw(impl_->con, R"sql(
         CREATE TABLE IF NOT EXISTS cap_events (
             machine_id VARCHAR NOT NULL,
             head_id    SMALLINT NOT NULL,
@@ -74,30 +58,30 @@ DuckDbEventStore::DuckDbEventStore(const std::string& db_path,
     // A store written before this change carries UNIQUE(..., cap_seq), and
     // CREATE TABLE IF NOT EXISTS would silently keep it -- every downstream
     // number would stay wrong with nothing to show for it. Refuse the file.
-    execOrThrow(impl_->con,
+    exec_or_throw(impl_->con,
         "CREATE TABLE IF NOT EXISTS store_meta (key VARCHAR PRIMARY KEY, value VARCHAR)");
     {
-        auto tagged = queryOrThrow(impl_->con,
+        auto tagged = query_or_throw(impl_->con,
             "SELECT value FROM store_meta WHERE key = 'event_identity'");
         if (tagged->RowCount() == 0) {
-            auto rows = queryOrThrow(impl_->con, "SELECT COUNT(*) FROM cap_events");
+            auto rows = query_or_throw(impl_->con, "SELECT COUNT(*) FROM cap_events");
             if (rows->GetValue(0, 0).GetValue<int64_t>() > 0)
                 throw std::runtime_error(
                     "store " + db_path + " predates the event-identity fix: it is "
                     "keyed on cap_seq, which collapses distinct closures across "
                     "counter resets. Delete it and rebuild with scripts/build_store.sh");
-            execOrThrow(impl_->con,
+            exec_or_throw(impl_->con,
                 "INSERT INTO store_meta VALUES ('event_identity','machine_id,head_id,ts')");
         }
     }
     // Staging table for batched appends; ts kept VARCHAR here, cast on merge.
-    execOrThrow(impl_->con, R"sql(
+    exec_or_throw(impl_->con, R"sql(
         CREATE TABLE IF NOT EXISTS staging_cap_events (
             machine_id VARCHAR, head_id SMALLINT, ts VARCHAR,
             cap_seq BIGINT, app_torque REAL, status REAL,
             delta INTEGER, is_fault BOOLEAN, aggregated BOOLEAN, is_reset BOOLEAN
         ))sql");
-    execOrThrow(impl_->con, "DELETE FROM staging_cap_events");  // stale rows from a crashed run
+    exec_or_throw(impl_->con, "DELETE FROM staging_cap_events");  // stale rows from a crashed run
 }
 
 DuckDbEventStore::~DuckDbEventStore() = default;
@@ -132,36 +116,36 @@ void DuckDbEventStore::write(std::span<const CapEvent> events) {
     // two auto-commit statements, and an error between them leaves staging
     // populated for the next write() to re-insert. That was idempotent by luck
     // (INSERT OR IGNORE), not by design; here it is by design.
-    execOrThrow(impl_->con, "BEGIN TRANSACTION");
+    exec_or_throw(impl_->con, "BEGIN TRANSACTION");
     try {
-        execOrThrow(impl_->con, R"sql(
+        exec_or_throw(impl_->con, R"sql(
             INSERT OR IGNORE INTO cap_events (machine_id, head_id, ts, cap_seq, app_torque, status, delta, is_fault, aggregated, is_reset)
             SELECT machine_id, head_id, CAST(ts AS TIMESTAMP), cap_seq, app_torque,
                    status, delta, is_fault, aggregated, is_reset
             FROM staging_cap_events)sql");
-        execOrThrow(impl_->con, "DELETE FROM staging_cap_events");
+        exec_or_throw(impl_->con, "DELETE FROM staging_cap_events");
     } catch (...) {
-        execOrThrow(impl_->con, "ROLLBACK");
+        exec_or_throw(impl_->con, "ROLLBACK");
         throw;
     }
-    execOrThrow(impl_->con, "COMMIT");
+    exec_or_throw(impl_->con, "COMMIT");
 }
 
 long long DuckDbEventStore::count() const {
-    auto res = queryOrThrow(impl_->con, "SELECT COUNT(*) FROM cap_events");
+    auto res = query_or_throw(impl_->con, "SELECT COUNT(*) FROM cap_events");
     return res->GetValue(0, 0).GetValue<int64_t>();
 }
 
 void DuckDbEventStore::export_parquet(const std::string& parquet_path) {
-    execOrThrow(impl_->con,
+    exec_or_throw(impl_->con,
         "COPY (SELECT * FROM cap_events ORDER BY head_id, ts) TO '" +
         sql_quote(parquet_path) + "' (FORMAT PARQUET)");
 }
 
 void DuckDbEventStore::merge_from(const std::string& other_db_path) {
-    execOrThrow(impl_->con, "ATTACH '" + sql_quote(other_db_path) + "' AS src (READ_ONLY)");
+    exec_or_throw(impl_->con, "ATTACH '" + sql_quote(other_db_path) + "' AS src (READ_ONLY)");
     try {
-        execOrThrow(impl_->con, R"sql(
+        exec_or_throw(impl_->con, R"sql(
             INSERT OR IGNORE INTO cap_events (machine_id, head_id, ts, cap_seq, app_torque, status, delta, is_fault, aggregated, is_reset)
             SELECT machine_id, head_id, ts, cap_seq, app_torque, status, delta, is_fault, aggregated, is_reset
             FROM src.cap_events)sql");
@@ -170,10 +154,10 @@ void DuckDbEventStore::merge_from(const std::string& other_db_path) {
         // skips-and-continues past an unopenable source, so a left-attached
         // "src" from one corrupt-but-attachable store would poison every
         // later ATTACH ... AS src in the same loop.
-        execOrThrow(impl_->con, "DETACH src");
+        exec_or_throw(impl_->con, "DETACH src");
         throw;
     }
-    execOrThrow(impl_->con, "DETACH src");
+    exec_or_throw(impl_->con, "DETACH src");
 }
 
 void DuckDbEventStore::merge_all(const std::vector<std::string>& other_db_paths) {
@@ -204,7 +188,7 @@ void DuckDbEventStore::merge_all(const std::vector<std::string>& other_db_paths)
         std::string un;
         for (std::size_t i = 0; i < other_db_paths.size(); ++i) {
             const std::string alias = "msrc" + std::to_string(i);
-            execOrThrow(impl_->con, "ATTACH '" + sql_quote(other_db_paths[i]) +
+            exec_or_throw(impl_->con, "ATTACH '" + sql_quote(other_db_paths[i]) +
                                     "' AS " + alias + " (READ_ONLY)");
             aliases.push_back(alias);
             if (i) un += " UNION ALL ";
@@ -217,7 +201,7 @@ void DuckDbEventStore::merge_all(const std::vector<std::string>& other_db_paths)
         // No ORDER BY on the DISTINCT ON: duplicates only arise from a
         // re-dispatched file, and those rows agree in every column, so which
         // one survives cannot be observed.
-        execOrThrow(impl_->con,
+        exec_or_throw(impl_->con,
             "INSERT INTO cap_events (" + std::string(kCols) + ") "
             "SELECT DISTINCT ON (machine_id, head_id, ts) " + std::string(kCols) +
             " FROM (" + un + ")");

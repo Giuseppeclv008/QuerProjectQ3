@@ -52,7 +52,7 @@ Both stores splice paths into SQL. Lift the existing helper before a second copy
 **Interfaces:**
 - Produces: `mas::sql_quote(const std::string&) -> std::string` — used by Task 2
 
-- [ ] **Step 1: Create the header**
+- [x] **Step 1: Create the header**
 
 ```cpp
 #pragma once
@@ -78,7 +78,7 @@ inline std::string sql_quote(const std::string& s) {
 } // namespace mas
 ```
 
-- [ ] **Step 2: Remove the local copy from `DuckDbEventStore.cpp`**
+- [x] **Step 2: Remove the local copy from `DuckDbEventStore.cpp`**
 
 Delete the `std::string sql_quote(const std::string& s) { ... }` definition and its
 comment from the anonymous namespace, and add to the includes:
@@ -87,13 +87,13 @@ comment from the anonymous namespace, and add to the includes:
 #include "mas/store/SqlQuote.hpp"
 ```
 
-- [ ] **Step 3: Build and run the suite**
+- [x] **Step 3: Build and run the suite**
 
 Run: `cmake --build build --parallel && ./build/unit_tests 2>&1 | tail -3`
 Expected: `[  PASSED  ] 85 tests.` — pure move, no behaviour change. The existing
 `DuckDbEventStore.PathContainingASingleQuoteWorks` test proves the move was clean.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add core/include/mas/store/SqlQuote.hpp core/src/store/DuckDbEventStore.cpp
@@ -114,7 +114,7 @@ git commit -m "refactor(store): share sql_quote before a second store needs it"
 - Consumes: `mas::sql_quote` (Task 1), `mas::IEventStore`, `mas::CapEvent`
 - Produces: `mas::ParquetEventStore(out_path, machine_id)`, `.write(span)`, `.close()`, `.count()` — used by Tasks 3 and 4
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/test_parquet_event_store.cpp`:
 
@@ -243,7 +243,7 @@ TEST(ParquetEventStore, CountReportsEventsAccepted) {
 }
 ```
 
-- [ ] **Step 2: Wire into CMake, then run to see it fail**
+- [x] **Step 2: Wire into CMake, then run to see it fail**
 
 In `CMakeLists.txt`, add to `mas_store`'s sources:
 
@@ -260,7 +260,7 @@ and to `MAS_TEST_SOURCES` inside the `if(NOT MAS_BENCH_ONLY)` branch (it needs D
 Run: `cmake -S . -B build && cmake --build build --parallel 2>&1 | tail -5`
 Expected: FAIL — `fatal error: 'mas/store/ParquetEventStore.hpp' file not found`.
 
-- [ ] **Step 3: Write the header**
+- [x] **Step 3: Write the header**
 
 Create `core/include/mas/store/ParquetEventStore.hpp`:
 
@@ -301,7 +301,7 @@ private:
 } // namespace mas
 ```
 
-- [ ] **Step 4: Write the implementation**
+- [x] **Step 4: Write the implementation**
 
 Create `core/src/store/ParquetEventStore.cpp`:
 
@@ -411,17 +411,17 @@ long long ParquetEventStore::count() const { return impl_->n; }
 } // namespace mas
 ```
 
-- [ ] **Step 5: Run the tests**
+- [x] **Step 5: Run the tests**
 
 Run: `cmake --build build --parallel && ./build/unit_tests --gtest_filter='ParquetEventStore.*'`
 Expected: PASS, 5 tests.
 
-- [ ] **Step 6: Confirm nothing regressed**
+- [x] **Step 6: Confirm nothing regressed**
 
 Run: `./build/unit_tests 2>&1 | tail -3`
 Expected: `[  PASSED  ] 90 tests.` (85 + 5)
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add core/include/mas/store/ParquetEventStore.hpp core/src/store/ParquetEventStore.cpp \
@@ -444,7 +444,7 @@ files and are the reader's problem, by design."
 - Consumes: `mas::ParquetEventStore` (Task 2)
 - Produces: `<binary> --format parquet <out-dir> ...` writing `<out-dir>/<input-basename>.parquet`
 
-- [ ] **Step 1: Add a shared helper for the output path**
+- [x] **Step 1: Add a shared helper for the output path**
 
 Append to `core/include/mas/store/ParquetEventStore.hpp`, inside `namespace mas`:
 
@@ -463,7 +463,7 @@ std::string parquet_path_for(const std::string& out_dir, const std::string& in_p
 }
 ```
 
-- [ ] **Step 2: `clean_main.cpp`**
+- [x] **Step 2: `clean_main.cpp`**
 
 After `const std::string machine = (argc > 3) ? argv[3] : "MCC";`, replace the
 argument handling so a leading `--format parquet` is consumed:
@@ -508,7 +508,7 @@ Then, before the existing `.duckdb` branch:
 
 Add `#include "mas/store/ParquetEventStore.hpp"` to the includes.
 
-- [ ] **Step 3: `monolith_main.cpp` — one store per input file**
+- [x] **Step 3: `monolith_main.cpp` — one store per input file**
 
 Parse the same flag at the top of `main` (identical block to Step 2, adjusting the
 usage string). Then in the `threads == 1` branch, replace the single-store loop
@@ -590,7 +590,7 @@ and skip the merge entirely under `parquet` — there is nothing to merge:
             }
 ```
 
-- [ ] **Step 4: Extract `BeatingStore` so the parquet path can keep its heartbeat**
+- [x] **Step 4: Extract `BeatingStore` so the parquet path can keep its heartbeat**
 
 `CleaningWorker` wraps the injected store in a `BeatingStore` so a worker keeps
 beating while `clean_file` runs — the coordinator declares a worker dead after
@@ -644,7 +644,7 @@ private:
 In `core/src/agent/CleaningWorker.cpp`, delete the class from the anonymous
 namespace and `#include "mas/store/BeatingStore.hpp"` instead.
 
-- [ ] **Step 5: Give `CleanFn` the beat callback**
+- [x] **Step 5: Give `CleanFn` the beat callback**
 
 In `core/include/mas/agent/CleaningWorker.hpp`:
 
@@ -668,7 +668,7 @@ Update every existing `CleanFn` lambda in `tests/test_cleaning_worker.cpp` to
 take the third parameter and ignore it, e.g.
 `[&](const std::string& p, mas::IEventStore& s, const std::function<void()>&) { ... }`.
 
-- [ ] **Step 6: `worker_main.cpp`**
+- [x] **Step 6: `worker_main.cpp`**
 
 Parse the flag as in Step 2, then:
 
@@ -687,7 +687,7 @@ Parse the flag as in Step 2, then:
             });
 ```
 
-- [ ] **Step 7: Prove the heartbeat survives the parquet path**
+- [x] **Step 7: Prove the heartbeat survives the parquet path**
 
 Add to `tests/test_cleaning_worker.cpp`:
 
@@ -718,7 +718,7 @@ Match `FakeSource`, `FakeSink` and `NullStore` to whatever the file already
 uses — read the top of `tests/test_cleaning_worker.cpp` first and reuse its
 existing fixtures rather than adding new ones.
 
-- [ ] **Step 8: Verify by hand on one real day-file**
+- [x] **Step 8: Verify by hand on one real day-file**
 
 Run:
 ```bash
@@ -732,12 +732,12 @@ print(duckdb.sql(\"SELECT COUNT(*) FROM read_parquet('/tmp/pq/*.parquet')\").fet
 Expected: `765711` — the same count `clean` produces into DuckDB, and the same
 `oracle.py` reports.
 
-- [ ] **Step 9: Confirm the default path is untouched**
+- [x] **Step 9: Confirm the default path is untouched**
 
 Run: `./build/unit_tests 2>&1 | tail -3`
 Expected: `[  PASSED  ] 90 tests.`
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add core/src/apps/clean_main.cpp core/src/apps/monolith_main.cpp \
@@ -767,7 +767,7 @@ The task that decides whether this is a store or just a benchmark.
 - Consumes: nothing from earlier tasks (Python side is independent)
 - Produces: `connect(cfg)` accepting a directory; fixture `tiny_store_parquet`
 
-- [ ] **Step 1: Write the failing parity test**
+- [x] **Step 1: Write the failing parity test**
 
 Create `python/tests/test_backend_parity.py`:
 
@@ -832,7 +832,7 @@ def test_empty_parquet_directory_fails_loudly(tmp_path):
         connect(Config(store_path=str(empty), machine_id="MCC"))
 ```
 
-- [ ] **Step 2: Add the fixture**
+- [x] **Step 2: Add the fixture**
 
 Append to `python/tests/conftest.py`:
 
@@ -854,13 +854,13 @@ def tiny_store_parquet(tmp_path, tiny_store):
     return str(out)
 ```
 
-- [ ] **Step 3: Run to verify it fails**
+- [x] **Step 3: Run to verify it fails**
 
 Run: `cd python && ../.venv/bin/python -m pytest tests/test_backend_parity.py -q 2>&1 | tail -5`
 Expected: FAIL — `connect()` passes the directory to `duckdb.connect`, which
 errors, so every parametrised case errors.
 
-- [ ] **Step 4: Teach `connect()` about directories**
+- [x] **Step 4: Teach `connect()` about directories**
 
 In `python/analytics/store.py`, replace `connect`:
 
@@ -901,12 +901,12 @@ def connect(cfg):
     return con
 ```
 
-- [ ] **Step 5: Run the parity tests**
+- [x] **Step 5: Run the parity tests**
 
 Run: `cd python && ../.venv/bin/python -m pytest tests/test_backend_parity.py -q 2>&1 | tail -3`
 Expected: PASS, 9 tests (7 parametrised + 2).
 
-- [ ] **Step 6: Confirm no tool changed and nothing regressed**
+- [x] **Step 6: Confirm no tool changed and nothing regressed**
 
 Run:
 ```bash
@@ -915,7 +915,7 @@ cd python && ../.venv/bin/python -m pytest -q 2>&1 | tail -2
 ```
 Expected: `0`, then `234 passed, 5 skipped` (225 + 9).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add python/analytics/store.py python/tests/conftest.py python/tests/test_backend_parity.py
@@ -941,7 +941,7 @@ time, where it costs a hash aggregation on every query. Measured separately."
 - Consumes: `mas_monolith --format parquet` (Task 3), `connect()` (Task 4)
 - Produces: a `parquet` arch in `bench/results.csv`; `bench/read_results.csv`
 
-- [ ] **Step 1: Add the write-side arch**
+- [x] **Step 1: Add the write-side arch**
 
 In `bench/run_bench.sh`, after the monolith block and inside the `if [ "$ONLY" != mas ]`
 guard, add:
@@ -971,7 +971,7 @@ print(duckdb.sql(\"SELECT COUNT(DISTINCT (machine_id, head_id, ts)) FROM read_pa
 done
 ```
 
-- [ ] **Step 2: Write the read-side harness**
+- [x] **Step 2: Write the read-side harness**
 
 Create `bench/read_bench.py`:
 
@@ -1031,7 +1031,7 @@ if __name__ == "__main__":
     main()
 ```
 
-- [ ] **Step 3: Check `analytics.cli` accepts a config on stdin**
+- [x] **Step 3: Check `analytics.cli` accepts a config on stdin**
 
 Run: `cd python && grep -n '"-"' analytics/cli.py`
 Expected: a match. If there is none, `--config -` is unsupported; write the JSON
@@ -1062,7 +1062,7 @@ The parquet timings this produced (1.253–1.255 s against mono-1T's
 3.514–3.605 s, so **2.83x**) are a third independent estimate of the write
 ratio, alongside the month-scale 2.79x and the per-day 2.69x.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add bench/run_bench.sh bench/read_bench.py
@@ -1159,12 +1159,23 @@ creation, empty file), Task 4 (empty directory). §6 T1–T5 → Task 2; T6 → 
 §7 write and read → Task 5, run in Task 6. §9 success criteria → Tasks 2, 4, 5, 6.
 
 **Execution record, added after the fact.** Only Task 6's boxes were ticked
-while the work ran, so this document reads as though Tasks 1–5 never executed.
-They did — `sql_quote`, `ParquetEventStore`, the three apps' `--format` flag,
-`connect()`'s directory branch and both harnesses are all shipped, and the git
-history is the reliable record of it. The boxes above are left as they were
-rather than back-filled from memory: a tick that nobody watched is worth less
-than the commit it claims to stand for.
+while the work ran, so this document read as though Tasks 1–5 never executed.
+The 32 boxes above were back-filled afterwards, each against the artifact it
+names rather than from memory:
+
+| Task | Checked |
+|---|---|
+| 1 | `SqlQuote.hpp` exists; `DuckDbEventStore.cpp` holds no local copy and includes it; commit `1633963` |
+| 2 | `ParquetEventStore.{hpp,cpp}` and `tests/test_parquet_event_store.cpp` exist, the test is wired into `CMakeLists.txt`, suite green; commit `7dda7dc` |
+| 3 | `parquet_path_for`, `--format` in all three mains, `BeatingStore.hpp`, `CleanFn`'s beat callback (`CleaningWorker.hpp:23`), its test (`test_cleaning_worker.cpp:151`); hand-run on a real day-file; commit `72044ad` |
+| 4 | `test_backend_parity.py`, the `tiny_store_parquet` fixture, `connect()`'s `isdir` branch, parity green, no file in `analytics/tools/` touched; commit `a59a268` |
+| 5 | the parquet arch in `run_bench.sh`, `read_bench.py`, `cli.py` confirmed to have no stdin config (so the plan's temp-file fallback is the path taken); commit `b9cc3f4` |
+
+Two steps are ticked on their artifact alone, and the distinction is worth
+keeping: Task 2 Step 2 and Task 4 Step 3 are "run it and watch it fail". The
+wiring and the tests are verifiable today; a red phase is not re-observable
+once the code that turns it green exists. Anyone who needs that guarantee
+should look at the commit order, not at these boxes.
 
 **§9.3, resolved honestly.** The criterion asked for a `parquet` row at all
 three volumes in `bench/results.csv`, and there is none: the month-scale

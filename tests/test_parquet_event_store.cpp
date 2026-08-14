@@ -31,6 +31,8 @@ long long rowsIn(const std::string& glob) {
     return res->GetValue(0, 0).GetValue<int64_t>();
 }
 
+} // namespace
+
 // A day-file that fails to clean must leave nothing behind. The reader globs
 // the directory, so a valid empty Parquet is indistinguishable from a day that
 // legitimately produced no events -- and the apps call abandon() for exactly
@@ -48,8 +50,6 @@ TEST(ParquetEventStore, AbandonWritesNoFileAtAll) {
     EXPECT_FALSE(std::filesystem::exists(path))
         << "abandon() left a file the reader would treat as a real empty day";
 }
-
-} // namespace
 
 TEST(ParquetEventStore, RoundTripsEveryColumn) {
     const std::string p = "t_pq_roundtrip.parquet";

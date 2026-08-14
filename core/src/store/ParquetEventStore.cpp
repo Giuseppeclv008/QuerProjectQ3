@@ -1,8 +1,10 @@
 #include "mas/store/ParquetEventStore.hpp"
+#include "mas/store/DuckDbExec.hpp"
 #include "mas/store/SqlQuote.hpp"
 #include <duckdb.hpp>
 #include <filesystem>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #ifdef _WIN32
 #include <process.h>
@@ -17,6 +19,12 @@ struct ParquetEventStore::Impl {
     duckdb::Connection con;
     std::string path;
     std::string machine_id;
+    // One Appender for the store's life, not one per write(). Constructing it
+    // does a catalog lookup and binds the table's types, and write() is called
+    // once per 8,192-event batch -- about 2,670 times per day-file. Held by
+    // optional because the table has to exist first, so it cannot be built in
+    // the member init list.
+    std::optional<duckdb::Appender> appender;
     long long n = 0;
     bool closed = false;
     Impl(std::string p, std::string mid)
@@ -24,11 +32,6 @@ struct ParquetEventStore::Impl {
 };
 
 namespace {
-
-void execOrThrow(duckdb::Connection& con, const std::string& sql) {
-    auto res = con.Query(sql);
-    if (res->HasError()) throw std::runtime_error(res->GetError());
-}
 
 // What makes the temp name private to this process, which is the granularity
 // that matters: the two writers that can collide are a tombstoned worker and
@@ -56,7 +59,7 @@ ParquetEventStore::ParquetEventStore(const std::string& out_path,
     impl_ = std::make_unique<Impl>(out_path, machine_id);
     // Same ten columns and types as cap_events, minus the constraint. The
     // absence of UNIQUE is the whole experiment.
-    execOrThrow(impl_->con, R"sql(
+    exec_or_throw(impl_->con, R"sql(
         CREATE TABLE buf (
             machine_id VARCHAR NOT NULL,
             head_id    SMALLINT NOT NULL,
@@ -84,7 +87,8 @@ ParquetEventStore::~ParquetEventStore() {
 
 void ParquetEventStore::write(std::span<const CapEvent> events) {
     if (events.empty()) return;
-    duckdb::Appender app(impl_->con, "buf");
+    if (!impl_->appender) impl_->appender.emplace(impl_->con, "buf");
+    auto& app = *impl_->appender;
     for (const auto& e : events) {
         app.BeginRow();
         app.Append(duckdb::Value(impl_->machine_id));
@@ -99,7 +103,9 @@ void ParquetEventStore::write(std::span<const CapEvent> events) {
         app.Append(duckdb::Value::BOOLEAN(e.reset));
         app.EndRow();
     }
-    app.Close();
+    // Not Close()d here -- close() flushes it once, before the COPY reads the
+    // table. Closing per batch is what made the Appender per-batch in the first
+    // place.
     impl_->n += static_cast<long long>(events.size());
 }
 
@@ -118,8 +124,12 @@ void ParquetEventStore::close() {
     // temp sits in the destination's own directory, so whichever writer lands
     // second replaces the first's file whole and every reader sees one
     // complete copy. Idempotency stays a property of the filename.
+    // The Appender buffers; its rows are not in `buf` until it is closed, and
+    // the COPY below reads `buf`. Flushing here rather than per write() is what
+    // lets one Appender serve the store's whole life.
+    if (impl_->appender) { impl_->appender->Close(); impl_->appender.reset(); }
     const std::string tmp = impl_->path + ".tmp." + std::to_string(process_id());
-    execOrThrow(impl_->con,
+    exec_or_throw(impl_->con,
         "COPY (SELECT * FROM buf ORDER BY head_id, ts) TO '" +
         sql_quote(tmp) + "' (FORMAT PARQUET)");
     std::error_code ec;
@@ -136,6 +146,18 @@ void ParquetEventStore::close() {
 
 void ParquetEventStore::abandon() {
     impl_->closed = true;   // close() and ~ParquetEventStore now do nothing
+    // And actually discard, which the header has always promised and this did
+    // not do: the Appender is dropped without flushing, and the rows already in
+    // `buf` go with the table. Behaviour did not depend on it -- nothing reads
+    // the buffer after abandon() -- but a comment that overstates what the code
+    // does is the kind of thing the next reader trusts.
+    impl_->appender.reset();
+    try {
+        exec_or_throw(impl_->con, "DELETE FROM buf");
+    } catch (const std::exception&) {
+        // abandon() is called on failure paths and must not add one of its own.
+        // The rows die with the connection either way.
+    }
 }
 
 long long ParquetEventStore::count() const { return impl_->n; }

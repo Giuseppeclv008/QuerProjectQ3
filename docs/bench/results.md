@@ -416,6 +416,20 @@ with it:
 | 28 per-day invocations per backend (superseded regime) | `write_raw_perday.csv` | 2.69x |
 | 1 day through `run_bench.sh`, n=3 per backend | `run_bench_smoke.csv` | 2.82x |
 
+(That last row predates the Appender hoist described below, as do all the
+month-scale figures. `run_bench_smoke_posthoist.csv` is the same run after it.)
+
+**The Parquet write figures are a floor, not a ceiling.** `ParquetEventStore`
+built a fresh `duckdb::Appender` on every `write()` — one catalog lookup and
+type bind per 8,192-event batch, about 2,670 of them per day-file. Hoisting it
+to one per store is `run_bench_smoke_posthoist.csv`: the 1-day parquet median
+goes 1.254 s → 1.195 s, **-4.7%**. Read that as a direction and not a
+magnitude — the DuckDB control in the same pair of runs drifted **+8.3%**
+(3.536 s → 3.828 s) with no code change touching its path, so the machine moved
+between them by more than the effect being measured. All the month-scale
+figures above predate the hoist, and a store written to measure what
+persistence costs was itself paying an avoidable tax while it measured.
+
 And `calibrate.out` supplies the within-condition spread the n=1 cells cannot:
 its later pair repeats to ~0.3% (parquet 4.38/4.42 s, duckdb 11.89/11.85 s).
 Run-to-run noise is an order of magnitude below the effect, so the conclusion
@@ -432,6 +446,16 @@ survives the thin sampling even though the sampling should be stated.
 
 Suite totals: DuckDB 5.113 / 5.139 / 5.448 s, Parquet 12.072 / 12.400 /
 12.659 s.
+
+**These are report wall times, not query times.** `read_bench.py` runs each
+report as a subprocess, so every measurement carries a Python interpreter start
+and the analytics package's imports; and unlike the write side, the backend
+order within a repeat is fixed (DuckDB, then Parquet) rather than
+counterbalanced. Both biases run the same way, and it is the safe way: a
+constant added to both sides *shrinks* a ratio, so 2.41x understates the
+query-only penalty and puts the break-even later than it truly is — against
+this document's own conclusion rather than for it. `decompose_final.out` is the
+query-only isolation for anyone who needs the unpadded number.
 
 ### The net
 

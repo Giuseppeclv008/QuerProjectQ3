@@ -196,7 +196,9 @@ organized by layer.
 │       ├── store/                          # Store implementations
 │       │   ├── CsvRawReader.cpp
 │       │   ├── CsvEventStore.cpp
-│       │   └── DuckDbEventStore.cpp
+│       │   ├── DuckDbEventStore.cpp
+│       │   ├── ParquetEventStore.cpp
+│       │   └── ParquetExport.cpp
 │       ├── agent/                          # Agent implementations
 │       │   ├── Message.cpp
 │       │   ├── CleaningWorker.cpp
@@ -441,6 +443,11 @@ nothing is what lets the benchmark build on a machine with no DuckDB at all.
 | `CsvRawReader` | [`CsvRawReader.hpp`](core/include/mas/store/CsvRawReader.hpp) · [`.cpp`](core/src/store/CsvRawReader.cpp) | Streams raw 109-column CSVs. Skips malformed rows with counter. |
 | `CsvEventStore` | [`CsvEventStore.hpp`](core/include/mas/store/CsvEventStore.hpp) · [`.cpp`](core/src/store/CsvEventStore.cpp) | CSV file backend. Writes header on construction. |
 | `DuckDbEventStore` | [`DuckDbEventStore.hpp`](core/include/mas/store/DuckDbEventStore.hpp) · [`.cpp`](core/src/store/DuckDbEventStore.cpp) | DuckDB backend (PIMPL). Staging → merge. `merge_from()` with try/catch DETACH. `export_parquet()`. |
+| `ParquetEventStore` | [`ParquetEventStore.hpp`](core/include/mas/store/ParquetEventStore.hpp) · [`.cpp`](core/src/store/ParquetEventStore.cpp) | Experimental Parquet backend: one file per input, no index, no WAL. Buffers in memory, writes on `close()` through a temp + atomic rename; `abandon()` for a clean that failed. |
+| `ParquetExport` | [`ParquetExport.hpp`](core/include/mas/store/ParquetExport.hpp) · [`.cpp`](core/src/store/ParquetExport.cpp) | `mas_export`'s engine. Opens the store READ_ONLY, refuses to overwrite the source, an existing file or the store's `.wal`, and verifies the row count it wrote. |
+| `BeatingStore` | [`BeatingStore.hpp`](core/include/mas/store/BeatingStore.hpp) | Decorator that fires a heartbeat callback around each `write()`, so a long clean does not look dead to the coordinator. Wraps either backend. |
+| `sql_quote` | [`SqlQuote.hpp`](core/include/mas/store/SqlQuote.hpp) | Header-only. Doubles embedded `'` — ATTACH, COPY and `read_parquet` take paths as SQL literals and DuckDB binds no parameters for them. |
+| `exec_or_throw` | [`DuckDbExec.hpp`](core/include/mas/store/DuckDbExec.hpp) | Header-only. DuckDB reports errors in the result rather than throwing; these three wrappers turn a missed `HasError()` from a silent wrong answer into an exception. |
 
 ### Agent Layer
 
@@ -1038,7 +1045,7 @@ cmake --build build --parallel
 | `MAS_BUILD_TESTS` | `ON` | Build the GoogleTest suite. `OFF` drops the last dependency that needs network. |
 
 The default triple (`OFF, ON, OFF, ON`) is the build this project has always
-had: **135 tests green**. With `MAS_BENCH_ONLY=ON` the suite is the 51 tests that
+had: **136 tests green**. With `MAS_BENCH_ONLY=ON` the suite is the 51 tests that
 need neither DuckDB nor ZeroMQ; with `MAS_BUILD_TESTS=OFF` on top of that,
 `_deps/` is never created at all — nothing is downloaded:
 
@@ -1288,13 +1295,13 @@ it, `--pdf` logs how to install it and writes Markdown and HTML as normal.
 
 ## Testing
 
-The project has **135 C++ unit tests** across 18 Google Test files, plus **250
+The project has **136 C++ unit tests** across 18 Google Test files, plus **250
 Python tests** for the analytics tier. Both counts are asserted by
 `python/tests/test_readme_counts.py`, so adding a test and forgetting this
 paragraph fails the suite rather than quietly dating it.
 
 ```bash
-cd build && ctest --output-on-failure           # 135 C++ tests
+cd build && ctest --output-on-failure           # 136 C++ tests
 cd python && ../.venv/bin/python -m pytest -q   # 250 Python tests (5 need the rebuilt store or a real day-file and skip without them)
 ```
 

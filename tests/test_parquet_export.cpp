@@ -201,6 +201,19 @@ TEST_F(ParquetExportTest, RefusesToOverwriteAnExistingDestination) {
     EXPECT_EQ(fs::file_size(pq), first);
 }
 
+TEST_F(ParquetExportTest, RefusesToWriteTheStoresWriteAheadLog) {
+    // The two guards above both key on the destination already existing, and a
+    // WAL that DuckDB has not created yet does not. mas_merge documents a WAL
+    // precondition, so a Parquet file sitting at that name is a trap for
+    // whoever reaches it.
+    const auto db = makeStore(p("wal.duckdb"));
+    const auto wal = db + ".wal";
+    ASSERT_FALSE(fs::exists(wal)) << "fixture already has a WAL; the case is different";
+
+    EXPECT_THROW(mas::export_store_to_parquet(db, wal), std::runtime_error);
+    EXPECT_FALSE(fs::exists(wal)) << "a Parquet file was left where the log goes";
+}
+
 TEST_F(ParquetExportTest, MissingStoreFailsByName) {
     try {
         mas::export_store_to_parquet(p("nope.duckdb"), p("x.parquet"));

@@ -1,4 +1,5 @@
 #include "mas/store/ParquetExport.hpp"
+#include "mas/store/DuckDbExec.hpp"
 #include "mas/store/SqlQuote.hpp"
 #include <duckdb.hpp>
 #include <filesystem>
@@ -6,17 +7,6 @@
 
 namespace mas {
 namespace {
-
-void execOrThrow(duckdb::Connection& con, const std::string& sql) {
-    auto res = con.Query(sql);
-    if (res->HasError()) throw std::runtime_error(res->GetError());
-}
-
-long long scalar(duckdb::Connection& con, const std::string& sql) {
-    auto res = con.Query(sql);
-    if (res->HasError()) throw std::runtime_error(res->GetError());
-    return res->GetValue(0, 0).GetValue<int64_t>();
-}
 
 // "2026-02-02" carries no time, so SQL reads it as 2026-02-02 00:00:00 and an
 // upper bound written that way silently drops that entire day -- the export
@@ -66,6 +56,15 @@ ExportResult export_store_to_parquet(const std::string& db_path,
     if (std::filesystem::exists(out_path))
         throw std::runtime_error("refusing to overwrite " + out_path +
                                  ": delete it first, or export to a new path");
+    // Both guards above turn on the destination already existing, which leaves
+    // one path they cannot see: the store's write-ahead log before DuckDB has
+    // created it. Writing a Parquet file to <store>.wal is not destructive
+    // today -- DuckDB rejected the bogus log and the rows survived -- but
+    // mas_merge documents a WAL precondition, and a file that looks like a log
+    // and is not one is a trap laid for whoever hits that path next.
+    if (out_path == db_path + ".wal")
+        throw std::runtime_error("refusing to write " + out_path +
+                                 ": that is the store's write-ahead log");
 
     const auto parent = std::filesystem::path(out_path).parent_path();
     if (!parent.empty()) {
@@ -90,12 +89,12 @@ ExportResult export_store_to_parquet(const std::string& db_path,
     duckdb::Connection con(*db);
 
     const std::string where = where_clause(since, until);
-    const long long expected = scalar(con, "SELECT COUNT(*) FROM cap_events" + where);
+    const long long expected = scalar_or_throw(con, "SELECT COUNT(*) FROM cap_events" + where);
 
     // ORDER BY makes the file deterministic: same store, same bytes. Without
     // it DuckDB is free to emit row groups in whatever order the scan produced,
     // so two exports of one store would not compare equal.
-    execOrThrow(con, "COPY (SELECT * FROM cap_events" + where +
+    exec_or_throw(con, "COPY (SELECT * FROM cap_events" + where +
                      " ORDER BY head_id, ts) TO '" + sql_quote(out_path) +
                      "' (FORMAT PARQUET)");
 
@@ -103,7 +102,7 @@ ExportResult export_store_to_parquet(const std::string& db_path,
     // truncated or unreadable Parquet must fail here, not three months later
     // when somebody tries to read it.
     const long long written =
-        scalar(con, "SELECT COUNT(*) FROM read_parquet('" + sql_quote(out_path) + "')");
+        scalar_or_throw(con, "SELECT COUNT(*) FROM read_parquet('" + sql_quote(out_path) + "')");
     if (written != expected)
         throw std::runtime_error("export verification failed for " + out_path +
                                  ": store has " + std::to_string(expected) +
