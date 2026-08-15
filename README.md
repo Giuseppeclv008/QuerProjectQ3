@@ -448,6 +448,7 @@ nothing is what lets the benchmark build on a machine with no DuckDB at all.
 | `BeatingStore` | [`BeatingStore.hpp`](core/include/mas/store/BeatingStore.hpp) | Decorator that fires a heartbeat callback around each `write()`, so a long clean does not look dead to the coordinator. Wraps either backend. |
 | `sql_quote` | [`SqlQuote.hpp`](core/include/mas/store/SqlQuote.hpp) | Header-only. Doubles embedded `'` — ATTACH, COPY and `read_parquet` take paths as SQL literals and DuckDB binds no parameters for them. |
 | `exec_or_throw` | [`DuckDbExec.hpp`](core/include/mas/store/DuckDbExec.hpp) | Header-only. DuckDB reports errors in the result rather than throwing; these three wrappers turn a missed `HasError()` from a silent wrong answer into an exception. |
+| `publish_atomically` | [`AtomicPublish.hpp`](core/include/mas/store/AtomicPublish.hpp) | Header-only. Write to a private sibling name, verify, rename into place, remove the temp on any throw. Shared by both Parquet writers, so a failed write cannot leave a partial file under a name readers glob. |
 
 ### Agent Layer
 
@@ -631,12 +632,12 @@ that gets handed over.
 ### `clean` — Single-File Batch Pipeline
 
 ```
-usage: clean [--format duckdb|parquet] <raw_in.csv> <events_out.csv|events_out.duckdb|out_dir> [machine_id]
+usage: clean [--format duckdb|parquet] <raw_in.csv> <events_out.csv|.duckdb|out_dir> [machine_id]
 ```
 
 Processes a single raw CSV day-file. Output selection:
 - `--format parquet` → the second argument is a *directory*; writes
-  `<dir>/<input basename>.parquet` via `ParquetEventStore`. Nothing is written
+  `<dir>/<input basename without extension>.parquet` via `ParquetEventStore`. Nothing is written
   at all if the clean fails, so a short file never reads as a whole day.
 - otherwise, by file extension: `.duckdb` → `DuckDbEventStore` (probes input
   first to avoid creating an empty DB); anything else → `CsvEventStore`

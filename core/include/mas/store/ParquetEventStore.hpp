@@ -51,7 +51,9 @@ public:
     // the rows, and count() shows the shortfall.
     void abandon();
 
-    long long count() const;         // events accepted so far
+    // Events accepted so far -- not events written. After abandon() the rows
+    // are discarded and this still counts them; no caller reads it there.
+    long long count() const;
 
 private:
     struct Impl;

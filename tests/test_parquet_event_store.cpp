@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -123,26 +124,34 @@ TEST(ParquetEventStore, CloseLeavesNoTemporaryBehind) {
 }
 
 TEST(ParquetEventStore, TwoWritersOnOnePathLeaveOneWholeFile) {
-    // The re-dispatch case, minus the concurrency a unit test cannot stage: a
-    // tombstoned worker and its replacement both derive this path from the same
-    // input basename. The closes here are sequential -- a unit test cannot stage
-    // the real interleaving -- so what this pins down is the property that makes
-    // the interleaving survivable: each store writes its own temp and renames,
-    // so the second replaces the first's file whole and the reader sees one
-    // writer's full row count, never a concatenation or a partial.
+    // The re-dispatch case: a tombstoned worker and its replacement derive this
+    // path from the same input basename, so both write it. Closed from threads
+    // rather than in sequence, because sequential closes cannot fail -- the
+    // first temp is renamed away before the second exists, so a shared temp name
+    // would look identical. (It did: with the per-store token removed this test
+    // still passed when the closes were sequential.) Overlapping them is what
+    // makes the token load-bearing.
     const std::string p = "t_pq_race.parquet";
     std::remove(p.c_str());
+    const std::vector<mas::CapEvent> rows{ev(1, "2026-02-01T00:00:01.000", 101),
+                                          ev(1, "2026-02-01T00:00:02.000", 102)};
     {
         mas::ParquetEventStore a(p, "MCC1");
         mas::ParquetEventStore b(p, "MCC1");
-        a.write(std::vector<mas::CapEvent>{ev(1, "2026-02-01T00:00:01.000", 101),
-                                           ev(1, "2026-02-01T00:00:02.000", 102)});
-        b.write(std::vector<mas::CapEvent>{ev(1, "2026-02-01T00:00:01.000", 101),
-                                           ev(1, "2026-02-01T00:00:02.000", 102)});
-        a.close();
-        b.close();
+        a.write(rows);
+        b.write(rows);
+        std::thread ta([&a] { a.close(); });
+        std::thread tb([&b] { b.close(); });
+        ta.join();
+        tb.join();
     }
+    // Whichever landed second wins whole: one writer's full count, never a
+    // concatenation (4), never a truncation.
     EXPECT_EQ(rowsIn(p), 2) << "a torn or concatenated file, not one writer's copy";
+    for (const auto& e : std::filesystem::directory_iterator("."))
+        EXPECT_EQ(e.path().filename().string().find("t_pq_race.parquet.tmp."),
+                  std::string::npos)
+            << "left a temp behind: " << e.path().filename().string();
     std::remove(p.c_str());
 }
 
@@ -161,8 +170,19 @@ TEST(ParquetEventStore, AFailedWriteWritesNoFileAtAll) {
         store.write(std::vector<mas::CapEvent>{ev(1, "2026-02-01 10:00:00", 1)});
         EXPECT_THROW(store.write(std::vector<mas::CapEvent>{ev(1, "GARBAGE-TS", 2)}),
                      std::exception);
-        // close() must refuse rather than write the rows that survived...
-        EXPECT_THROW(store.close(), std::runtime_error);
+        // close() must refuse rather than write the rows that survived -- and
+        // on the message, because close() has two refusals that both fire on
+        // this input. Asserting only the type let the count check stand in for
+        // the failure latch: with the latch deleted the suite still passed,
+        // because the same call then threw "buffered 1 events but the table
+        // holds 0". Two guards covering for each other pin down neither.
+        try {
+            store.close();
+            ADD_FAILURE() << "close() published after a failed write";
+        } catch (const std::runtime_error& e) {
+            const std::string msg = e.what();
+            EXPECT_NE(msg.find("a write failed"), std::string::npos) << msg;
+        }
     }   // ...and the destructor must not write them either.
     EXPECT_FALSE(std::filesystem::exists(path))
         << "a failed clean left a file the reader would treat as a real day";

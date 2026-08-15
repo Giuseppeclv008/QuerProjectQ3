@@ -1,16 +1,11 @@
 #include "mas/store/ParquetEventStore.hpp"
+#include "mas/store/AtomicPublish.hpp"
 #include "mas/store/DuckDbExec.hpp"
 #include "mas/store/SqlQuote.hpp"
 #include <duckdb.hpp>
-#include <atomic>
 #include <filesystem>
 #include <optional>
 #include <stdexcept>
-#ifdef _WIN32
-#include <process.h>
-#else
-#include <unistd.h>
-#endif
 
 namespace mas {
 
@@ -32,30 +27,23 @@ struct ParquetEventStore::Impl {
         : db(nullptr), con(db), path(std::move(p)), machine_id(std::move(mid)) {}
 };
 
-namespace {
-
-// What makes the temp name private to this process, which is the granularity
-// that matters: the two writers that can collide are a tombstoned worker and
-// its replacement, in separate processes.
-int process_id() {
-#ifdef _WIN32
-    return _getpid();
-#else
-    return static_cast<int>(::getpid());
-#endif
-}
-
-} // namespace
-
 ParquetEventStore::ParquetEventStore(const std::string& out_path,
                                      const std::string& machine_id) {
     const auto parent = std::filesystem::path(out_path).parent_path();
     if (!parent.empty()) {
-        std::error_code ec;
-        std::filesystem::create_directories(parent, ec);
-        if (ec && !std::filesystem::is_directory(parent))
+        // Non-throwing is_directory, and this is the reachable one of the pair:
+        // ParquetExport's identical guard sits behind a stat that has already
+        // refused an unreadable prefix by name, but nothing pre-checks here. A
+        // parent under a chmod-400 directory leaked
+        // "filesystem error: in posix_stat: ... Permission denied" -- the raw
+        // message this class's own error text exists to replace, and it fired
+        // instead of "cannot create directory <p>: <reason>", never letting
+        // this guard say what it was written to say.
+        std::error_code mk_ec, dir_ec;
+        std::filesystem::create_directories(parent, mk_ec);
+        if (mk_ec && !std::filesystem::is_directory(parent, dir_ec))
             throw std::runtime_error("cannot create directory " + parent.string() +
-                                     ": " + ec.message());
+                                     ": " + mk_ec.message());
     }
     impl_ = std::make_unique<Impl>(out_path, machine_id);
     // Same ten columns and types as cap_events, minus the constraint. The
@@ -123,7 +111,8 @@ void ParquetEventStore::write(std::span<const CapEvent> events) {
     // cast there. Nothing rests on either: `failed` is latched and close()
     // refuses on it.
     if (impl_->closed)
-        throw std::runtime_error("write() after close() on " + impl_->path);
+        throw std::runtime_error(
+            "write() after close() or abandon() on " + impl_->path);
     if (events.empty()) return;
     auto& app = [&]() -> duckdb::Appender& {
         // Inside the latch's reach: if constructing the Appender threw, `failed`
@@ -173,6 +162,14 @@ void ParquetEventStore::write(std::span<const CapEvent> events) {
 }
 
 void ParquetEventStore::close() {
+    // Latched before anything can fail, which makes close() one-shot rather
+    // than retryable: if the publish below throws, a second close() returns
+    // quietly having written nothing, reporting success it did not achieve. No
+    // caller retries -- all four treat a throw here as fatal to that day-file --
+    // and the alternative is worse, since clearing `closed` on failure would
+    // let a caller retry a publish whose temp is already gone. Stated because
+    // the header promises "throws on failure" and this is the shape of the
+    // exception to that.
     if (impl_->closed) return;
     impl_->closed = true;
     // A store that failed mid-write never produces a file. Same reasoning as
@@ -209,6 +206,15 @@ void ParquetEventStore::close() {
     // `buf` agree perfectly on the same truncated set. That case is the
     // destructor's to handle, by never publishing. ParquetExport verifies its
     // own output in the same spirit.
+    //
+    // No test reaches this, and that is a statement about the check rather than
+    // a gap to fill: every public route to a disagreement sets `failed` first
+    // and is refused above. It is a backstop against a future change to the
+    // buffering, so the only thing that could exercise it is the bug it exists
+    // to catch. Said here because a test asserting only the exception type
+    // *appeared* to cover it -- both refusals throw runtime_error, so deleting
+    // the latch above left the suite green with this check standing in for it.
+    // The tests now assert on the message for that reason.
     const long long in_table = scalar_or_throw(impl_->con, "SELECT COUNT(*) FROM buf");
     if (in_table != impl_->n)
         throw std::runtime_error(
@@ -216,35 +222,16 @@ void ParquetEventStore::close() {
             std::to_string(impl_->n) + " events but the table holds " +
             std::to_string(in_table));
 
-    // Unique per store, not just per process: two stores on one path inside one
-    // process would otherwise share a temp name and truly tear it. No caller
-    // does that today -- monolith-MT gives each thread its own file, a worker
-    // handles one item at a time -- but the whole point of this dance is that
-    // the collision case is the one nobody arranges deliberately. A counter
-    // rather than `this`: an object address is equally unique among live
-    // objects, and puts a memory address into a filename and into the error
-    // text a user reads.
-    static std::atomic<unsigned long long> next_token{0};
-    const std::string tmp = impl_->path + ".tmp." + std::to_string(process_id()) +
-                            "." + std::to_string(next_token.fetch_add(1));
-    try {
+    // The temp name, the rename and the remove-on-throw all live in
+    // publish_atomically now, shared with export_store_to_parquet -- which had
+    // none of it, and left truncated Parquet under the user's chosen name when
+    // a COPY ran out of space. One writer having the discipline and the other
+    // not is the kind of asymmetry a shared helper makes hard to reintroduce.
+    publish_atomically(impl_->path, [&](const std::string& tmp) {
         exec_or_throw(impl_->con,
             "COPY (SELECT * FROM buf ORDER BY head_id, ts) TO '" +
             sql_quote(tmp) + "' (FORMAT PARQUET)");
-        std::error_code ec;
-        std::filesystem::rename(tmp, impl_->path, ec);
-        if (ec)
-            throw std::runtime_error("cannot rename " + tmp + " to " + impl_->path +
-                                     ": " + ec.message());
-    } catch (...) {
-        // Never leave the temp behind, on any failure and not just a failed
-        // rename: the reader globs *.parquet, which this name deliberately does
-        // not match, but a partial file from an out-of-space COPY is still
-        // litter in a directory somebody has to reason about.
-        std::error_code ignored;
-        std::filesystem::remove(tmp, ignored);
-        throw;
-    }
+    });
 }
 
 void ParquetEventStore::abandon() {
@@ -264,6 +251,10 @@ void ParquetEventStore::abandon() {
     }
 }
 
+// Events accepted, which after abandon() is not events written -- the rows are
+// gone and this still reports them. Left that way deliberately: no caller reads
+// count() on a path that abandoned, and the alternative (zeroing it) would make
+// the accessor mean two different things depending on how the store ended.
 long long ParquetEventStore::count() const { return impl_->n; }
 
 std::string parquet_path_for(const std::string& out_dir, const std::string& in_path) {
