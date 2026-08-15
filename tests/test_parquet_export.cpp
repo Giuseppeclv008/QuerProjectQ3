@@ -210,8 +210,51 @@ TEST_F(ParquetExportTest, RefusesToWriteTheStoresWriteAheadLog) {
     const auto wal = db + ".wal";
     ASSERT_FALSE(fs::exists(wal)) << "fixture already has a WAL; the case is different";
 
-    EXPECT_THROW(mas::export_store_to_parquet(db, wal), std::runtime_error);
+    // On the message, not merely on the type: every guard in this function
+    // throws std::runtime_error, so a bare EXPECT_THROW passes on any of them
+    // -- and an earlier version of this test passed on a stat failure that
+    // never reached the WAL guard at all.
+    const auto refusal = [](const std::string& store, const std::string& dest) {
+        try {
+            mas::export_store_to_parquet(store, dest);
+        } catch (const std::runtime_error& e) {
+            return std::string(e.what());
+        }
+        return std::string("<no throw>");
+    };
+
+    const auto plain = refusal(db, wal);
+    EXPECT_NE(plain.find("write-ahead log"), std::string::npos) << plain;
     EXPECT_FALSE(fs::exists(wal)) << "a Parquet file was left where the log goes";
+
+    // The same store, spelled differently. String equality let this one
+    // through: one "./" and the paths compare unequal while naming one file.
+    const auto dotted = (fs::path(db).parent_path() / "." /
+                         fs::path(db).filename()).string();
+    const auto spelled = refusal(dotted, wal);
+    EXPECT_NE(spelled.find("write-ahead log"), std::string::npos) << spelled;
+    EXPECT_FALSE(fs::exists(wal)) << "the guard is defeated by a ./ in the store path";
+}
+
+TEST_F(ParquetExportTest, APathThatCannotBeStatedFailsByName) {
+    // What a symlink loop actually produces, which is the case an earlier test
+    // mistook for coverage of the WAL guard's fallback: the guards below it are
+    // never reached, so this function owes the caller its own message rather
+    // than a raw filesystem_error about posix_stat.
+    const auto loop = p("loop");
+    std::error_code ec;
+    fs::create_symlink(loop, loop, ec);   // a link to itself: ELOOP on resolve
+    if (ec) GTEST_SKIP() << "cannot create a self-referential symlink here";
+
+    try {
+        mas::export_store_to_parquet(loop, loop + ".parquet");
+        FAIL() << "expected a throw for a store that cannot be stat'd";
+    } catch (const std::runtime_error& e) {
+        const std::string msg = e.what();
+        EXPECT_NE(msg.find("cannot examine store"), std::string::npos) << msg;
+        EXPECT_NE(msg.find(loop), std::string::npos) << msg;
+    }
+    fs::remove(loop, ec);
 }
 
 TEST_F(ParquetExportTest, MissingStoreFailsByName) {

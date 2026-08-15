@@ -217,18 +217,28 @@ int main(int argc, char** argv) {
                 // would have to buffer all 21.9M events before it could name
                 // anything (spec §3.1).
                 for (const auto& f : files) {
-                    mas::ParquetEventStore store(mas::parquet_path_for(out, f), machine);
-                    const long long n = clean_into(f, store);
-                    if (n < 0) {
-                        // Leave no file behind for a day that failed: the
-                        // reader globs the directory and a valid empty Parquet
-                        // is indistinguishable from a day with no events.
-                        store.abandon();
+                    // The throw path needs the filename as much as the `n < 0`
+                    // path does, and only the latter had it: with thirty day
+                    // files on the command line, a bare DuckDB cast error names
+                    // the value that failed and not the file it came from.
+                    try {
+                        mas::ParquetEventStore store(mas::parquet_path_for(out, f), machine);
+                        const long long n = clean_into(f, store);
+                        if (n < 0) {
+                            // Leave no file behind for a day that failed: the
+                            // reader globs the directory and a valid empty
+                            // Parquet is indistinguishable from a day with no
+                            // events.
+                            store.abandon();
+                            std::cerr << "error: cannot clean " << f << "\n";
+                            return 1;
+                        }
+                        store.close();
+                        events += n;
+                    } catch (...) {
                         std::cerr << "error: cannot clean " << f << "\n";
-                        return 1;
+                        throw;
                     }
-                    store.close();
-                    events += n;
                 }
                 clean_s = seconds_since(t0);
                 rows = events;
@@ -267,14 +277,23 @@ int main(int argc, char** argv) {
                 try {
                     if (parquet) {
                         for (std::size_t i; (i = next.fetch_add(1)) < files.size();) {
-                            mas::ParquetEventStore local(
-                                mas::parquet_path_for(out, files[i]), machine);
-                            per_file[i] = mas::clean_file(files[i], local);
-                            if (per_file[i] < 0) {
-                                local.abandon();   // see the 1T branch
-                                failed = true;
-                            } else {
-                                local.close();
+                            // Named here, not only in the summary loop below:
+                            // on a throw `per_file[i]` is never assigned and
+                            // stays 0, so that loop skips it and the one line
+                            // identifying which input failed goes missing.
+                            try {
+                                mas::ParquetEventStore local(
+                                    mas::parquet_path_for(out, files[i]), machine);
+                                per_file[i] = mas::clean_file(files[i], local);
+                                if (per_file[i] < 0) {
+                                    local.abandon();   // see the 1T branch
+                                    failed = true;
+                                } else {
+                                    local.close();
+                                }
+                            } catch (...) {
+                                std::cerr << "error: cannot clean " << files[i] << "\n";
+                                throw;
                             }
                         }
                         return;

@@ -1,8 +1,11 @@
 #include "mas/store/ParquetEventStore.hpp"
+#include "mas/store/BeatingStore.hpp"
 #include <duckdb.hpp>
 #include <gtest/gtest.h>
+#include <chrono>
 #include <cstdio>
 #include <filesystem>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -122,10 +125,11 @@ TEST(ParquetEventStore, CloseLeavesNoTemporaryBehind) {
 TEST(ParquetEventStore, TwoWritersOnOnePathLeaveOneWholeFile) {
     // The re-dispatch case, minus the concurrency a unit test cannot stage: a
     // tombstoned worker and its replacement both derive this path from the same
-    // input basename. Interleaving the writes and closing both is what a torn
-    // file would come from -- the rename makes the loser's file replace the
-    // winner's whole, so the reader sees one complete copy with one writer's
-    // full row count, never a partial one.
+    // input basename. The closes here are sequential -- a unit test cannot stage
+    // the real interleaving -- so what this pins down is the property that makes
+    // the interleaving survivable: each store writes its own temp and renames,
+    // so the second replaces the first's file whole and the reader sees one
+    // writer's full row count, never a concatenation or a partial.
     const std::string p = "t_pq_race.parquet";
     std::remove(p.c_str());
     {
@@ -140,6 +144,75 @@ TEST(ParquetEventStore, TwoWritersOnOnePathLeaveOneWholeFile) {
     }
     EXPECT_EQ(rowsIn(p), 2) << "a torn or concatenated file, not one writer's copy";
     std::remove(p.c_str());
+}
+
+TEST(ParquetEventStore, AFailedWriteWritesNoFileAtAll) {
+    // The reachable case: CsvRawReader copies the timestamp cell verbatim (only
+    // the numeric cells go through stod and the skipped_ counter), so a corrupt
+    // one reaches the VARCHAR -> TIMESTAMP cast here and throws. What used to
+    // happen was worse than the throw: the destructor wrote out whatever had
+    // already been flushed, leaving a partial day that reads as a whole one --
+    // and buffering one Appender for the store's life widened that window from
+    // a batch to 204,800 rows.
+    const std::string path = "t_pq_failed.parquet";
+    std::remove(path.c_str());
+    {
+        mas::ParquetEventStore store(path, "MCC");
+        store.write(std::vector<mas::CapEvent>{ev(1, "2026-02-01 10:00:00", 1)});
+        EXPECT_THROW(store.write(std::vector<mas::CapEvent>{ev(1, "GARBAGE-TS", 2)}),
+                     std::exception);
+        // close() must refuse rather than write the rows that survived...
+        EXPECT_THROW(store.close(), std::runtime_error);
+    }   // ...and the destructor must not write them either.
+    EXPECT_FALSE(std::filesystem::exists(path))
+        << "a failed clean left a file the reader would treat as a real day";
+    for (const auto& e : std::filesystem::directory_iterator("."))
+        EXPECT_EQ(e.path().filename().string().find("t_pq_failed.parquet.tmp."),
+                  std::string::npos)
+            << "left a temp behind: " << e.path().filename().string();
+}
+
+TEST(ParquetEventStore, AThrowBetweenWritesWritesNoFileEither) {
+    // The shape the failure latch cannot see, and the one the worker actually
+    // runs: BeatingStore::write() calls inner_.write() and *then* beat_(), and
+    // beat_() reaches ZmqPushSink::send, which throws on a 60 s send timeout --
+    // the coordinator dying mid-file, which is the case the resilience design
+    // is built around. The store's own write() succeeded, so `failed` stays
+    // clear and the count check finds `n` and buf in perfect agreement: both
+    // describe the same truncated set. Only "the destructor never publishes"
+    // covers this.
+    const std::string path = "t_pq_beat_throw.parquet";
+    std::remove(path.c_str());
+    {
+        mas::ParquetEventStore store(path, "MCC");
+        int beats = 0;
+        mas::BeatingStore beating(store, [&beats] {
+            if (++beats == 2) throw std::runtime_error("send timed out");
+        }, std::chrono::milliseconds{0});   // beat on every write
+        beating.write(std::vector<mas::CapEvent>{ev(1, "2026-02-01 10:00:00", 1)});
+        EXPECT_THROW(
+            beating.write(std::vector<mas::CapEvent>{ev(1, "2026-02-01 10:00:01", 2)}),
+            std::runtime_error);
+    }   // no close(): the store dies holding rows nobody published
+    EXPECT_FALSE(std::filesystem::exists(path))
+        << "a heartbeat that threw published a partial day";
+}
+
+TEST(ParquetEventStore, WritingAfterCloseIsAnError) {
+    // Otherwise the store accepts rows it will never write and count() reports
+    // them: silent loss, with the accessor confirming the loss did not happen.
+    const std::string path = "t_pq_after_close.parquet";
+    std::remove(path.c_str());
+    {
+        mas::ParquetEventStore store(path, "MCC");
+        store.write(std::vector<mas::CapEvent>{ev(1, "2026-02-01 10:00:00", 1)});
+        store.close();
+        EXPECT_THROW(store.write(std::vector<mas::CapEvent>{ev(1, "2026-02-01 10:00:01", 2)}),
+                     std::runtime_error);
+        EXPECT_EQ(store.count(), 1) << "count() counted a row the file does not hold";
+    }
+    EXPECT_EQ(rowsIn(path), 1);
+    std::remove(path.c_str());
 }
 
 TEST(ParquetEventStore, EmptyInputWritesAReadableFile) {

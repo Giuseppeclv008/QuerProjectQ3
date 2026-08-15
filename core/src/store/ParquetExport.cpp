@@ -39,7 +39,23 @@ ExportResult export_store_to_parquet(const std::string& db_path,
                                      const std::string& out_path,
                                      const std::string& since,
                                      const std::string& until) {
-    if (!std::filesystem::exists(db_path))
+    // The non-throwing overload throughout this function. The throwing one
+    // leaks std::filesystem_error past every message below: a store behind a
+    // symlink loop or an unreadable directory answered with a raw
+    // "in posix_stat: failed to determine attributes", naming neither the guard
+    // that would have refused it nor what the caller should do. Worse, it made
+    // the guards further down unreachable for exactly the paths they exist to
+    // catch, which is how a test of the WAL guard came to pass on a stat error
+    // instead.
+    const auto exists_or_throw = [](const std::string& p, const char* what) {
+        std::error_code ec;
+        const bool present = std::filesystem::exists(p, ec);
+        if (ec) throw std::runtime_error(std::string("cannot examine ") + what +
+                                         " " + p + ": " + ec.message());
+        return present;
+    };
+
+    if (!exists_or_throw(db_path, "store"))
         throw std::runtime_error("no such store: " + db_path);
 
     // COPY ... TO truncates its destination, and it does not care that the
@@ -48,12 +64,13 @@ ExportResult export_store_to_parquet(const std::string& db_path,
     // verification below read that Parquet back, found the count it expected,
     // and exited 0 -- silent destruction of the format this project persists
     // into, reported as success.
-    std::error_code ec;
-    if (std::filesystem::exists(out_path) &&
+    const bool dest_exists = exists_or_throw(out_path, "destination");
+    std::error_code ec;   // equivalent()'s; exists_or_throw owns its own
+    if (dest_exists &&
         std::filesystem::equivalent(db_path, out_path, ec) && !ec)
         throw std::runtime_error("refusing to export " + db_path +
                                  " onto itself: the destination is the store");
-    if (std::filesystem::exists(out_path))
+    if (dest_exists)
         throw std::runtime_error("refusing to overwrite " + out_path +
                                  ": delete it first, or export to a new path");
     // Both guards above turn on the destination already existing, which leaves
@@ -62,17 +79,52 @@ ExportResult export_store_to_parquet(const std::string& db_path,
     // today -- DuckDB rejected the bogus log and the rows survived -- but
     // mas_merge documents a WAL precondition, and a file that looks like a log
     // and is not one is a trap laid for whoever hits that path next.
-    if (out_path == db_path + ".wal")
+    // weakly_canonical, not string equality: `equivalent()` three lines up
+    // cannot serve here because it needs both files to exist, and the whole
+    // point of this guard is the WAL that does not exist yet. A raw comparison
+    // let `mas_export ./s.duckdb s.duckdb.wal` straight through -- one "./" and
+    // the two strings differ while the paths do not. weakly_canonical resolves
+    // the spelling without requiring the target to exist.
+    //
+    // One error_code each, and both checked: sharing one hid whether the
+    // *destination* resolved, and an unresolvable destination compares equal to
+    // nothing -- which would silently turn the guard off.
+    //
+    // The fallback is reached, but it can never fire, and the difference
+    // matters enough to state precisely -- an earlier version of this comment
+    // claimed no input reached it at all, which is wrong: `db_path + ".wal"` is
+    // a path exists_or_throw never examines, so `wal_ec` can be set while both
+    // arguments stat cleanly. A symlink loop at the WAL's own name does it, as
+    // does a store filename long enough that + ".wal" exceeds NAME_MAX.
+    //
+    // What holds is the weaker claim. `wal_ec` is set only when <db>.wal itself
+    // is unresolvable, and in that state any out_path spelling that string-
+    // equals db_path + ".wal" is equally unstat-able and was already refused by
+    // name above. dest_ec alone cannot cause !resolved either, since whatever
+    // breaks weakly_canonical(out_path) breaks exists(out_path) first. So the
+    // comparison on this line is always false when it is evaluated -- kept
+    // because the alternative to a dead three-token branch is a guard that
+    // fails open if that ever stops being true.
+    std::error_code wal_ec, dest_ec;
+    const auto wal = std::filesystem::weakly_canonical(db_path + ".wal", wal_ec);
+    const auto dest = std::filesystem::weakly_canonical(out_path, dest_ec);
+    const bool resolved = !wal_ec && !dest_ec && !wal.empty() && !dest.empty();
+    if (resolved ? wal == dest : out_path == db_path + ".wal")
         throw std::runtime_error("refusing to write " + out_path +
                                  ": that is the store's write-ahead log");
 
     const auto parent = std::filesystem::path(out_path).parent_path();
     if (!parent.empty()) {
-        std::error_code ec;
-        std::filesystem::create_directories(parent, ec);
-        if (ec && !std::filesystem::is_directory(parent))
+        std::error_code mk_ec, dir_ec;
+        std::filesystem::create_directories(parent, mk_ec);
+        // Non-throwing here too: the last throwing filesystem call in this
+        // function, four lines under the block that stopped the rest of them
+        // leaking filesystem_error past these messages. No input reaches it --
+        // parent is a prefix of out_path, which exists_or_throw already stat'd
+        // -- but "unreachable" is what the WAL fallback's comment claimed too.
+        if (mk_ec && !std::filesystem::is_directory(parent, dir_ec))
             throw std::runtime_error("cannot create directory " + parent.string() +
-                                     ": " + ec.message());
+                                     ": " + mk_ec.message());
     }
 
     // READ_ONLY is load-bearing, not defensive: it is what lets this run

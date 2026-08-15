@@ -1,5 +1,6 @@
 #pragma once
 #include <duckdb.hpp>
+#include <memory>
 #include <stdexcept>
 #include <string>
 

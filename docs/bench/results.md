@@ -378,8 +378,10 @@ Every figure has an artifact in `bench/parquet-comparison/`:
 `write_single.out` and `write_single_duckdbfirst.out` (the two orderings),
 `parity.out`, `decompose_final.out` (median of 7), `calibrate.out`,
 `write_raw_perday.csv` (the superseded per-day regime, kept as an independent
-estimate), `run_bench_smoke.csv` (the 1-day `run_bench.sh` parquet block), and
-`bench/read_results.csv` (the 18 read repeats).
+estimate), `run_bench_smoke.csv` and `run_bench_smoke_posthoist.csv` (the 1-day
+`run_bench.sh` parquet block, either side of the Appender hoist),
+`bench/read_results.csv` (the 18 read repeats) and
+`bench/read_results_with_sort.csv` (the same, through the withdrawn `ORDER BY`).
 
 ### Write
 
@@ -419,19 +421,33 @@ with it:
 (That last row predates the Appender hoist described below, as do all the
 month-scale figures. `run_bench_smoke_posthoist.csv` is the same run after it.)
 
-**The Parquet write figures are a floor, not a ceiling.** `ParquetEventStore`
-built a fresh `duckdb::Appender` on every `write()` — one catalog lookup and
-type bind per 8,192-event batch, about 2,670 of them per day-file. Hoisting it
-to one per store is `run_bench_smoke_posthoist.csv`: the 1-day parquet median
-goes 1.254 s → 1.195 s, **-4.7%**. Read that as a direction and not a
-magnitude — the DuckDB control in the same pair of runs drifted **+8.3%**
-(3.536 s → 3.828 s) with no code change touching its path, so the machine moved
-between them by more than the effect being measured. All the month-scale
-figures above predate the hoist, and a store written to measure what
-persistence costs was itself paying an avoidable tax while it measured.
+**The Parquet write figures are a floor on speed, and the hoist that lowered
+them cost memory.** `ParquetEventStore` built a fresh `duckdb::Appender` on
+every `write()` — one catalog lookup and type bind per 8,192-event batch, about
+2,670 of them per day-file. Hoisting it to one per store trades those for a
+larger resident buffer, because rows now accumulate until DuckDB's
+`DEFAULT_FLUSH_COUNT` (204,800) instead of landing in `buf` every batch. Both
+halves are in `run_bench_smoke.csv` and `run_bench_smoke_posthoist.csv`:
+
+| metric | pre-hoist | post-hoist | Δ | `mono-1T` control |
+|---|---:|---:|---:|---:|
+| parquet wall clock | 1.254 s | 1.195 s | **-4.7%** | +8.3% (drifted) |
+| parquet peak RSS | 322.1 MB | 351.1 MB | **+9.0%** | -0.1% (flat) |
+
+**The memory cost is the better-measured of the two.** The RSS ranges do not
+overlap ([320.1, 322.8] against [347.4, 353.9]) and its control is flat; the
+timing control moved by more than the timing effect, so -4.7% is a direction
+and not a magnitude. Quoting the speed win without the memory regression would
+have been reporting the favourable half of one artifact pair — which is the
+thing the Measurement integrity section below exists to forbid.
+
+All the month-scale figures above predate the hoist. And a store written to
+measure what persistence costs was itself paying an avoidable tax while it
+measured.
 
 And `calibrate.out` supplies the within-condition spread the n=1 cells cannot:
-its later pair repeats to ~0.3% (parquet 4.38/4.42 s, duckdb 11.89/11.85 s).
+its later pair repeats to within 0.9% (parquet 4.38/4.42 s, 0.91% of the
+mean; duckdb 11.89/11.85 s, 0.34%).
 Run-to-run noise is an order of magnitude below the effect, so the conclusion
 survives the thin sampling even though the sampling should be stated.
 

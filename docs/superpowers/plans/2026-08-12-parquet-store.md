@@ -1059,7 +1059,8 @@ bench/run_bench.sh: line 197: /Users/giuseppecalvello/dev/Polito/magistrale: No 
 space in the checkout's path. The block had never been executed, which is the
 only reason a defect that fires on every run survived in it. Fixed by quoting.
 The parquet timings this produced (1.253–1.255 s against mono-1T's
-3.514–3.605 s, so **2.83x**) are a third independent estimate of the write
+3.514–3.605 s, so **2.82x** on medians, which is the estimator
+`docs/bench/results.md` quotes) are a third independent estimate of the write
 ratio, alongside the month-scale 2.79x and the per-day 2.69x.
 
 - [x] **Step 5: Commit**

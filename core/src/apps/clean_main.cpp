@@ -67,7 +67,10 @@ int main(int argc, char** argv) {
             store.close();
             std::cerr << "wrote " << n << " cap events to parquet\n";
         } catch (const std::exception& e) {
-            std::cerr << "error: " << e.what() << "\n";
+            // Named on this path too, for the same reason the `n < 0` branch
+            // names it: a DuckDB cast error reports the value that failed and
+            // says nothing about which file held it.
+            std::cerr << "error: cannot clean " << in << ": " << e.what() << "\n";
             return 1;
         }
         return 0;
