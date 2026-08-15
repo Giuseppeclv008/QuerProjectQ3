@@ -24,10 +24,17 @@ public:
     // Throws std::runtime_error if the parent directory does not exist and
     // cannot be created.
     ParquetEventStore(const std::string& out_path, const std::string& machine_id);
-    ~ParquetEventStore() override;   // calls close(), logs and swallows failure
+    // Discards the buffer. Writes nothing, ever -- publishing is close()'s job
+    // and only close()'s. A store destroyed without it leaves no file, which is
+    // what makes "an unfinished clean produces nothing" hold for every way a
+    // clean can be interrupted rather than only the ones this class can see.
+    ~ParquetEventStore() override;
 
     void write(std::span<const CapEvent> events) override;   // buffers
-    void close();                    // writes the file; throws on failure
+    // Writes the file. Throws on failure, and on the first call after a failed
+    // write() -- a second call after that one returns quietly, having nothing
+    // left to refuse.
+    void close();
 
     // Discard the buffer and write nothing, ever -- close() and the destructor
     // both become no-ops. For a day-file whose clean failed: without this the

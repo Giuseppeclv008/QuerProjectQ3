@@ -267,14 +267,23 @@ int main(int argc, char** argv) {
                 try {
                     if (parquet) {
                         for (std::size_t i; (i = next.fetch_add(1)) < files.size();) {
-                            mas::ParquetEventStore local(
-                                mas::parquet_path_for(out, files[i]), machine);
-                            per_file[i] = mas::clean_file(files[i], local);
-                            if (per_file[i] < 0) {
-                                local.abandon();   // see the 1T branch
-                                failed = true;
-                            } else {
-                                local.close();
+                            // Named here, not only in the summary loop below:
+                            // on a throw `per_file[i]` is never assigned and
+                            // stays 0, so that loop skips it and the one line
+                            // identifying which input failed goes missing.
+                            try {
+                                mas::ParquetEventStore local(
+                                    mas::parquet_path_for(out, files[i]), machine);
+                                per_file[i] = mas::clean_file(files[i], local);
+                                if (per_file[i] < 0) {
+                                    local.abandon();   // see the 1T branch
+                                    failed = true;
+                                } else {
+                                    local.close();
+                                }
+                            } catch (...) {
+                                std::cerr << "error: cannot clean " << files[i] << "\n";
+                                throw;
                             }
                         }
                         return;

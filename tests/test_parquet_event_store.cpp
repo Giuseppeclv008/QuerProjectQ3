@@ -1,8 +1,11 @@
 #include "mas/store/ParquetEventStore.hpp"
+#include "mas/store/BeatingStore.hpp"
 #include <duckdb.hpp>
 #include <gtest/gtest.h>
+#include <chrono>
 #include <cstdio>
 #include <filesystem>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -167,6 +170,49 @@ TEST(ParquetEventStore, AFailedWriteWritesNoFileAtAll) {
         EXPECT_EQ(e.path().filename().string().find("t_pq_failed.parquet.tmp."),
                   std::string::npos)
             << "left a temp behind: " << e.path().filename().string();
+}
+
+TEST(ParquetEventStore, AThrowBetweenWritesWritesNoFileEither) {
+    // The shape the failure latch cannot see, and the one the worker actually
+    // runs: BeatingStore::write() calls inner_.write() and *then* beat_(), and
+    // beat_() reaches ZmqPushSink::send, which throws on a 60 s send timeout --
+    // the coordinator dying mid-file, which is the case the resilience design
+    // is built around. The store's own write() succeeded, so `failed` stays
+    // clear and the count check finds `n` and buf in perfect agreement: both
+    // describe the same truncated set. Only "the destructor never publishes"
+    // covers this.
+    const std::string path = "t_pq_beat_throw.parquet";
+    std::remove(path.c_str());
+    {
+        mas::ParquetEventStore store(path, "MCC");
+        int beats = 0;
+        mas::BeatingStore beating(store, [&beats] {
+            if (++beats == 2) throw std::runtime_error("send timed out");
+        }, std::chrono::milliseconds{0});   // beat on every write
+        beating.write(std::vector<mas::CapEvent>{ev(1, "2026-02-01 10:00:00", 1)});
+        EXPECT_THROW(
+            beating.write(std::vector<mas::CapEvent>{ev(1, "2026-02-01 10:00:01", 2)}),
+            std::runtime_error);
+    }   // no close(): the store dies holding rows nobody published
+    EXPECT_FALSE(std::filesystem::exists(path))
+        << "a heartbeat that threw published a partial day";
+}
+
+TEST(ParquetEventStore, WritingAfterCloseIsAnError) {
+    // Otherwise the store accepts rows it will never write and count() reports
+    // them: silent loss, with the accessor confirming the loss did not happen.
+    const std::string path = "t_pq_after_close.parquet";
+    std::remove(path.c_str());
+    {
+        mas::ParquetEventStore store(path, "MCC");
+        store.write(std::vector<mas::CapEvent>{ev(1, "2026-02-01 10:00:00", 1)});
+        store.close();
+        EXPECT_THROW(store.write(std::vector<mas::CapEvent>{ev(1, "2026-02-01 10:00:01", 2)}),
+                     std::runtime_error);
+        EXPECT_EQ(store.count(), 1) << "count() counted a row the file does not hold";
+    }
+    EXPECT_EQ(rowsIn(path), 1);
+    std::remove(path.c_str());
 }
 
 TEST(ParquetEventStore, EmptyInputWritesAReadableFile) {

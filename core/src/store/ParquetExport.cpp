@@ -68,10 +68,18 @@ ExportResult export_store_to_parquet(const std::string& db_path,
     // let `mas_export ./s.duckdb s.duckdb.wal` straight through -- one "./" and
     // the two strings differ while the paths do not. weakly_canonical resolves
     // the spelling without requiring the target to exist.
-    std::error_code wal_ec;
+    //
+    // One error_code each, and both checked: sharing one hid whether the
+    // *destination* resolved, and an unresolvable destination compares equal to
+    // nothing -- which silently turns the guard off in precisely the cases
+    // (ELOOP, an unreadable intermediate) where it is least safe to assume.
+    // Falling back to the raw comparison keeps the common spelling covered
+    // rather than trading one blind spot for another.
+    std::error_code wal_ec, dest_ec;
     const auto wal = std::filesystem::weakly_canonical(db_path + ".wal", wal_ec);
-    const auto dest = std::filesystem::weakly_canonical(out_path, wal_ec);
-    if (!wal.empty() && wal == dest)
+    const auto dest = std::filesystem::weakly_canonical(out_path, dest_ec);
+    const bool resolved = !wal_ec && !dest_ec && !wal.empty() && !dest.empty();
+    if (resolved ? wal == dest : out_path == db_path + ".wal")
         throw std::runtime_error("refusing to write " + out_path +
                                  ": that is the store's write-ahead log");
 

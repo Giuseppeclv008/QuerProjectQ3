@@ -2,8 +2,8 @@
 #include "mas/store/DuckDbExec.hpp"
 #include "mas/store/SqlQuote.hpp"
 #include <duckdb.hpp>
+#include <atomic>
 #include <filesystem>
-#include <iostream>
 #include <optional>
 #include <stdexcept>
 #ifdef _WIN32
@@ -76,20 +76,58 @@ ParquetEventStore::ParquetEventStore(const std::string& out_path,
 }
 
 ParquetEventStore::~ParquetEventStore() {
-    try {
-        close();
-    } catch (const std::exception& e) {
-        // A destructor cannot report failure, and throwing from one during
-        // stack unwinding terminates. Say it loudly instead; callers that need
-        // the error call close() themselves.
-        std::cerr << "error: writing " << impl_->path << ": " << e.what() << "\n";
+    // Cleanup only. Publishing a file is an explicit act -- close() -- and this
+    // is not it.
+    //
+    // The destructor used to call close(), which made every escape between the
+    // first write() and the close() a publication: the rows accepted so far
+    // became a file in the directory the reader globs, with nothing to mark it
+    // as partial. A failure inside write() is only the nearest such escape. The
+    // one that actually happens is a throw *between* writes -- BeatingStore
+    // calls inner_.write() and then beat_(), and beat_() reaches
+    // ZmqPushSink::send, which throws when the coordinator stops draining, the
+    // exact case the resilience design is built around. No latch inside this
+    // class can see that, and the count check cannot either: `n` and `buf`
+    // agree perfectly, because both describe the same truncated set.
+    //
+    // So the rule is the one that does not depend on enumerating the ways a
+    // clean can fail: an unfinished store writes nothing. All four call sites
+    // close() on their success path, and abandon() stays for the failure they
+    // detect themselves (a clean that returns < 0 without throwing).
+    if (impl_->appender) {
+        // Dropping it flushes into buf -- DuckDB's destructor calls Close()
+        // unless an exception is unwinding -- which is harmless here only
+        // because nothing reads buf afterwards. Cleared anyway, so that stays
+        // true if this ever grows a caller.
+        impl_->appender.reset();
+        try {
+            exec_or_throw(impl_->con, "DELETE FROM buf");
+        } catch (const std::exception&) {
+            // A destructor cannot report failure and must not throw. The rows
+            // die with the connection on the next line regardless.
+        }
     }
 }
 
 void ParquetEventStore::write(std::span<const CapEvent> events) {
     if (events.empty()) return;
-    if (!impl_->appender) impl_->appender.emplace(impl_->con, "buf");
-    auto& app = *impl_->appender;
+    // Symmetric with the failure latch below: a store that has published is
+    // finished. Without this, write() accepted rows it would never write while
+    // count() went on reporting them -- silent loss, with the accessor
+    // confirming that no loss had occurred.
+    if (impl_->closed)
+        throw std::runtime_error("write() after close() on " + impl_->path);
+    auto& app = [&]() -> duckdb::Appender& {
+        // Inside the latch's reach: if constructing the Appender threw, `failed`
+        // stayed clear and the old destructor wrote a valid, empty Parquet.
+        try {
+            if (!impl_->appender) impl_->appender.emplace(impl_->con, "buf");
+        } catch (...) {
+            impl_->failed = true;
+            throw;
+        }
+        return *impl_->appender;
+    }();
     try {
         for (const auto& e : events) {
             app.BeginRow();
@@ -156,12 +194,13 @@ void ParquetEventStore::close() {
     // lets one Appender serve the store's whole life.
     if (impl_->appender) { impl_->appender->Close(); impl_->appender.reset(); }
 
-    // What the store accepted must equal what the table holds, checked before
-    // anything is written rather than trusted. Every way this file can come out
-    // short -- a flush that did not happen, a row DuckDB dropped, a future
-    // change to the buffering -- ends in these two numbers disagreeing, and the
-    // one thing that must not happen is a short file arriving where a whole day
-    // is expected. ParquetExport verifies its own output for the same reason.
+    // What the store accepted must equal what the table holds. This compares
+    // the store against itself, so be clear about its reach: it catches a flush
+    // that did not happen, a row DuckDB dropped, a future change to the
+    // buffering -- and it cannot see a short *input*, because there `n` and
+    // `buf` agree perfectly on the same truncated set. That case is the
+    // destructor's to handle, by never publishing. ParquetExport verifies its
+    // own output in the same spirit.
     const long long in_table = scalar_or_throw(impl_->con, "SELECT COUNT(*) FROM buf");
     if (in_table != impl_->n)
         throw std::runtime_error(
@@ -173,9 +212,13 @@ void ParquetEventStore::close() {
     // process would otherwise share a temp name and truly tear it. No caller
     // does that today -- monolith-MT gives each thread its own file, a worker
     // handles one item at a time -- but the whole point of this dance is that
-    // the collision case is the one nobody arranges deliberately.
+    // the collision case is the one nobody arranges deliberately. A counter
+    // rather than `this`: an object address is equally unique among live
+    // objects, and puts a memory address into a filename and into the error
+    // text a user reads.
+    static std::atomic<unsigned long long> next_token{0};
     const std::string tmp = impl_->path + ".tmp." + std::to_string(process_id()) +
-                            "." + std::to_string(reinterpret_cast<uintptr_t>(this));
+                            "." + std::to_string(next_token.fetch_add(1));
     try {
         exec_or_throw(impl_->con,
             "COPY (SELECT * FROM buf ORDER BY head_id, ts) TO '" +
