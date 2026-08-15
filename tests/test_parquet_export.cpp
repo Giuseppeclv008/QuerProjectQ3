@@ -223,14 +223,16 @@ TEST_F(ParquetExportTest, RefusesToWriteTheStoresWriteAheadLog) {
         return std::string("<no throw>");
     };
 
-    EXPECT_NE(refusal(db, wal).find("write-ahead log"), std::string::npos);
+    const auto plain = refusal(db, wal);
+    EXPECT_NE(plain.find("write-ahead log"), std::string::npos) << plain;
     EXPECT_FALSE(fs::exists(wal)) << "a Parquet file was left where the log goes";
 
     // The same store, spelled differently. String equality let this one
     // through: one "./" and the paths compare unequal while naming one file.
     const auto dotted = (fs::path(db).parent_path() / "." /
                          fs::path(db).filename()).string();
-    EXPECT_NE(refusal(dotted, wal).find("write-ahead log"), std::string::npos);
+    const auto spelled = refusal(dotted, wal);
+    EXPECT_NE(spelled.find("write-ahead log"), std::string::npos) << spelled;
     EXPECT_FALSE(fs::exists(wal)) << "the guard is defeated by a ./ in the store path";
 }
 
