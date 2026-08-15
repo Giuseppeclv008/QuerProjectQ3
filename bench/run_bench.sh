@@ -198,9 +198,14 @@ for v in "${VOLUMES[@]}"; do
         ev=$(echo "$line"    | sed -n 's/.* files, \([0-9]*\) events.*/\1/p')
         clean=$(echo "$line" | sed -n 's/.*clean \([0-9.]*\) s.*/\1/p')
         total=$(echo "$line" | sed -n 's/.*total \([0-9.]*\) s.*/\1/p')
+        # The glob reaches read_parquet as a SQL literal, so it gets the same
+        # quote-doubling store.py and mas::sql_quote apply. $R is under mktemp
+        # -d and will not contain an apostrophe today; the plan's Global
+        # Constraints state the rule without an exemption for that.
         rows=$("$PY_DUCKDB" -c "
-import duckdb,sys
-print(duckdb.sql(\"SELECT COUNT(DISTINCT (machine_id, head_id, ts)) FROM read_parquet('$R/pq/*.parquet')\").fetchone()[0])")
+import duckdb
+g = '$R/pq/*.parquet'.replace(\"'\", \"''\")
+print(duckdb.sql(f\"SELECT COUNT(DISTINCT (machine_id, head_id, ts)) FROM read_parquet('{g}')\").fetchone()[0])")
         check_count "$rows" "$v" "parquet v=$v rep=$rep"
         read -r real user sys rss < <(parse_time "$R/log")
         emit_row "parquet" 0 1 "$v" "$rep" "$clean" "0" "$total" "$ev" "$rss" "$user" "$sys" "$real"

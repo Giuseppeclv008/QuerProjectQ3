@@ -62,7 +62,16 @@ ExportResult export_store_to_parquet(const std::string& db_path,
     // today -- DuckDB rejected the bogus log and the rows survived -- but
     // mas_merge documents a WAL precondition, and a file that looks like a log
     // and is not one is a trap laid for whoever hits that path next.
-    if (out_path == db_path + ".wal")
+    // weakly_canonical, not string equality: `equivalent()` three lines up
+    // cannot serve here because it needs both files to exist, and the whole
+    // point of this guard is the WAL that does not exist yet. A raw comparison
+    // let `mas_export ./s.duckdb s.duckdb.wal` straight through -- one "./" and
+    // the two strings differ while the paths do not. weakly_canonical resolves
+    // the spelling without requiring the target to exist.
+    std::error_code wal_ec;
+    const auto wal = std::filesystem::weakly_canonical(db_path + ".wal", wal_ec);
+    const auto dest = std::filesystem::weakly_canonical(out_path, wal_ec);
+    if (!wal.empty() && wal == dest)
         throw std::runtime_error("refusing to write " + out_path +
                                  ": that is the store's write-ahead log");
 

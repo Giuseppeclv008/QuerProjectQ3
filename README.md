@@ -634,9 +634,12 @@ that gets handed over.
 usage: clean [--format duckdb|parquet] <raw_in.csv> <events_out.csv|events_out.duckdb|out_dir> [machine_id]
 ```
 
-Processes a single raw CSV day-file. Detects output format by file extension:
-- `.duckdb` → uses `DuckDbEventStore` (probes input first to avoid creating an empty DB)
-- anything else → uses `CsvEventStore`
+Processes a single raw CSV day-file. Output selection:
+- `--format parquet` → the second argument is a *directory*; writes
+  `<dir>/<input basename>.parquet` via `ParquetEventStore`. Nothing is written
+  at all if the clean fails, so a short file never reads as a whole day.
+- otherwise, by file extension: `.duckdb` → `DuckDbEventStore` (probes input
+  first to avoid creating an empty DB); anything else → `CsvEventStore`
 
 Default `machine_id`: `"MCC"`.
 
@@ -1045,7 +1048,7 @@ cmake --build build --parallel
 | `MAS_BUILD_TESTS` | `ON` | Build the GoogleTest suite. `OFF` drops the last dependency that needs network. |
 
 The default triple (`OFF, ON, OFF, ON`) is the build this project has always
-had: **136 tests green**. With `MAS_BENCH_ONLY=ON` the suite is the 51 tests that
+had: **137 tests green**. With `MAS_BENCH_ONLY=ON` the suite is the 51 tests that
 need neither DuckDB nor ZeroMQ; with `MAS_BUILD_TESTS=OFF` on top of that,
 `_deps/` is never created at all — nothing is downloaded:
 
@@ -1295,19 +1298,19 @@ it, `--pdf` logs how to install it and writes Markdown and HTML as normal.
 
 ## Testing
 
-The project has **136 C++ unit tests** across 18 Google Test files, plus **250
+The project has **137 C++ unit tests** across 18 Google Test files, plus **250
 Python tests** for the analytics tier. Both counts are asserted by
 `python/tests/test_readme_counts.py`, so adding a test and forgetting this
 paragraph fails the suite rather than quietly dating it.
 
 ```bash
-cd build && ctest --output-on-failure           # 136 C++ tests
+cd build && ctest --output-on-failure           # 137 C++ tests
 cd python && ../.venv/bin/python -m pytest -q   # 250 Python tests (5 need the rebuilt store or a real day-file and skip without them)
 ```
 
 Under `-DMAS_BENCH_ONLY=ON` the C++ suite is the 51 tests that need neither
 DuckDB nor ZeroMQ — the rest are excluded by design, not skipped. (Two of the
-45 skip without the extracted pool beside the binary.)
+51 skip without the extracted pool beside the binary.)
 
 | Test File | What It Tests |
 |-----------|---------------|
@@ -1317,9 +1320,12 @@ DuckDB nor ZeroMQ — the rest are excluded by design, not skipped. (Two of the
 | `test_platform_metrics.cpp` | Wall/CPU/peak-RSS are plausible and the `metrics:` line is exactly parseable |
 | `test_csv_raw_reader.cpp` | Happy path, truncated rows, malformed numerics, missing file |
 | `test_bench_cpu_parity.cpp` | `bench_cpu`'s streamed loop == `load_columns` + `extract_flat`, event for event, on real data |
+| `test_engine_select.cpp` | `--engine=cpu\|cuda` selection, and that the CUDA path is refused when it was not compiled in |
+| `test_cli_args.cpp` | `unconsumed_flag`: a flag after the positionals is an error, `--format=x` says where the value goes, and `-`/`-1` stay positional |
 | `test_pipeline.cpp` | End-to-end CSV→events flow, batch boundary, error codes |
 | `test_duckdb_smoke.cpp` | DuckDB library linkage sanity |
 | `test_duckdb_event_store.cpp` | Schema creation, write/count, idempotent upsert, merge_from, export_parquet |
+| `test_parquet_event_store.cpp` | Every column round-trips, reprocessing replaces the file, an empty day still yields a readable one, quoted paths, `abandon()` writes nothing, a failed write writes nothing and leaves no temp, two writers on one path leave one whole file |
 | `test_parquet_export.cpp` | mas_export: all ten columns round-trip, exports from a chmod-444 store without writing to it, since/until bounds, bare-date upper bound covers the whole day, empty range still readable, quoted paths |
 | `test_zmq_smoke.cpp` | ZeroMQ library linkage sanity |
 | `test_zmq_transport.cpp` | PUSH/PULL round-trip, timeout behavior, zero-linger teardown regression |

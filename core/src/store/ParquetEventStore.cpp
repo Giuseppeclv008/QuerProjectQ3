@@ -27,6 +27,7 @@ struct ParquetEventStore::Impl {
     std::optional<duckdb::Appender> appender;
     long long n = 0;
     bool closed = false;
+    bool failed = false;        // a write() threw; this store must write nothing
     Impl(std::string p, std::string mid)
         : db(nullptr), con(db), path(std::move(p)), machine_id(std::move(mid)) {}
 };
@@ -89,19 +90,35 @@ void ParquetEventStore::write(std::span<const CapEvent> events) {
     if (events.empty()) return;
     if (!impl_->appender) impl_->appender.emplace(impl_->con, "buf");
     auto& app = *impl_->appender;
-    for (const auto& e : events) {
-        app.BeginRow();
-        app.Append(duckdb::Value(impl_->machine_id));
-        app.Append(duckdb::Value::SMALLINT(static_cast<int16_t>(e.head_id)));
-        app.Append(duckdb::Value(e.ts));              // VARCHAR -> TIMESTAMP cast
-        app.Append(duckdb::Value::BIGINT(e.cap_seq));
-        app.Append(duckdb::Value::FLOAT(static_cast<float>(e.app_torque)));
-        app.Append(duckdb::Value::FLOAT(static_cast<float>(e.status)));
-        app.Append(duckdb::Value::INTEGER(e.delta));
-        app.Append(duckdb::Value::BOOLEAN(e.is_fault));
-        app.Append(duckdb::Value::BOOLEAN(e.aggregated));
-        app.Append(duckdb::Value::BOOLEAN(e.reset));
-        app.EndRow();
+    try {
+        for (const auto& e : events) {
+            app.BeginRow();
+            app.Append(duckdb::Value(impl_->machine_id));
+            app.Append(duckdb::Value::SMALLINT(static_cast<int16_t>(e.head_id)));
+            app.Append(duckdb::Value(e.ts));          // VARCHAR -> TIMESTAMP cast
+            app.Append(duckdb::Value::BIGINT(e.cap_seq));
+            app.Append(duckdb::Value::FLOAT(static_cast<float>(e.app_torque)));
+            app.Append(duckdb::Value::FLOAT(static_cast<float>(e.status)));
+            app.Append(duckdb::Value::INTEGER(e.delta));
+            app.Append(duckdb::Value::BOOLEAN(e.is_fault));
+            app.Append(duckdb::Value::BOOLEAN(e.aggregated));
+            app.Append(duckdb::Value::BOOLEAN(e.reset));
+            app.EndRow();
+        }
+    } catch (...) {
+        // A row this store could not accept means the file it would write is
+        // not the day it was asked for, so the store is finished: close()
+        // refuses and the destructor stays quiet. Without the latch the throw
+        // propagated past a store whose destructor then wrote whatever had
+        // already been flushed -- a short file, reported as a real day.
+        //
+        // The cast on `ts` is the reachable case: CsvRawReader copies that cell
+        // verbatim (only the numeric cells go through stod and the skipped_
+        // counter), so a corrupt timestamp arrives here intact. The Appender is
+        // also stuck mid-row at this point -- DuckDB's Close() only flushes on a
+        // row boundary -- which is why it cannot simply be flushed and kept.
+        impl_->failed = true;
+        throw;
     }
     // Not Close()d here -- close() flushes it once, before the COPY reads the
     // table. Closing per batch is what made the Appender per-batch in the first
@@ -112,6 +129,16 @@ void ParquetEventStore::write(std::span<const CapEvent> events) {
 void ParquetEventStore::close() {
     if (impl_->closed) return;
     impl_->closed = true;
+    // A store that failed mid-write never produces a file. Same reasoning as
+    // abandon(), reached without the caller having to remember: the reader
+    // globs this directory, and a file holding part of a day is worse than no
+    // file, because nothing downstream can tell it is partial.
+    if (impl_->failed) {
+        impl_->appender.reset();
+        throw std::runtime_error("refusing to write " + impl_->path +
+                                 ": a write failed, so this file would be a "
+                                 "partial day presented as a whole one");
+    }
     // Written even when empty: a day-file that yields no events must still
     // leave a file with the right schema, or a later read_parquet over the
     // directory fails because of it.
@@ -128,29 +155,55 @@ void ParquetEventStore::close() {
     // the COPY below reads `buf`. Flushing here rather than per write() is what
     // lets one Appender serve the store's whole life.
     if (impl_->appender) { impl_->appender->Close(); impl_->appender.reset(); }
-    const std::string tmp = impl_->path + ".tmp." + std::to_string(process_id());
-    exec_or_throw(impl_->con,
-        "COPY (SELECT * FROM buf ORDER BY head_id, ts) TO '" +
-        sql_quote(tmp) + "' (FORMAT PARQUET)");
-    std::error_code ec;
-    std::filesystem::rename(tmp, impl_->path, ec);
-    if (ec) {
-        // Never leave the temp behind: the reader globs *.parquet, which this
-        // name deliberately does not match, but a stale one is still litter.
+
+    // What the store accepted must equal what the table holds, checked before
+    // anything is written rather than trusted. Every way this file can come out
+    // short -- a flush that did not happen, a row DuckDB dropped, a future
+    // change to the buffering -- ends in these two numbers disagreeing, and the
+    // one thing that must not happen is a short file arriving where a whole day
+    // is expected. ParquetExport verifies its own output for the same reason.
+    const long long in_table = scalar_or_throw(impl_->con, "SELECT COUNT(*) FROM buf");
+    if (in_table != impl_->n)
+        throw std::runtime_error(
+            "refusing to write " + impl_->path + ": buffered " +
+            std::to_string(impl_->n) + " events but the table holds " +
+            std::to_string(in_table));
+
+    // Unique per store, not just per process: two stores on one path inside one
+    // process would otherwise share a temp name and truly tear it. No caller
+    // does that today -- monolith-MT gives each thread its own file, a worker
+    // handles one item at a time -- but the whole point of this dance is that
+    // the collision case is the one nobody arranges deliberately.
+    const std::string tmp = impl_->path + ".tmp." + std::to_string(process_id()) +
+                            "." + std::to_string(reinterpret_cast<uintptr_t>(this));
+    try {
+        exec_or_throw(impl_->con,
+            "COPY (SELECT * FROM buf ORDER BY head_id, ts) TO '" +
+            sql_quote(tmp) + "' (FORMAT PARQUET)");
+        std::error_code ec;
+        std::filesystem::rename(tmp, impl_->path, ec);
+        if (ec)
+            throw std::runtime_error("cannot rename " + tmp + " to " + impl_->path +
+                                     ": " + ec.message());
+    } catch (...) {
+        // Never leave the temp behind, on any failure and not just a failed
+        // rename: the reader globs *.parquet, which this name deliberately does
+        // not match, but a partial file from an out-of-space COPY is still
+        // litter in a directory somebody has to reason about.
         std::error_code ignored;
         std::filesystem::remove(tmp, ignored);
-        throw std::runtime_error("cannot rename " + tmp + " to " + impl_->path +
-                                 ": " + ec.message());
+        throw;
     }
 }
 
 void ParquetEventStore::abandon() {
     impl_->closed = true;   // close() and ~ParquetEventStore now do nothing
     // And actually discard, which the header has always promised and this did
-    // not do: the Appender is dropped without flushing, and the rows already in
-    // `buf` go with the table. Behaviour did not depend on it -- nothing reads
-    // the buffer after abandon() -- but a comment that overstates what the code
-    // does is the kind of thing the next reader trusts.
+    // not do. Order matters here, and not in the direction the previous comment
+    // claimed: dropping the Appender does NOT throw its buffered rows away.
+    // DuckDB's destructor calls Close() unless an exception is unwinding, so
+    // reset() flushes them into `buf` -- the DELETE below is what removes them,
+    // and swapping these two lines would silently leave a buffer behind.
     impl_->appender.reset();
     try {
         exec_or_throw(impl_->con, "DELETE FROM buf");

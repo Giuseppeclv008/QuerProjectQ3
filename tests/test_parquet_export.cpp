@@ -212,6 +212,13 @@ TEST_F(ParquetExportTest, RefusesToWriteTheStoresWriteAheadLog) {
 
     EXPECT_THROW(mas::export_store_to_parquet(db, wal), std::runtime_error);
     EXPECT_FALSE(fs::exists(wal)) << "a Parquet file was left where the log goes";
+
+    // The same store, spelled differently. String equality let this one
+    // through: one "./" and the paths compare unequal while naming one file.
+    const auto dotted = (fs::path(db).parent_path() / "." /
+                         fs::path(db).filename()).string();
+    EXPECT_THROW(mas::export_store_to_parquet(dotted, wal), std::runtime_error);
+    EXPECT_FALSE(fs::exists(wal)) << "the guard is defeated by a ./ in the store path";
 }
 
 TEST_F(ParquetExportTest, MissingStoreFailsByName) {
