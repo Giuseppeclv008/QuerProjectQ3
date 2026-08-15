@@ -39,7 +39,23 @@ ExportResult export_store_to_parquet(const std::string& db_path,
                                      const std::string& out_path,
                                      const std::string& since,
                                      const std::string& until) {
-    if (!std::filesystem::exists(db_path))
+    // The non-throwing overload throughout this function. The throwing one
+    // leaks std::filesystem_error past every message below: a store behind a
+    // symlink loop or an unreadable directory answered with a raw
+    // "in posix_stat: failed to determine attributes", naming neither the guard
+    // that would have refused it nor what the caller should do. Worse, it made
+    // the guards further down unreachable for exactly the paths they exist to
+    // catch, which is how a test of the WAL guard came to pass on a stat error
+    // instead.
+    const auto exists_or_throw = [](const std::string& p, const char* what) {
+        std::error_code ec;
+        const bool present = std::filesystem::exists(p, ec);
+        if (ec) throw std::runtime_error(std::string("cannot examine ") + what +
+                                         " " + p + ": " + ec.message());
+        return present;
+    };
+
+    if (!exists_or_throw(db_path, "store"))
         throw std::runtime_error("no such store: " + db_path);
 
     // COPY ... TO truncates its destination, and it does not care that the
@@ -49,11 +65,12 @@ ExportResult export_store_to_parquet(const std::string& db_path,
     // and exited 0 -- silent destruction of the format this project persists
     // into, reported as success.
     std::error_code ec;
-    if (std::filesystem::exists(out_path) &&
+    const bool dest_exists = exists_or_throw(out_path, "destination");
+    if (dest_exists &&
         std::filesystem::equivalent(db_path, out_path, ec) && !ec)
         throw std::runtime_error("refusing to export " + db_path +
                                  " onto itself: the destination is the store");
-    if (std::filesystem::exists(out_path))
+    if (dest_exists)
         throw std::runtime_error("refusing to overwrite " + out_path +
                                  ": delete it first, or export to a new path");
     // Both guards above turn on the destination already existing, which leaves
@@ -71,10 +88,16 @@ ExportResult export_store_to_parquet(const std::string& db_path,
     //
     // One error_code each, and both checked: sharing one hid whether the
     // *destination* resolved, and an unresolvable destination compares equal to
-    // nothing -- which silently turns the guard off in precisely the cases
-    // (ELOOP, an unreadable intermediate) where it is least safe to assume.
-    // Falling back to the raw comparison keeps the common spelling covered
-    // rather than trading one blind spot for another.
+    // nothing -- which would silently turn the guard off.
+    //
+    // Be straight about the fallback, because a previous test claimed to cover
+    // it and did not: no input reaches it. Anything that cannot be resolved
+    // cannot be stat'd either, and the exists_or_throw calls above have already
+    // refused it by name. It is kept because the alternative to an unreachable
+    // three-token branch is a guard that fails open if that ever stops being
+    // true -- not because it is exercised. The reachable behaviour is the
+    // canonical comparison, and the tests assert on the message so they cannot
+    // pass on some other failure in this function.
     std::error_code wal_ec, dest_ec;
     const auto wal = std::filesystem::weakly_canonical(db_path + ".wal", wal_ec);
     const auto dest = std::filesystem::weakly_canonical(out_path, dest_ec);

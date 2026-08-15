@@ -110,14 +110,18 @@ ParquetEventStore::~ParquetEventStore() {
 }
 
 void ParquetEventStore::write(std::span<const CapEvent> events) {
-    // Before the empty-span shortcut, not after: a rejected call should not
-    // depend on how many events it carried. A store that has published is
-    // finished, and without this write() accepted rows it would never write
-    // while count() went on reporting them -- silent loss, with the accessor
-    // confirming that no loss had occurred. (There is no matching check on
-    // `failed`; a write after a failed one is refused only incidentally,
-    // because DuckDB's Appender is stuck mid-row. `failed` is latched and
-    // close() refuses, so nothing rests on that.)
+    // A store that has published is finished. Without this, write() accepted
+    // rows it would never write while count() went on reporting them -- silent
+    // loss, with the accessor confirming that no loss had occurred. Checked
+    // before the empty-span shortcut, so a published store rejects every write
+    // rather than only the non-empty ones.
+    //
+    // `failed` deliberately gets no matching check, so that asymmetry stays:
+    // write({}) on a failed store returns quietly, and a non-empty one is
+    // refused only incidentally, because DuckDB's Appender is stuck mid-row --
+    // the next row's machine_id lands in the still-open ts column and fails the
+    // cast there. Nothing rests on either: `failed` is latched and close()
+    // refuses on it.
     if (impl_->closed)
         throw std::runtime_error("write() after close() on " + impl_->path);
     if (events.empty()) return;

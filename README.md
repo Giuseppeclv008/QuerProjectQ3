@@ -1048,7 +1048,7 @@ cmake --build build --parallel
 | `MAS_BUILD_TESTS` | `ON` | Build the GoogleTest suite. `OFF` drops the last dependency that needs network. |
 
 The default triple (`OFF, ON, OFF, ON`) is the build this project has always
-had: **139 tests green**. With `MAS_BENCH_ONLY=ON` the suite is the 51 tests that
+had: **140 tests green**. With `MAS_BENCH_ONLY=ON` the suite is the 51 tests that
 need neither DuckDB nor ZeroMQ; with `MAS_BUILD_TESTS=OFF` on top of that,
 `_deps/` is never created at all — nothing is downloaded:
 
@@ -1298,13 +1298,13 @@ it, `--pdf` logs how to install it and writes Markdown and HTML as normal.
 
 ## Testing
 
-The project has **139 C++ unit tests** across 18 Google Test files, plus **250
+The project has **140 C++ unit tests** across 18 Google Test files, plus **250
 Python tests** for the analytics tier. Both counts are asserted by
 `python/tests/test_readme_counts.py`, so adding a test and forgetting this
 paragraph fails the suite rather than quietly dating it.
 
 ```bash
-cd build && ctest --output-on-failure           # 139 C++ tests
+cd build && ctest --output-on-failure           # 140 C++ tests
 cd python && ../.venv/bin/python -m pytest -q   # 250 Python tests (5 need the rebuilt store or a real day-file and skip without them)
 ```
 
@@ -1326,7 +1326,7 @@ DuckDB nor ZeroMQ — the rest are excluded by design, not skipped. (Two of the
 | `test_duckdb_smoke.cpp` | DuckDB library linkage sanity |
 | `test_duckdb_event_store.cpp` | Schema creation, write/count, idempotent upsert, merge_from, export_parquet |
 | `test_parquet_event_store.cpp` | Every column round-trips, reprocessing replaces the file, an empty day still yields a readable one, quoted paths, `abandon()` writes nothing, a failed write writes nothing and leaves no temp, a throw *between* writes (a heartbeat that times out) publishes nothing either, writing after `close()` is an error, two writers on one path leave one whole file |
-| `test_parquet_export.cpp` | mas_export: all ten columns round-trip, exports from a chmod-444 store without writing to it, since/until bounds, bare-date upper bound covers the whole day, empty range still readable, quoted paths, refuses the store's WAL in every spelling |
+| `test_parquet_export.cpp` | mas_export: all ten columns round-trip, exports from a chmod-444 store without writing to it, since/until bounds, bare-date upper bound covers the whole day, empty range still readable, quoted paths, refuses the store's WAL including through a `./` spelling, names a path it cannot stat |
 | `test_zmq_smoke.cpp` | ZeroMQ library linkage sanity |
 | `test_zmq_transport.cpp` | PUSH/PULL round-trip, timeout behavior, zero-linger teardown regression |
 | `test_message.cpp` | Encode/decode for WorkItem, WorkResult, Heartbeat, STOP; malformed payload rejection |
