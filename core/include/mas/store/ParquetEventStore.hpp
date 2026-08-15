@@ -36,10 +36,17 @@ public:
     // left to refuse.
     void close();
 
-    // Discard the buffer and write nothing, ever -- close() and the destructor
-    // both become no-ops. For a day-file whose clean failed: without this the
-    // destructor still wrote a valid, empty Parquet, and the reader's glob
-    // cannot tell that file from a day that legitimately produced no events.
+    // Discard the buffer now, and disarm a later close(). Call it on a clean
+    // that failed without throwing -- one that returns a negative count -- so
+    // the intent is in the call site rather than inferred from a scope exit.
+    //
+    // Note what it no longer carries: it used to be what stopped the destructor
+    // from writing a valid, empty Parquet that the reader's glob could not tell
+    // from a day with no events. The destructor writes nothing at all now, so
+    // omitting this call would also produce no file. What it still buys is the
+    // explicit statement and one guard: a close() reached later -- from a
+    // catch-all somebody adds, say -- finds the store already spent.
+    //
     // The DuckDB backend has no equivalent hazard: a failed run simply lacks
     // the rows, and count() shows the shortfall.
     void abandon();

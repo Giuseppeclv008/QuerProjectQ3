@@ -104,19 +104,23 @@ ParquetEventStore::~ParquetEventStore() {
             exec_or_throw(impl_->con, "DELETE FROM buf");
         } catch (const std::exception&) {
             // A destructor cannot report failure and must not throw. The rows
-            // die with the connection on the next line regardless.
+            // die with the connection when impl_ is destroyed regardless.
         }
     }
 }
 
 void ParquetEventStore::write(std::span<const CapEvent> events) {
-    if (events.empty()) return;
-    // Symmetric with the failure latch below: a store that has published is
-    // finished. Without this, write() accepted rows it would never write while
-    // count() went on reporting them -- silent loss, with the accessor
-    // confirming that no loss had occurred.
+    // Before the empty-span shortcut, not after: a rejected call should not
+    // depend on how many events it carried. A store that has published is
+    // finished, and without this write() accepted rows it would never write
+    // while count() went on reporting them -- silent loss, with the accessor
+    // confirming that no loss had occurred. (There is no matching check on
+    // `failed`; a write after a failed one is refused only incidentally,
+    // because DuckDB's Appender is stuck mid-row. `failed` is latched and
+    // close() refuses, so nothing rests on that.)
     if (impl_->closed)
         throw std::runtime_error("write() after close() on " + impl_->path);
+    if (events.empty()) return;
     auto& app = [&]() -> duckdb::Appender& {
         // Inside the latch's reach: if constructing the Appender threw, `failed`
         // stayed clear and the old destructor wrote a valid, empty Parquet.
@@ -240,7 +244,7 @@ void ParquetEventStore::close() {
 }
 
 void ParquetEventStore::abandon() {
-    impl_->closed = true;   // close() and ~ParquetEventStore now do nothing
+    impl_->closed = true;   // a close() reached later has nothing left to do
     // And actually discard, which the header has always promised and this did
     // not do. Order matters here, and not in the direction the previous comment
     // claimed: dropping the Appender does NOT throw its buffered rows away.

@@ -219,6 +219,19 @@ TEST_F(ParquetExportTest, RefusesToWriteTheStoresWriteAheadLog) {
                          fs::path(db).filename()).string();
     EXPECT_THROW(mas::export_store_to_parquet(dotted, wal), std::runtime_error);
     EXPECT_FALSE(fs::exists(wal)) << "the guard is defeated by a ./ in the store path";
+
+    // And when the path cannot be canonicalized at all, the guard falls back to
+    // the plain comparison rather than turning itself off: an unresolvable
+    // destination compares equal to nothing, which would silently disarm it in
+    // exactly the conditions that produced the unresolvable path.
+    const auto loop = (fs::path(db).parent_path() / "loop").string();
+    std::error_code ec;
+    fs::create_symlink(loop, loop, ec);   // a link to itself: ELOOP on resolve
+    if (!ec) {
+        EXPECT_THROW(mas::export_store_to_parquet(loop, loop + ".wal"),
+                     std::runtime_error);
+        fs::remove(loop, ec);
+    }
 }
 
 TEST_F(ParquetExportTest, MissingStoreFailsByName) {

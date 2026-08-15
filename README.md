@@ -1325,8 +1325,8 @@ DuckDB nor ZeroMQ — the rest are excluded by design, not skipped. (Two of the
 | `test_pipeline.cpp` | End-to-end CSV→events flow, batch boundary, error codes |
 | `test_duckdb_smoke.cpp` | DuckDB library linkage sanity |
 | `test_duckdb_event_store.cpp` | Schema creation, write/count, idempotent upsert, merge_from, export_parquet |
-| `test_parquet_event_store.cpp` | Every column round-trips, reprocessing replaces the file, an empty day still yields a readable one, quoted paths, `abandon()` writes nothing, a failed write writes nothing and leaves no temp, two writers on one path leave one whole file |
-| `test_parquet_export.cpp` | mas_export: all ten columns round-trip, exports from a chmod-444 store without writing to it, since/until bounds, bare-date upper bound covers the whole day, empty range still readable, quoted paths |
+| `test_parquet_event_store.cpp` | Every column round-trips, reprocessing replaces the file, an empty day still yields a readable one, quoted paths, `abandon()` writes nothing, a failed write writes nothing and leaves no temp, a throw *between* writes (a heartbeat that times out) publishes nothing either, writing after `close()` is an error, two writers on one path leave one whole file |
+| `test_parquet_export.cpp` | mas_export: all ten columns round-trip, exports from a chmod-444 store without writing to it, since/until bounds, bare-date upper bound covers the whole day, empty range still readable, quoted paths, refuses the store's WAL in every spelling |
 | `test_zmq_smoke.cpp` | ZeroMQ library linkage sanity |
 | `test_zmq_transport.cpp` | PUSH/PULL round-trip, timeout behavior, zero-linger teardown regression |
 | `test_message.cpp` | Encode/decode for WorkItem, WorkResult, Heartbeat, STOP; malformed payload rejection |
