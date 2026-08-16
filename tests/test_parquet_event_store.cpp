@@ -2,6 +2,7 @@
 #include "mas/store/BeatingStore.hpp"
 #include <duckdb.hpp>
 #include <gtest/gtest.h>
+#include <exception>
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
@@ -109,18 +110,23 @@ TEST(ParquetEventStore, CloseLeavesNoTemporaryBehind) {
     // close() writes through a private name and renames. The temp deliberately
     // does not match *.parquet, but a leaked one is still litter in a directory
     // the reader globs.
-    const std::string p = "t_pq_tmp.parquet";
-    std::remove(p.c_str());
+    // A directory of this test's own: the temp's name is deliberately
+    // unrelated to the destination's, so only an otherwise-empty directory can
+    // show that none survived.
+    const std::filesystem::path d = "t_pq_tmp.d";
+    std::filesystem::remove_all(d);
+    std::filesystem::create_directories(d);
+    const std::string p = (d / "day.parquet").string();
     {
         mas::ParquetEventStore s(p, "MCC1");
         s.write(std::vector<mas::CapEvent>{ev(1, "2026-02-01T00:00:01.000", 101)});
         s.close();
     }
-    for (const auto& e : std::filesystem::directory_iterator("."))
-        EXPECT_EQ(e.path().filename().string().find("t_pq_tmp.parquet.tmp."), std::string::npos)
+    for (const auto& e : std::filesystem::directory_iterator(d))
+        EXPECT_EQ(e.path().filename().string().find(".mas-publish."), std::string::npos)
             << "close() left " << e.path().filename().string();
     EXPECT_EQ(rowsIn(p), 1);
-    std::remove(p.c_str());
+    std::filesystem::remove_all(d);
 }
 
 TEST(ParquetEventStore, TwoWritersOnOnePathLeaveOneWholeFile) {
@@ -131,28 +137,48 @@ TEST(ParquetEventStore, TwoWritersOnOnePathLeaveOneWholeFile) {
     // would look identical. (It did: with the per-store token removed this test
     // still passed when the closes were sequential.) Overlapping them is what
     // makes the token load-bearing.
-    const std::string p = "t_pq_race.parquet";
-    std::remove(p.c_str());
+    const std::filesystem::path d = "t_pq_race.d";
+    std::filesystem::remove_all(d);
+    std::filesystem::create_directories(d);
+    const std::string p = (d / "day.parquet").string();
     const std::vector<mas::CapEvent> rows{ev(1, "2026-02-01T00:00:01.000", 101),
                                           ev(1, "2026-02-01T00:00:02.000", 102)};
+    // close() has several throw paths, and an exception escaping a
+    // std::thread body is std::terminate: the regression this test guards (a
+    // shared temp name; second rename hits ENOENT and throws) would abort the
+    // whole binary with no gtest diagnostics. Catch in the thread, assert in
+    // the test.
+    std::exception_ptr ea, eb;
+    const auto what = [](const std::exception_ptr& ep) -> std::string {
+        if (!ep) return "";
+        try { std::rethrow_exception(ep); }
+        catch (const std::exception& e) { return e.what(); }
+        catch (...) { return "<non-std exception>"; }
+    };
     {
         mas::ParquetEventStore a(p, "MCC1");
         mas::ParquetEventStore b(p, "MCC1");
         a.write(rows);
         b.write(rows);
-        std::thread ta([&a] { a.close(); });
-        std::thread tb([&b] { b.close(); });
+        std::thread ta([&a, &ea] {
+            try { a.close(); } catch (...) { ea = std::current_exception(); }
+        });
+        std::thread tb([&b, &eb] {
+            try { b.close(); } catch (...) { eb = std::current_exception(); }
+        });
         ta.join();
         tb.join();
     }
+    EXPECT_TRUE(ea == nullptr) << "writer a's close threw: " << what(ea);
+    EXPECT_TRUE(eb == nullptr) << "writer b's close threw: " << what(eb);
     // Whichever landed second wins whole: one writer's full count, never a
     // concatenation (4), never a truncation.
     EXPECT_EQ(rowsIn(p), 2) << "a torn or concatenated file, not one writer's copy";
-    for (const auto& e : std::filesystem::directory_iterator("."))
-        EXPECT_EQ(e.path().filename().string().find("t_pq_race.parquet.tmp."),
+    for (const auto& e : std::filesystem::directory_iterator(d))
+        EXPECT_EQ(e.path().filename().string().find(".mas-publish."),
                   std::string::npos)
             << "left a temp behind: " << e.path().filename().string();
-    std::remove(p.c_str());
+    std::filesystem::remove_all(d);
 }
 
 TEST(ParquetEventStore, AFailedWriteWritesNoFileAtAll) {
@@ -163,8 +189,10 @@ TEST(ParquetEventStore, AFailedWriteWritesNoFileAtAll) {
     // already been flushed, leaving a partial day that reads as a whole one --
     // and buffering one Appender for the store's life widened that window from
     // a batch to 204,800 rows.
-    const std::string path = "t_pq_failed.parquet";
-    std::remove(path.c_str());
+    const std::filesystem::path d = "t_pq_failed.d";
+    std::filesystem::remove_all(d);
+    std::filesystem::create_directories(d);
+    const std::string path = (d / "day.parquet").string();
     {
         mas::ParquetEventStore store(path, "MCC");
         store.write(std::vector<mas::CapEvent>{ev(1, "2026-02-01 10:00:00", 1)});
@@ -186,10 +214,11 @@ TEST(ParquetEventStore, AFailedWriteWritesNoFileAtAll) {
     }   // ...and the destructor must not write them either.
     EXPECT_FALSE(std::filesystem::exists(path))
         << "a failed clean left a file the reader would treat as a real day";
-    for (const auto& e : std::filesystem::directory_iterator("."))
-        EXPECT_EQ(e.path().filename().string().find("t_pq_failed.parquet.tmp."),
+    for (const auto& e : std::filesystem::directory_iterator(d))
+        EXPECT_EQ(e.path().filename().string().find(".mas-publish."),
                   std::string::npos)
             << "left a temp behind: " << e.path().filename().string();
+    std::filesystem::remove_all(d);
 }
 
 TEST(ParquetEventStore, AThrowBetweenWritesWritesNoFileEither) {

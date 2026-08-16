@@ -12,6 +12,8 @@
 #include <fstream>
 #include <stdexcept>
 #include <string>
+#include <vector>
+#include <algorithm>
 
 namespace fs = std::filesystem;
 
@@ -25,14 +27,17 @@ fs::path scratch(const std::string& name) {
     return d;
 }
 
-// Everything in `dir` whose name starts with `stem` -- the destination plus any
-// temp that survived.
-std::string leftovers(const fs::path& dir, const std::string& stem) {
+// Everything in `dir`, sorted -- the destination plus any temp that survived.
+// Scans the whole directory rather than a name prefix: the temp's name is
+// deliberately unrelated to the destination's, so a prefix scan would miss
+// exactly the litter these checks exist to catch.
+std::string leftovers(const fs::path& dir) {
+    std::vector<std::string> names;
+    for (const auto& e : fs::directory_iterator(dir))
+        names.push_back(e.path().filename().string());
+    std::sort(names.begin(), names.end());
     std::string out;
-    for (const auto& e : fs::directory_iterator(dir)) {
-        const auto n = e.path().filename().string();
-        if (n.rfind(stem, 0) == 0) out += n + " ";
-    }
+    for (const auto& n : names) out += n + " ";
     return out;
 }
 
@@ -58,8 +63,48 @@ TEST(AtomicPublish, PublishesThroughATempAndLeavesNone) {
         EXPECT_FALSE(fs::exists(target)) << "published before write_to returned";
     });
     EXPECT_TRUE(fs::exists(target));
-    EXPECT_EQ(leftovers(d, "day.parquet"), "day.parquet ");
-    EXPECT_NE(seen_tmp.find("day.parquet.tmp."), std::string::npos) << seen_tmp;
+    EXPECT_EQ(leftovers(d), "day.parquet ");
+    // The temp lives in the destination's directory (the rename must stay on
+    // one filesystem) but its name owes nothing to the destination's: a name
+    // derived from the destination inherits its length and its glob
+    // metacharacters, which is how export verification came to read the wrong
+    // file (C1) and how a near-NAME_MAX basename became unpublishable.
+    EXPECT_EQ(fs::path(seen_tmp).parent_path(), d) << seen_tmp;
+    const auto tmp_base = fs::path(seen_tmp).filename().string();
+    EXPECT_TRUE(tmp_base.rfind(".mas-publish.", 0) == 0) << tmp_base;
+    EXPECT_TRUE(std::string_view(tmp_base).ends_with(".tmp")) << tmp_base;
+    EXPECT_EQ(tmp_base.find("day"), std::string::npos) << tmp_base;
+}
+
+TEST(AtomicPublish, GlobMetacharactersInTheDestinationDoNotReachTheTemp) {
+    // read_parquet() treats [, ?, * as pattern syntax. A temp spelled
+    // <destination>+suffix hands those characters to every verifier that reads
+    // the temp back, so verification could match a different file entirely --
+    // false negative (good export refused) or false positive (decoy verified).
+    const auto d = scratch("meta");
+    const auto target = (d / "e[xy]port-*-?.parquet").string();
+    std::string tmp;
+    mas::publish_atomically(target, [&](const std::string& t) {
+        tmp = t;
+        std::ofstream(t) << "x";
+    });
+    const auto tmp_base = fs::path(tmp).filename().string();
+    EXPECT_EQ(tmp_base.find_first_of("[]*?"), std::string::npos) << tmp_base;
+    EXPECT_TRUE(fs::exists(target));
+}
+
+TEST(AtomicPublish, ANearNameMaxBasenameIsStillPublishable) {
+    // 250 characters is legal on every supported filesystem (NAME_MAX 255).
+    // The old destination-derived temp appended ~12 characters and pushed a
+    // legal name over the limit; the writer then failed with an IO error
+    // quoting the temp and never saying the name was the problem.
+    const auto d = scratch("namemax");
+    const std::string base = std::string(242, 'a') + ".parquet"; // 250 chars
+    const auto target = (d / base).string();
+    mas::publish_atomically(target, [](const std::string& t) {
+        std::ofstream(t) << "x";
+    });
+    EXPECT_TRUE(fs::exists(target));
 }
 
 TEST(AtomicPublish, AThrowFromWriteToPropagatesUnmaskedAndRemovesTheTemp) {
@@ -76,7 +121,7 @@ TEST(AtomicPublish, AThrowFromWriteToPropagatesUnmaskedAndRemovesTheTemp) {
     });
     EXPECT_EQ(msg, "No space left on device");
     EXPECT_FALSE(fs::exists(target));
-    EXPECT_EQ(leftovers(d, "day.parquet"), "") << "a partial temp survived";
+    EXPECT_EQ(leftovers(d), "") << "a partial temp survived";
 }
 
 TEST(AtomicPublish, RefusesToPublishWhenWriteToProducedNothing) {
@@ -103,7 +148,7 @@ TEST(AtomicPublish, RefusesToPublishADirectory) {
     });
     EXPECT_NE(msg.find("nothing wrote a file"), std::string::npos) << msg;
     EXPECT_FALSE(fs::exists(target)) << "a directory was published as a Parquet file";
-    EXPECT_EQ(leftovers(d, "day.parquet"), "") << "the directory was left behind";
+    EXPECT_EQ(leftovers(d), "") << "the directory was left behind";
 }
 
 TEST(AtomicPublish, TwoPublishesToOnePathUseDifferentTemps) {
@@ -121,7 +166,7 @@ TEST(AtomicPublish, TwoPublishesToOnePathUseDifferentTemps) {
         std::ofstream(t) << "two";
     });
     EXPECT_NE(first, second);
-    EXPECT_EQ(leftovers(d, "day.parquet"), "day.parquet ");
+    EXPECT_EQ(leftovers(d), "day.parquet ");
 }
 
 TEST(AtomicPublish, TheTempNameCannotBeMistakenForAParquetFile) {

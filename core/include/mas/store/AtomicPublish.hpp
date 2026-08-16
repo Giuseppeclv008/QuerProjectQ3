@@ -28,6 +28,16 @@ namespace mas {
 // inside one process. It deliberately does not match the *.parquet glob readers
 // use. It sits in the destination's own directory, so the rename is within one
 // filesystem and therefore atomic.
+//
+// The name owes nothing to the destination's basename, on purpose. The first
+// version appended to it, which handed every property of the user's name to
+// the temp: glob metacharacters ([xy], *, ?) reached the read_parquet() call
+// that verifies exports, which matched a different file than the one written
+// -- refusing a good export, or worse, verifying a decoy (C1). A basename near
+// NAME_MAX went over the limit once the suffix landed, failing with an IO
+// error that quoted the temp and never said the name was the problem. And a
+// destination that is a symlink dragged the temp along with wherever it
+// pointed. A fixed, short, metacharacter-free basename has none of these.
 
 inline std::string temp_sibling_of(const std::string& final_path) {
     static std::atomic<unsigned long long> next_token{0};
@@ -36,8 +46,10 @@ inline std::string temp_sibling_of(const std::string& final_path) {
 #else
     const int pid = static_cast<int>(::getpid());
 #endif
-    return final_path + ".tmp." + std::to_string(pid) + "." +
-           std::to_string(next_token.fetch_add(1));
+    const auto dir = std::filesystem::path(final_path).parent_path();
+    const std::string base = ".mas-publish." + std::to_string(pid) + "." +
+                             std::to_string(next_token.fetch_add(1)) + ".tmp";
+    return (dir / base).string();
 }
 
 // Calls write_to(tmp) -- which must produce the finished file at that path --
