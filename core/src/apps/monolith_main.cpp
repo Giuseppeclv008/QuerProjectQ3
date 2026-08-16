@@ -225,7 +225,18 @@ int main(int argc, char** argv) {
             return static_cast<long long>(events.size());
         }
 #endif
-        return mas::clean_file(f, store);
+        // One stderr line per file with dropped rows. Safe under the thread
+        // pool: a std::cerr insertion is not torn (the stream is synchronized,
+        // [iostream.objects.overview]/4), and the count is per-call state.
+        mas::CleanFileStats stats;
+        const long long n = mas::clean_file(f, store, &stats);
+        if (stats.skipped_rows)
+            std::cerr << "warning: " << f << ": skipped " << stats.skipped_rows
+                      << " malformed rows\n";
+        if (stats.out_of_order_rows)
+            std::cerr << "warning: " << f << ": " << stats.out_of_order_rows
+                      << " out-of-order timestamps\n";
+        return n;
     };
 
     try {

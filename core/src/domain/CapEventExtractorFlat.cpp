@@ -1,4 +1,6 @@
 #include "mas/domain/CapEventExtractorFlat.hpp"
+#include "mas/domain/DeltaPolicy.hpp"
+#include "mas/domain/RowParse.hpp"
 #include <climits>
 #include <cmath>
 #include <fstream>
@@ -10,20 +12,6 @@ namespace {
 
 std::string pad2(int n) {
     return (n < 10 ? "0" : "") + std::to_string(n);
-}
-
-// Split on ',' and drop a trailing CR. Kept local: load_columns is the only
-// caller, and CsvRawReader has its own splitter with different error semantics.
-std::vector<std::string> splitLine(const std::string& line) {
-    std::vector<std::string> f;
-    f.reserve(1 + NUM_HEADS * 3);
-    std::string cur;
-    std::istringstream ss(line);
-    while (std::getline(ss, cur, ',')) {
-        if (!cur.empty() && cur.back() == '\r') cur.pop_back();
-        f.push_back(cur);
-    }
-    return f;
 }
 
 } // namespace
@@ -45,7 +33,7 @@ bool load_columns(const std::string& path, RawColumns& out, std::string& error) 
     std::string line;
     if (!std::getline(in, line)) { error = path + " is empty"; return false; }
     const auto want = expected_header();
-    const auto got = splitLine(line);
+    const auto got = split_csv_row(line);
     if (got.size() != want.size()) {
         error = path + ": header has " + std::to_string(got.size()) +
                 " columns, expected " + std::to_string(want.size());
@@ -60,32 +48,19 @@ bool load_columns(const std::string& path, RawColumns& out, std::string& error) 
     }
 
     out = RawColumns{};
+    // Shared policy (RowParse.hpp), shared counter: a dropped row increments
+    // `out.skipped` exactly as CsvRawReader::skipped() would.
+    RawRow row;
     while (std::getline(in, line)) {
         if (line.empty() || line == "\r") continue;
-        const auto f = splitLine(line);
-        if (f.size() < static_cast<std::size_t>(1 + NUM_HEADS * 3)) continue;
-        try {
-            out.ts.push_back(f[0]);
-            for (int h = 0; h < NUM_HEADS; ++h) out.count.push_back(std::stod(f[1 + h]));
-            for (int h = 0; h < NUM_HEADS; ++h) out.torque.push_back(std::stod(f[1 + NUM_HEADS + h]));
-            for (int h = 0; h < NUM_HEADS; ++h) out.status.push_back(std::stod(f[1 + 2 * NUM_HEADS + h]));
-        } catch (const std::exception&) {
-            out.ts.resize(out.n_rows);                    // roll the partial row back
-            out.count.resize(out.n_rows * NUM_HEADS);
-            out.torque.resize(out.n_rows * NUM_HEADS);
-            out.status.resize(out.n_rows * NUM_HEADS);
+        if (parse_row_fields(split_csv_row(line), row) != RowParse::Ok) {
+            ++out.skipped;
             continue;
         }
-        bool counts_ok = true;
-        for (std::size_t k = out.n_rows * NUM_HEADS; k < out.count.size(); ++k)
-            if (!is_valid_count(out.count[k])) { counts_ok = false; break; }
-        if (!counts_ok) {                                 // same rollback: the row is unusable
-            out.ts.resize(out.n_rows);
-            out.count.resize(out.n_rows * NUM_HEADS);
-            out.torque.resize(out.n_rows * NUM_HEADS);
-            out.status.resize(out.n_rows * NUM_HEADS);
-            continue;
-        }
+        out.ts.push_back(row.ts);
+        for (int h = 0; h < NUM_HEADS; ++h) out.count.push_back(row.count[h]);
+        for (int h = 0; h < NUM_HEADS; ++h) out.torque.push_back(row.torque[h]);
+        for (int h = 0; h < NUM_HEADS; ++h) out.status.push_back(row.status[h]);
         ++out.n_rows;
     }
     return true;
@@ -108,14 +83,10 @@ void extract_flat(const std::vector<std::string>& ts,
             e.cap_seq = c_cur;
             e.app_torque = torque[cur + h];
             e.status = status[cur + h];
-            // Counts are within ±2^53 (loader guarantee) so the subtraction
-            // is exact; the jump can still exceed int, and truncating it
-            // fabricated small deltas. Saturate instead: the magnitude is
-            // already "absurdly many caps", and aggregated stays true.
-            const long long jump = c_cur - c_prv;
-            e.delta = (jump > 0)
-                          ? static_cast<int>(jump > INT_MAX ? INT_MAX : jump)
-                          : 0;
+            // Saturating policy shared with the sequential extractor and the
+            // CUDA kernel (DeltaPolicy.hpp): an over-int jump must not
+            // truncate into a small delta, and aggregated stays true.
+            e.delta = saturated_delta(c_cur, c_prv);
             e.is_fault = is_reject(status[cur + h]);
             e.aggregated = e.delta > 1;
             e.reset = c_cur < c_prv;

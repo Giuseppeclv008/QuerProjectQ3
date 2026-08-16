@@ -44,6 +44,16 @@ inline bool is_valid_count(double c) {
     return c >= -9007199254740992.0 && c <= 9007199254740992.0;
 }
 
+// A torque/status cell is usable only if it survives the double -> float
+// narrowing both persistent stores perform: [conv.double]/1 makes the cast UB
+// beyond FLT_MAX, and std::stod happily returns 1e300, inf, or nan. A stored
+// inf then poisons every downstream AVG/SUM/MAX. Same policy as
+// is_valid_count: an unusable cell fails the row.
+inline bool is_valid_real(double v) {
+    return v >= -3.4028234663852886e38 && v <= 3.4028234663852886e38;
+    // NaN fails both comparisons and lands on false
+}
+
 // A capping operation is a closure WITH load. No-load cycles are excluded from
 // every success denominator (spec §3.2).
 inline bool is_successful_cap(double status, double torque) {

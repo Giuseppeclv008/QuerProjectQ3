@@ -1,5 +1,5 @@
 #include "mas/store/CsvRawReader.hpp"
-#include <sstream>
+#include "mas/domain/RowParse.hpp"
 #include <string>
 #include <vector>
 
@@ -8,17 +8,6 @@ namespace mas {
 namespace {
 
 std::string pad2(int n) { return (n < 10 ? "0" : "") + std::to_string(n); }
-
-std::vector<std::string> splitCsv(const std::string& line) {
-    std::vector<std::string> f;
-    std::string cur;
-    std::istringstream ss(line);
-    while (std::getline(ss, cur, ',')) {
-        if (!cur.empty() && cur.back() == '\r') cur.pop_back();
-        f.push_back(cur);
-    }
-    return f;
-}
 
 } // namespace
 
@@ -40,7 +29,7 @@ CsvRawReader::CsvRawReader(const std::string& path) : in_(path) {
         return;
     }
     const auto want = expected_header();
-    const auto got = splitCsv(header);
+    const auto got = split_csv_row(header);
     if (got.size() != want.size()) {
         header_error_ = path + ": header has " + std::to_string(got.size()) +
                         " columns, expected " + std::to_string(want.size());
@@ -61,41 +50,25 @@ bool CsvRawReader::is_open() const {
 
 std::size_t CsvRawReader::skipped() const { return skipped_; }
 
+std::size_t CsvRawReader::out_of_order() const { return out_of_order_; }
+
 const std::string& CsvRawReader::header_error() const { return header_error_; }
 
 bool CsvRawReader::next(RawRow& out) {
+    // Shared policy (RowParse.hpp): the reader used to keep its own splitter
+    // that did NOT strip the trailing CR -- on the CRLF pool the last Status
+    // cell reached std::stod as "0.0\r" and parsed only because stod
+    // tolerates trailing garbage. load_columns stripped it; the two loaders
+    // must not disagree on what a valid row is.
     std::string line;
     while (std::getline(in_, line)) {
-        if (line.empty()) continue;
-
-        std::vector<std::string> f;
-        f.reserve(1 + NUM_HEADS * 3);
-        std::string cur;
-        std::istringstream ss(line);
-        while (std::getline(ss, cur, ',')) f.push_back(cur);
-        if (f.size() < static_cast<size_t>(1 + NUM_HEADS * 3)) {
-            ++skipped_;               // truncated/corrupt line
+        if (line.empty() || line == "\r") continue;
+        if (parse_row_fields(split_csv_row(line), out) != RowParse::Ok) {
+            ++skipped_;               // short, extra-field, malformed, or out-of-domain
             continue;
         }
-
-        try {
-            out.ts = f[0];
-            for (int h = 0; h < NUM_HEADS; ++h) {
-                out.count[h]  = std::stod(f[1 + h]);
-                out.torque[h] = std::stod(f[1 + NUM_HEADS + h]);
-                out.status[h] = std::stod(f[1 + 2 * NUM_HEADS + h]);
-            }
-        } catch (const std::exception&) {
-            ++skipped_;               // malformed numeric cell
-            continue;
-        }
-        bool counts_ok = true;
-        for (int h = 0; h < NUM_HEADS; ++h)
-            if (!is_valid_count(out.count[h])) { counts_ok = false; break; }
-        if (!counts_ok) {
-            ++skipped_;               // count outside the counter's domain
-            continue;
-        }
+        if (!last_ts_.empty() && out.ts <= last_ts_) ++out_of_order_;
+        last_ts_ = out.ts;
         return true;
     }
     return false;

@@ -1,5 +1,6 @@
 #include "CudaCleaner.hpp"
 #include "mas/domain/CapEventExtractorFlat.hpp"   // expected_header()
+#include "mas/domain/DeltaPolicy.hpp"             // saturated_delta()
 #include <cub/cub.cuh>
 #include <cuda_runtime.h>
 // CCCL 3.0 (CUDA 13) removed cub::CountingInputIterator; the unified library's
@@ -207,7 +208,10 @@ __global__ void delta_kernel(const double* count, const double* torque,
     ev.app_torque = torque[cur];
     ev.status = status[cur];
     ev.row_index = i;
-    ev.delta = (c_cur > c_prv) ? static_cast<int>(c_cur - c_prv) : 0;
+    // Shared saturation policy (DeltaPolicy.hpp): an over-int jump must not
+    // truncate into a small delta -- and never into <= 1, which would also
+    // clear `aggregated` on the host side.
+    ev.delta = saturated_delta(c_cur, c_prv);
     ev.head_id = static_cast<short>(h + 1);
     ev.reset = (c_cur < c_prv) ? 1u : 0u;
     slots[t] = ev;

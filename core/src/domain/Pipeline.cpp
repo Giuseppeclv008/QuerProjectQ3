@@ -6,7 +6,8 @@
 
 namespace mas {
 
-long long clean_file(const std::string& in_path, IEventStore& store) {
+long long clean_file(const std::string& in_path, IEventStore& store,
+                     CleanFileStats* stats) {
     CsvRawReader reader(in_path);
     if (!reader.is_open()) return -1;   // input missing/unreadable
 
@@ -25,6 +26,7 @@ long long clean_file(const std::string& in_path, IEventStore& store) {
     }
     store.write(batch);                 // final partial batch (may be empty)
     n += static_cast<long long>(batch.size());
+    if (stats) *stats = {reader.skipped(), reader.out_of_order()};
     return n;
 }
 

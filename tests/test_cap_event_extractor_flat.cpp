@@ -1,6 +1,9 @@
 #include "mas/domain/CapEventExtractor.hpp"
 #include "mas/domain/CapEventExtractorFlat.hpp"
+#include "mas/domain/DeltaPolicy.hpp"
+#include "fakes/TempPath.hpp"
 #include <gtest/gtest.h>
+#include <climits>
 #include <filesystem>
 #include <cstdio>
 #include <fstream>
@@ -117,7 +120,7 @@ TEST(ExtractorFlat, RejectAndNoLoadStatusesAgree) {
 }
 
 TEST(ExtractorFlat, HeaderIsRejectedWhenTheColumnCountIsWrong) {
-    const std::string p = "flat_bad_header.csv";
+    const std::string p = mas::test::temp_artifact("flat_bad_header.csv");
     { std::ofstream f(p); f << "timestamp,nope,alsonope\n1,2,3\n"; }
     mas::RawColumns cols; std::string err;
     EXPECT_FALSE(mas::load_columns(p, cols, err));
@@ -128,7 +131,7 @@ TEST(ExtractorFlat, HeaderIsRejectedWhenTheColumnCountIsWrong) {
 // The count check short-circuits the name check, so a wrong *name* needs a
 // header of the right width to reach it. Both branches must name what is wrong.
 TEST(ExtractorFlat, HeaderIsRejectedWhenAColumnNameIsWrong) {
-    const std::string p = "flat_bad_name.csv";
+    const std::string p = mas::test::temp_artifact("flat_bad_name.csv");
     {
         std::ofstream f(p);
         auto hdr = mas::expected_header();
@@ -145,7 +148,7 @@ TEST(ExtractorFlat, HeaderIsRejectedWhenAColumnNameIsWrong) {
 
 TEST(ExtractorFlat, MissingFileIsReported) {
     mas::RawColumns cols; std::string err;
-    EXPECT_FALSE(mas::load_columns("definitely_not_here.csv", cols, err));
+    EXPECT_FALSE(mas::load_columns(mas::test::temp_artifact("definitely_not_here.csv"), cols, err));
     EXPECT_FALSE(err.empty());
 }
 
@@ -176,17 +179,17 @@ std::string repo_path(const std::string& rel) {
 } // namespace
 
 TEST(ExtractorFlat, CrlfYieldsIdenticalEventsToLf) {
-    writeTiny("flat_lf.csv", "\n");
-    writeTiny("flat_crlf.csv", "\r\n");
+    writeTiny(mas::test::temp_artifact("flat_lf.csv"), "\n");
+    writeTiny(mas::test::temp_artifact("flat_crlf.csv"), "\r\n");
     mas::RawColumns a, b; std::string err;
-    ASSERT_TRUE(mas::load_columns("flat_lf.csv", a, err)) << err;
-    ASSERT_TRUE(mas::load_columns("flat_crlf.csv", b, err)) << err;
+    ASSERT_TRUE(mas::load_columns(mas::test::temp_artifact("flat_lf.csv"), a, err)) << err;
+    ASSERT_TRUE(mas::load_columns(mas::test::temp_artifact("flat_crlf.csv"), b, err)) << err;
     std::vector<mas::CapEvent> ea, eb;
     mas::extract_flat(a.ts, a.count.data(), a.torque.data(), a.status.data(), a.n_rows, ea);
     mas::extract_flat(b.ts, b.count.data(), b.torque.data(), b.status.data(), b.n_rows, eb);
     ASSERT_EQ(ea.size(), static_cast<std::size_t>(mas::NUM_HEADS));
     expectSame(ea, eb);
-    std::remove("flat_lf.csv"); std::remove("flat_crlf.csv");
+    std::remove(mas::test::temp_artifact("flat_lf.csv").c_str()); std::remove(mas::test::temp_artifact("flat_crlf.csv").c_str());
 }
 
 // The real-data gate. Skipped when the pool has not been extracted.
@@ -216,4 +219,65 @@ TEST(ExtractorFlat, AgreesWithStatefulExtractorOnARealDayFile) {
                       cols.status.data(), cols.n_rows, got);
     EXPECT_GT(want.size(), 100000u) << "day-file should yield ~765k events";
     expectSame(want, got);
+}
+
+TEST(ExtractorFlat, OverIntJumpSaturatesAndStaysAggregated) {
+    // The fabricated-event case CapEvent.hpp documents: counts 100 -> 5e9 once
+    // emitted delta=705032604 through a truncating cast, and a truncation
+    // landing at <= 1 also cleared `aggregated`. Both extractors and the CUDA
+    // kernel now share one saturating policy (DeltaPolicy.hpp).
+    const auto out = flat({makeRow("t0", {{1, 100}}),
+                           makeRow("t1", {{1, 5000000000LL}})});
+    ASSERT_EQ(out.size(), 1u);
+    EXPECT_EQ(out[0].delta, INT_MAX);
+    EXPECT_TRUE(out[0].aggregated);
+    EXPECT_FALSE(out[0].reset);
+    expectAgrees({makeRow("t0", {{1, 100}}), makeRow("t1", {{1, 5000000000LL}})});
+}
+
+TEST(DeltaPolicy, SaturatedDeltaBoundaries) {
+    // Host-compiled unit test of the exact function delta_kernel executes on
+    // the device -- the divergence C2 flagged (kernel kept the truncating
+    // cast after 9f0f901 fixed both CPU extractors) is now caught on a
+    // machine with no CUDA toolchain.
+    EXPECT_EQ(mas::saturated_delta(100, 100), 0);                    // held
+    EXPECT_EQ(mas::saturated_delta(99, 100), 0);                     // reset
+    EXPECT_EQ(mas::saturated_delta(101, 100), 1);                    // single cap
+    EXPECT_EQ(mas::saturated_delta(105, 100), 5);                    // aggregated
+    EXPECT_EQ(mas::saturated_delta(100LL + INT_MAX, 100), INT_MAX);  // exactly at the edge
+    EXPECT_EQ(mas::saturated_delta(101LL + INT_MAX, 100), INT_MAX);  // one past: saturate
+    EXPECT_EQ(mas::saturated_delta(5000000000LL, 100), INT_MAX);     // the documented case
+    EXPECT_EQ(mas::saturated_delta(1LL << 53, -(1LL << 53)), INT_MAX);  // full admitted range
+}
+
+TEST(ExtractorFlat, LoadColumnsCountsSkippedRows) {
+    // load_columns dropped rows silently and returned true regardless: a
+    // corrupt input yielded a short row set the CPU-vs-GPU differential then
+    // compared against itself, agreeing perfectly on truncated data. The
+    // shared policy now counts them, same as CsvRawReader::skipped().
+    namespace fs = std::filesystem;
+    const std::string p = mas::test::temp_artifact("t_flat_skipped.csv");
+    {
+        std::ofstream o(p);
+        const auto cols = mas::expected_header();
+        for (std::size_t i = 0; i < cols.size(); ++i) o << (i ? "," : "") << cols[i];
+        o << "\n";
+        auto row = [&o](const std::string& ts, const std::string& torque0) {
+            o << ts;
+            for (int i = 0; i < 36; ++i) o << ",1.0";
+            for (int i = 0; i < 36; ++i) o << (i == 0 ? "," + torque0 : ",2.0");
+            for (int i = 0; i < 36; ++i) o << ",0.0";
+            o << "\n";
+        };
+        row("2026-02-01T10:00:00.000", "2.0");
+        row("2026-02-01T10:00:01.000", "junk");     // malformed numeric
+        row("2026-02-01T10:00:02.000", "1e300");    // out of float range
+        row("2026-02-01T10:00:03.000", "2.0");
+    }
+    mas::RawColumns cols;
+    std::string err;
+    ASSERT_TRUE(mas::load_columns(p, cols, err)) << err;
+    EXPECT_EQ(cols.n_rows, 2u);
+    EXPECT_EQ(cols.skipped, 2u);
+    fs::remove(p);
 }

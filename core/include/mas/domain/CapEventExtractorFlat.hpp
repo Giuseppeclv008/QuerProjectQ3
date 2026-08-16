@@ -7,11 +7,16 @@
 namespace mas {
 
 // Raw telemetry CSV loaded into column arrays. count/torque/status are
-// row-major [n_rows][NUM_HEADS]; ts has one entry per row.
+// row-major [n_rows][NUM_HEADS]; ts has one entry per row. `skipped` counts
+// data rows dropped by the shared validity policy (RowParse.hpp) -- the same
+// counter CsvRawReader::skipped() keeps, so a corrupt input cannot silently
+// yield a short row set: the CUDA differential compares against the CPU on
+// the same truncated data, and only this counter says the truncation happened.
 struct RawColumns {
     std::vector<std::string> ts;
     std::vector<double> count, torque, status;
     std::size_t n_rows = 0;
+    std::size_t skipped = 0;
 };
 
 // The 109 column names the pool uses (spec §4): "timestamp", then

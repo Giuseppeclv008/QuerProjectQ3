@@ -16,9 +16,15 @@ if(MAS_BENCH_ONLY)
   # "full" build silently missing the whole multi-agent half.
   set(MAS_ENABLE_ZMQ OFF)
   # The bench build's contract is "downloads nothing", and the test suite is
-  # a googletest fetch: bench-only builds no tests. Drop MAS_BENCH_ONLY to
-  # get the suite.
+  # a googletest fetch: bench-only builds no tests -- including the CUDA
+  # differential, and a -DMAS_BUILD_TESTS=ON on the command line is shadowed
+  # by this set(). To build the tests on the GPU box configure without
+  # MAS_BENCH_ONLY: cmake -B build -DMAS_ENABLE_CUDA=ON -DMAS_ENABLE_ZMQ=OFF
+  # (downloads googletest and the DuckDB asset; every platform has a pinned
+  # branch below).
   set(MAS_BUILD_TESTS OFF)
+  message(STATUS "MAS_BENCH_ONLY=ON: test suite disabled (downloads nothing); "
+                 "for tests configure without MAS_BENCH_ONLY")
 endif()
 
 find_package(Threads REQUIRED)
@@ -40,13 +46,21 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # -std=c++20, not gnu++20: MSVC is a supported target and a GNU extension
 # compiles everywhere except there.
 set(CMAKE_CXX_EXTENSIONS OFF)
-# Warnings on our own code (FetchContent'd third-party keeps its own flags).
-# Not -Werror: three compilers are supported and a new warning in one must
-# not brick the other two's builds.
+# Warnings on our own code. (This is a directory property, and FetchContent
+# subdirectories added AFTER this point inherit it -- googletest and libzmq
+# do build with these flags; they just tolerate them.) Not -Werror: three
+# compilers are supported and a new warning in one must not brick the other
+# two's builds. The CUDA line covers the 596-line .cu -- the newest and
+# least-exercised code in the tree used to build with nvcc defaults, i.e. no
+# warnings at all.
 add_compile_options(
   $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CXX_COMPILER_ID:GNU,Clang,AppleClang>>:-Wall>
   $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CXX_COMPILER_ID:GNU,Clang,AppleClang>>:-Wextra>
-  $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CXX_COMPILER_ID:MSVC>>:/W4>)
+  $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CXX_COMPILER_ID:MSVC>>:/W4>
+  # nvcc takes no bare -Wall; warnings go to the host compiler via -Xcompiler
+  # (MSVC host on the Windows target box, gcc/clang elsewhere).
+  $<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<CXX_COMPILER_ID:MSVC>>:-Xcompiler=/W4>
+  $<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<NOT:$<CXX_COMPILER_ID:MSVC>>>:-Xcompiler=-Wall,-Wextra>)
 
 include(FetchContent)
 if(MAS_BUILD_TESTS)
@@ -128,6 +142,7 @@ endif()
 add_library(mas_clean_core
   core/src/domain/CapEventExtractor.cpp
   core/src/domain/CapEventExtractorFlat.cpp
+  core/src/domain/RowParse.cpp
   core/src/store/CsvRawReader.cpp)
 target_include_directories(mas_clean_core PUBLIC core/include)
 if(WIN32)
@@ -204,6 +219,12 @@ set_target_properties(bench_cpu_exe PROPERTIES OUTPUT_NAME bench_cpu)
 if(MAS_ENABLE_CUDA)
   find_package(CUDAToolkit REQUIRED)
   enable_language(CUDA)
+  # Match the host standard: unset, nvcc compiled the .cu at its default
+  # (C++17) while every host TU is C++20 -- and they exchange
+  # std::vector<CapEvent> containing std::string across that boundary. An
+  # unforced mixed-standard link on the least-tested target in the tree.
+  set(CMAKE_CUDA_STANDARD 20)
+  set(CMAKE_CUDA_STANDARD_REQUIRED ON)
   # The kernels live in their own library because two binaries need them:
   # mas_cuda_clean (the benchmark contender) and, in the full build,
   # mas_monolith's --engine=cuda path.
@@ -257,16 +278,22 @@ if(MAS_BUILD_TESTS)
       tests/test_duckdb_smoke.cpp
       tests/test_duckdb_event_store.cpp
       tests/test_parquet_event_store.cpp
-      tests/test_parquet_export.cpp)
+      tests/test_parquet_export.cpp
+      # The agent-layer tests run on FakeTransport (a pure-virtual header) and
+      # include no zmq.hpp: they belong to the store gate, not the ZMQ one.
+      # Gating them on MAS_ENABLE_ZMQ silently dropped 44 tests -- the whole
+      # death-detection and re-dispatch logic -- from a supported ZMQ=OFF
+      # configuration.
+      tests/test_message.cpp
+      tests/test_cleaning_worker.cpp
+      tests/test_coordinator.cpp)
     list(APPEND MAS_TEST_LIBS mas_core duckdb_imported)
   endif()
   if(MAS_ENABLE_ZMQ)
     list(APPEND MAS_TEST_SOURCES
       tests/test_zmq_smoke.cpp
-      tests/test_message.cpp
       tests/test_zmq_transport.cpp
-      tests/test_cleaning_worker.cpp
-      tests/test_coordinator.cpp)
+      tests/test_zmq_e2e.cpp)
     list(APPEND MAS_TEST_LIBS mas_transport cppzmq)
   endif()
   if(MAS_ENABLE_CUDA)
@@ -279,7 +306,19 @@ if(MAS_BUILD_TESTS)
   target_link_libraries(unit_tests PRIVATE ${MAS_TEST_LIBS})
   target_include_directories(unit_tests PRIVATE tests)
   include(GoogleTest)
+  # Skips must be visible: CTest used to report a gtest-skipped test as
+  # Passed, so the CUDA differential's "skips without a device" was
+  # indistinguishable from "ran and passed" in exactly the
+  # `ctest --output-on-failure` the README documents. CMake >= 3.30's
+  # GoogleTest module stamps SKIP_REGULAR_EXPRESSION on every discovered
+  # test on its own (verified in the generated *_tests.cmake; passing it
+  # again via PROPERTIES duplicates the key and breaks the generated file).
+  # Older CMakes silently regress to skips-count-as-passes, so warn there.
   gtest_discover_tests(unit_tests)
+  if(CMAKE_VERSION VERSION_LESS 3.30)
+    message(WARNING "CMake ${CMAKE_VERSION} < 3.30: gtest skips report as "
+                    "Passed under ctest on this version")
+  endif()
 endif()
 
 if(NOT MAS_BENCH_ONLY AND NOT WIN32)

@@ -42,20 +42,24 @@ int main(int argc, char** argv) {
     // Both bounds, not just the lower one: a fourth positional is as much a
     // typo as a missing second one, and silently ignoring it is how the
     // dropped "parquet" above went unnoticed.
-    if (argc - argi < 2 || argc - argi > 3) {
+    if (argc - argi != 3) {
+        // machine_id is required, not defaulted (same rationale as
+        // mas_worker): a silently-"MCC" store is a wrong answer that
+        // announces itself as a success.
         std::cerr << "usage: clean [--format duckdb|parquet] <raw_in.csv> "
-                     "<events_out.csv|.duckdb|out_dir> [machine_id]\n";
+                     "<events_out.csv|.duckdb|out_dir> <machine_id>\n";
         return 2;
     }
     const std::string in = argv[argi], out = argv[argi + 1];
-    const std::string machine = (argc > argi + 2) ? argv[argi + 2] : "MCC";
+    const std::string machine = argv[argi + 2];
 
     if (parquet) {
         mas::CsvRawReader probe(in);
         if (!probe.is_open()) return report_missing_input(in);
         try {
             mas::ParquetEventStore store(mas::parquet_path_for(out, in), machine);
-            const long long n = mas::clean_file(in, store);
+            mas::CleanFileStats stats;
+            const long long n = mas::clean_file(in, store, &stats);
             if (n < 0) {
                 // No file for a day that failed: the reader globs the
                 // directory and a valid empty Parquet reads as a real, empty
@@ -65,7 +69,12 @@ int main(int argc, char** argv) {
                 return 1;
             }
             store.close();
-            std::cerr << "wrote " << n << " cap events to parquet\n";
+            std::cerr << "wrote " << n << " cap events to parquet";
+            if (stats.skipped_rows)
+                std::cerr << " (skipped " << stats.skipped_rows << " malformed rows)";
+            if (stats.out_of_order_rows)
+                std::cerr << " (" << stats.out_of_order_rows << " out-of-order timestamps)";
+            std::cerr << "\n";
         } catch (const std::exception& e) {
             // Named on this path too, for the same reason the `n < 0` branch
             // names it: a DuckDB cast error reports the value that failed and
@@ -86,9 +95,15 @@ int main(int argc, char** argv) {
 
         try {
             mas::DuckDbEventStore store(out, machine);
-            const long long n = mas::clean_file(in, store);
+            mas::CleanFileStats stats;
+            const long long n = mas::clean_file(in, store, &stats);
             std::cerr << "wrote " << n << " cap events; store now holds "
-                      << store.count() << " rows\n";
+                      << store.count() << " rows";
+            if (stats.skipped_rows)
+                std::cerr << " (skipped " << stats.skipped_rows << " malformed rows)";
+            if (stats.out_of_order_rows)
+                std::cerr << " (" << stats.out_of_order_rows << " out-of-order timestamps)";
+            std::cerr << "\n";
         } catch (const std::exception& e) {
             std::cerr << "error: " << e.what() << "\n";
             return 1;
