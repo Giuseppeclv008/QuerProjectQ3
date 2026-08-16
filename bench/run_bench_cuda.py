@@ -72,9 +72,14 @@ def die(msg, fix=None):
 
 
 def find_binary(name):
-    """MSVC multi-config puts binaries in build/Release; make both work."""
+    """MSVC multi-config puts binaries in build/Release; make both work.
+
+    Only the documented build directory is searched: a stale side build
+    (build-plan once held an unoptimized bench_cpu, CMAKE_BUILD_TYPE empty)
+    must never be silently benchmarked in place of the real one.
+    """
     exe = name + (".exe" if os.name == "nt" else "")
-    for d in ("build", "build/Release", "build-plan", "build-plan/Release"):
+    for d in ("build", "build/Release"):
         p = os.path.join(ROOT, d, exe)
         if os.path.isfile(p):
             return p
@@ -209,7 +214,17 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", required=True, help="month zip or extracted directory")
     ap.add_argument("--quick", action="store_true", help="1-day volume only")
+    ap.add_argument("--force", action="store_true",
+                    help="overwrite existing results CSVs (they are refused otherwise)")
     args = ap.parse_args()
+
+    # A --quick run writes the same two files as the full sweep; without this
+    # guard the documented smoke-test truncated the committed full-sweep CSVs.
+    if not args.force:
+        clobbered = [p for p in (RESULTS, STAGES) if os.path.exists(p)]
+        if clobbered:
+            die("refusing to overwrite: " + ", ".join(clobbered),
+                "pass --force to overwrite, or move the files aside first")
 
     files = extract_pool(args.data)
     volumes = (1,) if args.quick else tuple(v for v in VOLUMES if v <= len(files))
@@ -301,7 +316,12 @@ def main():
                     # materialization and every cudaMalloc/cudaHostAlloc, and
                     # at 28 day-files the hidden part cost about as much as the
                     # reported one.
-                    emit(w, "cuda", "clean", 1, v, rep, clean_s, wall, events, rss, cpu_s)
+                    # note="verify": repeat 1 runs the full CPU differential
+                    # inside the timed wall clock, a 7x spread in one column
+                    # of one configuration -- a row that must be identifiable
+                    # as such in the CSV, not discovered by counting repeats.
+                    emit(w, "cuda", "clean", 1, v, rep, clean_s, wall, events,
+                         rss, cpu_s, note="verify" if verify else "")
                     m = _STAGE.search(blob)
                     if m:
                         kv = dict(p.split("=") for p in m.group(1).split())
@@ -325,6 +345,20 @@ def main():
                         out_db = os.path.join(ROOT, "bench_tmp.duckdb")
                         _, wall, cpu_s, rss, events, clean_s, merge_s = run(
                             [mono] + flag + [out_db, "MCC", str(th)] + sub)
+                        # The oracle is computed for every volume and was only
+                        # ever printed; run_bench.sh gates every run and this
+                        # sweep claimed to but did not. Store-backed runs must
+                        # land on the store row count; --no-store runs emit
+                        # raw events (more than the store keeps on multi-day
+                        # volumes) and are covered by the cross-arch `seen`
+                        # check above instead.
+                        if mode == "e2e" and events != oracle[v]:
+                            die(f"{arch} [e2e] at {v} day-file(s), repeat "
+                                f"{rep}: {events} events, oracle says "
+                                f"{oracle[v]}",
+                                "a fast implementation that is wrong must not "
+                                "produce a number; investigate before "
+                                "re-running the sweep")
                         emit(w, arch, mode, th, v, rep, clean_s, wall, events,
                              rss, cpu_s, merge_s=merge_s)
                         for stale in [out_db] + [

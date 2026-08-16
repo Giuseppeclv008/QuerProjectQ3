@@ -185,8 +185,12 @@ cheaper vehicle at like-for-like N on this box.
   set-based merge. They were re-run through the same harness with the restored
   binaries (`run_bench.sh --only mas --volumes "1 7"`, added for this purpose)
   and spliced in. The monolith block finished before any rebuild and the MAS
-  28-day block ran after the binaries were restored; neither was affected. The
-  superseded file is kept as `bench/results.csv.contaminated`.
+  28-day block ran after the binaries were restored; neither was affected.
+  **The pre-splice file was not retained.** An earlier revision of this note
+  claimed it was kept as `bench/results.csv.contaminated`; no such file ever
+  existed in this repository, so the 30 spliced MAS rows cannot be checked
+  against what they replaced — unlike the two withdrawals below, whose
+  contaminated CSVs are committed and recompute.
 
 ### merge_all: measured end to end (2026-08-11, branch `perf/merge-set-based`)
 
@@ -298,9 +302,14 @@ spread, because n=3 on a laptop does not support three significant figures
 gone — and the estimate that machinery was built on measured true: "~75 s per
 28-day repeat" came out 74.6 s median.)
 
-Repeat 1 is still the caveat in miniature: its `clean_s` reads 8.34 s (cold
-file cache) and its *wall* reads 58.9 s, because `--verify` runs the full CPU
-differential in the same process on the first repeat. The median absorbs
+Repeat 1 is still the caveat in miniature: its `clean_s` reads 8.34 s and its
+*wall* reads 58.9 s, because `--verify` runs the full CPU differential in the
+same process on the first repeat. The 8.34 s is **not** (only) a cold file
+cache: the stage CSV shows the inflation on pure device work that touches no
+files — `h2d_s` 0.639 vs 0.154, `index_s` 0.375 vs 0.049, `compact_s` 0.304
+vs 0.027 (4–11×) — so GPU clock ramp-up, first-touch of the pinned buffer,
+and context warm-up are the plausible causes. Either way the published
+[6.33–8.34] interval is one cold run and two warm ones. The median absorbs
 both; the spread is why the interval is published. The CUDA context and
 allocations sit outside `clean_s` and inside the wall clock, where spec §6.1
 puts them: total 8.43 s median against 6.43 s clean.
@@ -374,6 +383,14 @@ One `mas_monolith` invocation per backend over the same 28 day-files of
 February 2026, `machine_id` `MCC`, one thread. Both stores hold **21,872,663
 events**, raw equal to distinct.
 
+Two conventions to read every number above through: (1) all repeats after a
+sweep's first run are **warm-cache** numbers — nothing here measures a cold
+first read except where a repeat-1 caveat says so; (2) the committed plots
+draw **medians only**, so the spreads this document works to publish (the
+N=16 merge alone spreads 9.8%) are visible in the tables and CSVs, not in any
+figure. Ratios quoted to three significant figures (3.42×, 3.83×) inherit the
+spread of both their operands.
+
 Every figure has an artifact in `bench/parquet-comparison/`:
 `write_single.out` and `write_single_duckdbfirst.out` (the two orderings),
 `parity.out`, `decompose_final.out` (median of 7), `calibrate.out`,
@@ -398,8 +415,14 @@ moved the ratio, but one row should not be sourced from two runs.
 
 Run in both orders because this volume slows DuckDB's larger sequential writes
 when free space runs low, and each backend's store eats the space the next one
-sees. **2.79x is the ordering that does not flatter Parquet, and the one to
-quote**; the 4% spread between the orderings is the size of that effect. It is
+sees. One honesty note the artifacts force: the two orderings are also **two
+builds and two days** (`write_single.out` 2026-08-13 vs
+`write_single_duckdbfirst.out` 2026-08-14, different summary line, an extra
+`metrics:` line, and the later file carries `write_sweep.sh`'s `# order:` echo
+the earlier one predates), so the 4% spread bundles ordering with whatever
+else changed between those runs — it is an upper bound on the ordering
+effect, not a measurement of it alone. **2.79x is the ordering that does not
+flatter Parquet, and the one to quote**. It is
 *not* "the counterbalanced figure", as this section used to call it — a
 counterbalanced estimate averages the orderings (~2.85x); 2.79x is deliberately
 the conservative one instead.

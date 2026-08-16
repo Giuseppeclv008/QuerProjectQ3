@@ -20,8 +20,13 @@ pip install -r bench/requirements-bench.txt
 python bench/run_bench_cuda.py --data telemetry_MCC777eda3db57348ef8a3113a642ae74db_2026-02.zip
 ```
 
-`--config Release` is required on Windows (MSVC is multi-config) and harmless
-elsewhere. Add `--quick` to run the 1-day volume only.
+`--config Release` is what selects the optimized build on Windows (MSVC is
+multi-config). On macOS and Linux it is a **no-op** — single-config generators
+take the configure-time `CMAKE_BUILD_TYPE`, which the project now defaults to
+Release when unset, so the recipe above is optimized everywhere. If you set
+`CMAKE_BUILD_TYPE` yourself, anything but Release produces benchmark numbers
+that are not comparable to the committed ones. Add `--quick` to run the 1-day
+volume only (it refuses to overwrite existing results CSVs without `--force`).
 
 Outputs `bench/results_cuda.csv` and `bench/results_cuda_stages.csv`. Paste both
 back.

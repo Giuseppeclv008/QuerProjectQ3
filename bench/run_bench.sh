@@ -8,13 +8,15 @@ QUICK=0
 ONLY=both              # both | mono | mas
 VOLUMES_ARG=""         # e.g. "1 7"; empty = the default ladder
 OUT_CSV_ARG=""
+FORCE=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --quick)   QUICK=1; shift ;;
         --only)    ONLY="$2"; shift 2 ;;
         --volumes) VOLUMES_ARG="$2"; shift 2 ;;
         --out)     OUT_CSV_ARG="$2"; shift 2 ;;
-        *) echo "usage: $0 [--quick] [--only mono|mas|both] [--volumes \"1 7\"] [--out file.csv]" >&2
+        --force)   FORCE=1; shift ;;
+        *) echo "usage: $0 [--quick] [--only mono|mas|both] [--volumes \"1 7\"] [--out file.csv] [--force]" >&2
            exit 2 ;;
     esac
 done
@@ -110,7 +112,26 @@ if ! "$PY_DUCKDB" -c "import duckdb" 2>/dev/null; then
 fi
 
 mkdir -p bench
-echo "arch,n_workers,threads,files,repeat,clean_s,merge_s,total_s,events,rows_per_s,events_per_s,peak_rss_mb,cpu_pct" > "$OUT_CSV"
+# Never truncate an existing results file by accident: the documented partial
+# resweep (`--only mas --volumes "1 7"`) once pointed straight at the
+# committed 81-row bench/results.csv, and this `>` would have replaced it
+# with 30 rows, no backup, no prompt. Overwriting is now an explicit choice.
+if [ -e "$OUT_CSV" ] && [ "$FORCE" != 1 ]; then
+    echo "error: $OUT_CSV exists; pass --force to overwrite it," >&2
+    echo "       or --out <file.csv> to write elsewhere and splice by hand" >&2
+    exit 1
+fi
+# Provenance rides the artifact itself, not a prose file two directories
+# away: results_cuda.csv already does this and the headline sweep did not.
+# bench_plots.py reads with comment="#".
+{
+    echo "# generated: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "# host: $(uname -srm) / $(hostname)"
+    echo "# hardware: $(sysctl -n machdep.cpu.brand_string 2>/dev/null || grep -m1 'model name' /proc/cpuinfo 2>/dev/null | cut -d: -f2- || echo unknown)"
+    echo "# build_dir: $BUILD ($(grep -m1 '^CMAKE_BUILD_TYPE' "$BUILD/CMakeCache.txt" 2>/dev/null || echo 'CMAKE_BUILD_TYPE unknown'))"
+    echo "# repeats: $REPEATS  volumes: ${VOLUMES[*]}"
+} > "$OUT_CSV"
+echo "arch,n_workers,threads,files,repeat,clean_s,merge_s,total_s,events,rows_per_s,events_per_s,peak_rss_mb,cpu_pct" >> "$OUT_CSV"
 
 # parse /usr/bin/time -l output file -> "real user sys rss_bytes"
 parse_time() {   # $1 = time-output file

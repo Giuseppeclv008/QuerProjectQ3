@@ -13,7 +13,9 @@ GROUP = ["arch", "n_workers", "threads", "files"]
 
 
 def load(csv_path) -> pd.DataFrame:
-    return pd.read_csv(csv_path)
+    # comment="#": the harness writes provenance lines (#-prefixed) above the
+    # header, same convention as results_cuda.csv.
+    return pd.read_csv(csv_path, comment="#")
 
 
 def medians(df: pd.DataFrame) -> pd.DataFrame:
@@ -95,14 +97,21 @@ def render(csv_path, out_dir) -> None:
     a2.set_xlabel("parallelism"); a2.set_ylabel("efficiency E=S/N"); a2.legend()
     fig.savefig(out / "speedup_efficiency.png", dpi=150, bbox_inches="tight")
 
-    # 3) wall-clock vs volume per arch/parallelism
+    # 3) wall-clock vs volume per arch/parallelism.
+    # X is EVENTS, not day-files: day-files differ ~12x in events (day 05 has
+    # 89,144; day 10 has 1,128,117 -- the first 7 files hold 17.8% of the
+    # month, not 25%), so a day-file axis showed a super-linear kink that was
+    # pure artifact: per event the pipeline is flat (~24-25 us/event at every
+    # volume). In a presentation that kink read as "the system degrades with
+    # volume".
     fig, ax = plt.subplots()
     for (arch, n, t), sub in med.groupby(["arch", "n_workers", "threads"]):
         label = {"mas": f"MAS N={n}", "mono-MT": f"mono T={t}",
                  "mono-1T": "mono-1T"}[arch]
-        sub = sub.sort_values("files")
-        ax.plot(sub.files, sub.total_s, marker="o", label=label)
-    ax.set_xlabel("day-files"); ax.set_ylabel("wall s (median)")
+        sub = sub.sort_values("events")
+        ax.plot(sub.events / 1e6, sub.total_s, marker="o", label=label)
+    ax.set_xlabel("events processed (millions)")
+    ax.set_ylabel("wall s (median)")
     ax.set_title("Wall-clock vs volume"); ax.legend(fontsize=7)
     fig.savefig(out / "wall_vs_volume.png", dpi=150, bbox_inches="tight")
 
@@ -154,13 +163,20 @@ def render_cuda(results_csv, stages_csv, out_dir):
     med = (df.groupby(["arch", "mode", "files"])["clean_s"]
              .median().reset_index())
 
-    one = med[med["files"] == med["files"].min()]
+    # Clean mode only, on a LINEAR axis: bar length on a log axis encodes
+    # nothing (a 44x ratio read as ~7x), and mixing clean-mode with e2e-mode
+    # bars put mono-1T on the chart twice at two different numbers under one
+    # title.
+    one = med[(med["files"] == med["files"].min()) & (med["mode"] == "clean")]
+    if one.empty:      # older CSVs without a clean-mode row
+        one = med[med["files"] == med["files"].min()]
     fig, ax = plt.subplots(figsize=(9, 5))
     labels = [f"{a}\n[{m}]" for a, m in zip(one["arch"], one["mode"])]
-    ax.bar(labels, one["clean_s"])
-    ax.set_yscale("log")
-    ax.set_ylabel("clean time, s (log)")
-    ax.set_title(f"Cleaning one day-file ({int(one['files'].iloc[0])} file)")
+    bars = ax.bar(labels, one["clean_s"])
+    ax.bar_label(bars, fmt="%.2f s", fontsize=8)
+    ax.set_ylabel("clean time, s")
+    ax.set_title(f"Cleaning one day-file, clean mode "
+                 f"({int(one['files'].iloc[0])} file)")
     fig.tight_layout()
     fig.savefig(os.path.join(out_dir, "cuda_throughput.png"), dpi=150)
     plt.close(fig)
