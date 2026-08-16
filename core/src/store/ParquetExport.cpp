@@ -169,8 +169,13 @@ ExportResult export_store_to_parquet(const std::string& db_path,
         // ORDER BY makes the file deterministic: same store, same bytes.
         // Without it DuckDB is free to emit row groups in whatever order the
         // scan produced, so two exports of one store would not compare equal.
+        // All three key columns: the UNIQUE key is (machine_id, head_id, ts),
+        // and a store merged from several machines keeps its source
+        // machine_ids -- sorting by (head_id, ts) alone left the tie order
+        // between machines to the scan, which broke the guarantee on exactly
+        // the merged stores mas_merge documents.
         exec_or_throw(con, "COPY (SELECT * FROM cap_events" + where +
-                         " ORDER BY head_id, ts) TO '" + sql_quote(tmp) +
+                         " ORDER BY machine_id, head_id, ts) TO '" + sql_quote(tmp) +
                          "' (FORMAT PARQUET)");
 
         // Verify the bytes just written rather than trusting COPY. A truncated

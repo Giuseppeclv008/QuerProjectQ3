@@ -4,8 +4,12 @@
 #include <stdexcept>
 #include <string>
 #ifdef _WIN32
+#include <io.h>
+#include <fcntl.h>
 #include <process.h>
+#include <sys/stat.h>
 #else
+#include <fcntl.h>
 #include <unistd.h>
 #endif
 
@@ -52,6 +56,40 @@ inline std::string temp_sibling_of(const std::string& final_path) {
     return (dir / base).string();
 }
 
+// Flush a finished file's data blocks (and, where the platform allows, its
+// directory entry) before/after the rename. rename(2) guarantees a reader
+// never sees a partial file -- visibility -- but not that the data survives
+// power loss: the directory entry can persist while the data blocks never
+// made it to disk. fsync the temp before the rename and the parent directory
+// after it closes that window on POSIX. Windows has no directory fsync;
+// _commit on the file covers the data half, which is the larger one.
+inline void fsync_file(const std::string& path) {
+#ifdef _WIN32
+    int fd = -1;
+    if (_sopen_s(&fd, path.c_str(), _O_RDONLY | _O_BINARY, _SH_DENYNO,
+                 _S_IREAD) != 0 || fd < 0)
+        return;   // best effort: a file we cannot reopen is not made worse
+    _commit(fd);
+    _close(fd);
+#else
+    const int fd = ::open(path.c_str(), O_RDONLY);
+    if (fd < 0) return;
+    ::fsync(fd);
+    ::close(fd);
+#endif
+}
+
+inline void fsync_parent_dir(const std::string& path) {
+#ifndef _WIN32
+    const auto dir = std::filesystem::path(path).parent_path();
+    const std::string d = dir.empty() ? "." : dir.string();
+    const int fd = ::open(d.c_str(), O_RDONLY);
+    if (fd < 0) return;
+    ::fsync(fd);
+    ::close(fd);
+#endif
+}
+
 // Calls write_to(tmp) -- which must produce the finished file at that path --
 // then renames it onto final_path. Anything thrown by write_to propagates with
 // the temp removed, so a failed publish leaves the destination untouched and no
@@ -77,11 +115,17 @@ void publish_atomically(const std::string& final_path, F&& write_to) {
                 "refusing to publish " + final_path + ": nothing wrote a file at " +
                 tmp + (st_ec ? " (" + st_ec.message() + ")" : ""));
 
+        // Durability, not just visibility: without this fsync the rename's
+        // directory entry can survive a power loss whose data blocks did not,
+        // publishing a file full of zeros under the real name.
+        fsync_file(tmp);
+
         std::error_code ec;
         std::filesystem::rename(tmp, final_path, ec);
         if (ec)
             throw std::runtime_error("cannot rename " + tmp + " to " + final_path +
                                      ": " + ec.message());
+        fsync_parent_dir(final_path);
     } catch (...) {
         // remove_all, not remove: the check above rejects a directory at tmp,
         // and this is what clears it. On a regular file the two are identical.
