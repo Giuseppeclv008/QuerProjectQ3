@@ -1,4 +1,5 @@
 #include "mas/store/DuckDbEventStore.hpp"
+#include "mas/store/ParquetExport.hpp"
 #include <duckdb.hpp>
 #include <gtest/gtest.h>
 #include <cstdio>
@@ -116,14 +117,19 @@ TEST(DuckDbEventStore, ExportParquetRoundtrips) {
     removeDb(path);
     std::remove(pq.c_str());
 
-    mas::DuckDbEventStore store(path, "MCC1");
-    std::vector<mas::CapEvent> batch = {
-        ev(1, "2026-02-01T00:00:01.000", 101),
-        ev(1, "2026-02-01T00:00:05.000", 102),
-        ev(7, "2026-02-01T00:00:03.000", 900, 2),
-    };
-    store.write(batch);
-    store.export_parquet(pq);
+    {
+        mas::DuckDbEventStore store(path, "MCC1");
+        std::vector<mas::CapEvent> batch = {
+            ev(1, "2026-02-01T00:00:01.000", 101),
+            ev(1, "2026-02-01T00:00:05.000", 102),
+            ev(7, "2026-02-01T00:00:03.000", 900, 2),
+        };
+        store.write(batch);
+    }
+    // Through the one guarded export path; the unguarded member form is gone
+    // (COPY ... TO truncates, so it could destroy the store it was reading).
+    const auto r = mas::export_store_to_parquet(path, pq, "", "");
+    EXPECT_EQ(r.rows, 3);
 
     duckdb::DuckDB mem(nullptr);
     duckdb::Connection con(mem);
@@ -321,7 +327,19 @@ TEST(DuckDbEventStore, StorePredatingTheKeyChangeIsRefused) {
         con.Query("INSERT INTO cap_events VALUES "
                   "('MCC1',1,'2026-02-01 00:00:01',101,2.0,0.0,1,false,false,false)");
     }
-    EXPECT_THROW(mas::DuckDbEventStore store(path, "MCC1"), std::runtime_error);
+    // On the message, not just the type: the constructor has more than one
+    // runtime_error path (unopenable file, bad schema), and a type-only
+    // assertion lets any of them stand in for the identity guard -- the one
+    // refusal stopping a cap_seq-keyed store (the key that discarded 34% of
+    // February) from being silently reused. Project standard elsewhere.
+    try {
+        mas::DuckDbEventStore store(path, "MCC1");
+        ADD_FAILURE() << "opened a store keyed on cap_seq";
+    } catch (const std::runtime_error& e) {
+        EXPECT_NE(std::string(e.what()).find("keyed on cap_seq"),
+                  std::string::npos)
+            << e.what();
+    }
     removeDb(path);
 }
 
@@ -336,8 +354,8 @@ TEST(DuckDbEventStore, PathContainingASingleQuoteWorks) {
         mas::DuckDbEventStore s(src, "MCC1");
         std::vector<mas::CapEvent> b = {ev(1, "2026-02-01T00:00:01.000", 101)};
         s.write(b);
-        EXPECT_NO_THROW(s.export_parquet(pq));
     }
+    EXPECT_NO_THROW(mas::export_store_to_parquet(src, pq, "", ""));
     mas::DuckDbEventStore d(dst, "MCC1");
     EXPECT_NO_THROW(d.merge_from(src));
     EXPECT_EQ(d.count(), 1);

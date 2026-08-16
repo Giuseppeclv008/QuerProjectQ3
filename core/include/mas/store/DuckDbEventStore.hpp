@@ -19,7 +19,11 @@ public:
 
     void write(std::span<const CapEvent> events) override;
     long long count() const;                             // rows in cap_events
-    void export_parquet(const std::string& parquet_path); // implemented in Task 5
+    // (There is deliberately no export_parquet() here: COPY ... TO truncates
+    // its destination, so the unguarded member form could destroy the store
+    // it was reading -- `store.export_parquet(db_path)` did exactly that.
+    // Export goes through export_store_to_parquet(), which opens READ_ONLY
+    // and carries the self/WAL-overwrite guards and count verification.)
 
     // Idempotently union another store file's cap_events into this one
     // (ATTACH read-only + INSERT OR IGNORE). Sink-side answer to spec §14

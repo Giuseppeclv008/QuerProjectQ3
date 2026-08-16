@@ -136,12 +136,6 @@ long long DuckDbEventStore::count() const {
     return res->GetValue(0, 0).GetValue<int64_t>();
 }
 
-void DuckDbEventStore::export_parquet(const std::string& parquet_path) {
-    exec_or_throw(impl_->con,
-        "COPY (SELECT * FROM cap_events ORDER BY head_id, ts) TO '" +
-        sql_quote(parquet_path) + "' (FORMAT PARQUET)");
-}
-
 void DuckDbEventStore::merge_from(const std::string& other_db_path) {
     exec_or_throw(impl_->con, "ATTACH '" + sql_quote(other_db_path) + "' AS src (READ_ONLY)");
     try {
