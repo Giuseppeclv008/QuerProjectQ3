@@ -10,13 +10,43 @@ option(MAS_BUILD_TESTS "Build the GoogleTest suite" ON)
 # That is the whole point -- it has to configure on a Windows box with only
 # VS Build Tools, CMake, and the CUDA Toolkit installed.
 if(MAS_BENCH_ONLY)
-  set(MAS_ENABLE_ZMQ OFF CACHE BOOL "forced off by MAS_BENCH_ONLY" FORCE)
+  # Plain set(), shadowing the cache for THIS configure only. The FORCE'd
+  # cache write outlived the flag: configure once with MAS_BENCH_ONLY=ON and
+  # every later configure of the same build dir kept MAS_ENABLE_ZMQ=OFF -- a
+  # "full" build silently missing the whole multi-agent half.
+  set(MAS_ENABLE_ZMQ OFF)
+  # The bench build's contract is "downloads nothing", and the test suite is
+  # a googletest fetch: bench-only builds no tests. Drop MAS_BENCH_ONLY to
+  # get the suite.
+  set(MAS_BUILD_TESTS OFF)
 endif()
 
 find_package(Threads REQUIRED)
 
+# Single-config generators (Makefiles, Ninja -- i.e. macOS and Linux) build at
+# -O0 with no NDEBUG when CMAKE_BUILD_TYPE is unset, and `--build --config
+# Release` is a silent no-op there. Left alone, that produced benchmark
+# binaries whose C++-vs-Python and CUDA-vs-CPU ratios were wrong by a large
+# factor with no warning. Multi-config generators (MSVC) ignore this and keep
+# their own per-build config.
+get_property(_mas_multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+if(NOT _mas_multi_config AND NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "defaulted to Release (unset means -O0)" FORCE)
+  message(STATUS "CMAKE_BUILD_TYPE was unset; defaulting to Release")
+endif()
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+# -std=c++20, not gnu++20: MSVC is a supported target and a GNU extension
+# compiles everywhere except there.
+set(CMAKE_CXX_EXTENSIONS OFF)
+# Warnings on our own code (FetchContent'd third-party keeps its own flags).
+# Not -Werror: three compilers are supported and a new warning in one must
+# not brick the other two's builds.
+add_compile_options(
+  $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CXX_COMPILER_ID:GNU,Clang,AppleClang>>:-Wall>
+  $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CXX_COMPILER_ID:GNU,Clang,AppleClang>>:-Wextra>
+  $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CXX_COMPILER_ID:MSVC>>:/W4>)
 
 include(FetchContent)
 if(MAS_BUILD_TESTS)
@@ -69,19 +99,17 @@ if(NOT MAS_BENCH_ONLY)
   else()
     set(DUCKDB_ASSET libduckdb-linux-amd64.zip)
     set(DUCKDB_LIBNAME libduckdb.so)
-    # Not pinned: only the macOS asset has been downloaded/verified so far (dev
-    # machine is macOS). Compute with `shasum -a 256` after this branch's first
-    # real download and fill in, mirroring the APPLE branch above.
-    set(DUCKDB_SHA256 "")
+    set(DUCKDB_SHA256 91b06f8d4bca471bab4f46c676ae2a58c9ca18987d0ec3d25fd95aabaf9eef3e)
   endif()
-  if(DUCKDB_SHA256)
-    FetchContent_Declare(duckdb_prebuilt
-      URL https://github.com/duckdb/duckdb/releases/download/v1.2.2/${DUCKDB_ASSET}
-      URL_HASH SHA256=${DUCKDB_SHA256})
-  else()
-    FetchContent_Declare(duckdb_prebuilt
-      URL https://github.com/duckdb/duckdb/releases/download/v1.2.2/${DUCKDB_ASSET})
+  if(NOT DUCKDB_SHA256)
+    # Refuse rather than fetch-and-link an unverified shared library: the
+    # empty-hash branch used to silently drop URL_HASH on exactly one
+    # platform.
+    message(FATAL_ERROR "DUCKDB_SHA256 is empty for ${DUCKDB_ASSET}; pin it before fetching")
   endif()
+  FetchContent_Declare(duckdb_prebuilt
+    URL https://github.com/duckdb/duckdb/releases/download/v1.2.2/${DUCKDB_ASSET}
+    URL_HASH SHA256=${DUCKDB_SHA256})
   FetchContent_MakeAvailable(duckdb_prebuilt)
 
   add_library(duckdb_imported SHARED IMPORTED GLOBAL)
@@ -240,6 +268,12 @@ if(MAS_BUILD_TESTS)
       tests/test_cleaning_worker.cpp
       tests/test_coordinator.cpp)
     list(APPEND MAS_TEST_LIBS mas_transport cppzmq)
+  endif()
+  if(MAS_ENABLE_CUDA)
+    # The GPU/CPU differential: synthetic adversarial CSVs, so it needs no
+    # pool data -- only a device, and it GTEST_SKIPs without one.
+    list(APPEND MAS_TEST_SOURCES tests/test_cuda_cleaner.cpp)
+    list(APPEND MAS_TEST_LIBS mas_cuda_cleaner)
   endif()
   add_executable(unit_tests ${MAS_TEST_SOURCES})
   target_link_libraries(unit_tests PRIVATE ${MAS_TEST_LIBS})
