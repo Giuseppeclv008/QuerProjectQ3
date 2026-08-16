@@ -45,8 +45,14 @@ int main(int argc, char** argv) {
         return 2;
     }
     int threads = 0;
-    try { threads = std::stoi(argv[1]); }
-    catch (const std::exception&) { std::cerr << "error: threads must be a number\n"; return 2; }
+    {   // full-consumption parse: "4x" must not run the 4-thread path
+        const std::string t_str = argv[1];
+        try {
+            std::size_t end = 0;
+            threads = std::stoi(t_str, &end);
+            if (end != t_str.size()) { std::cerr << "error: threads must be a number, got '" << t_str << "'\n"; return 2; }
+        } catch (const std::exception&) { std::cerr << "error: threads must be a number, got '" << t_str << "'\n"; return 2; }
+    }
     if (threads < 1) { std::cerr << "error: threads must be >= 1\n"; return 2; }
 
     std::vector<std::string> files;

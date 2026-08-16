@@ -1,4 +1,6 @@
+#include "mas/apps/CliArgs.hpp"
 #include "mas/domain/Pipeline.hpp"
+#include "mas/store/CsvRawReader.hpp"
 #include "mas/store/DuckDbEventStore.hpp"
 #include "mas/store/ParquetEventStore.hpp"
 #include "mas/store/EventStore.hpp"
@@ -70,6 +72,7 @@ int main(int argc, char** argv) {
     int argi = 1;
     bool no_store = false;
     bool parquet = false;
+    bool format_seen = false;
     mas::Engine engine = mas::Engine::Cpu;
     while (argi < argc && std::string(argv[argi]).rfind("--", 0) == 0) {
         const std::string arg = argv[argi];
@@ -80,9 +83,17 @@ int main(int argc, char** argv) {
                 std::cerr << "error: --format needs a value\n";
                 return 2;
             }
+            // Repeated --format is rejected rather than last-wins: a command
+            // pasted together from two snippets should fail loudly, not pick
+            // one of its two contradictory answers.
+            if (format_seen) {
+                std::cerr << "error: --format given more than once\n";
+                return 2;
+            }
+            format_seen = true;
             const std::string fmt = argv[++argi];
-            if (fmt == "parquet") parquet = true;
-            else if (fmt != "duckdb") {
+            if (fmt == "parquet" || fmt == "duckdb") parquet = (fmt == "parquet");
+            else {
                 std::cerr << "error: --format must be duckdb or parquet\n";
                 return 2;
             }
@@ -114,13 +125,31 @@ int main(int argc, char** argv) {
                      "other (one persists nothing, the other persists Parquet)\n";
         return 2;
     }
+    // A flag after the positionals must be an error, never a positional
+    // (CliArgs.hpp): "--format parquet" behind the file list used to become a
+    // machine_id or a day-file.
+    if (const auto err = mas::unconsumed_flag(argc, argv, argi)) {
+        std::cerr << "error: " << *err << "\n";
+        return 2;
+    }
     const std::string out = argv[argi++], machine = argv[argi++];
     int threads = 0;
-    try {
-        threads = std::stoi(argv[argi++]);
-    } catch (const std::exception&) {
-        std::cerr << "error: threads must be a number\n";
-        return 2;
+    {
+        // Full-consumption parse, like coordinator_main: "4x" ran the
+        // 4-thread MT path with exit 0, and threads is the headline
+        // benchmark axis.
+        const std::string t_str = argv[argi++];
+        try {
+            std::size_t end = 0;
+            threads = std::stoi(t_str, &end);
+            if (end != t_str.size()) {
+                std::cerr << "error: threads must be a number, got '" << t_str << "'\n";
+                return 2;
+            }
+        } catch (const std::exception&) {
+            std::cerr << "error: threads must be a number, got '" << t_str << "'\n";
+            return 2;
+        }
     }
     if (threads < 1) {
         std::cerr << "error: threads must be >= 1\n";
@@ -136,6 +165,21 @@ int main(int argc, char** argv) {
                      "(the thread pool parallelizes CPU cleaning; the GPU "
                      "path is one device fed file by file)\n";
         return 2;
+    }
+    // Probe every input before any store exists: DuckDbEventStore's
+    // constructor creates the .duckdb file as a side effect, so a missing or
+    // misnamed day-file must never leave a partial store behind (clean_main
+    // does the same probe and says why).
+    for (int i = argi; i < argc; ++i) {
+        mas::CsvRawReader probe(argv[i]);
+        if (!probe.is_open()) {
+            std::cerr << "error: cannot open input " << argv[i]
+                      << (probe.header_error().empty()
+                              ? ""
+                              : (": " + probe.header_error()))
+                      << "\n";
+            return 2;
+        }
     }
     std::vector<std::string> files;
     for (int i = argi; i < argc; ++i) files.emplace_back(argv[i]);
@@ -321,6 +365,13 @@ int main(int argc, char** argv) {
                 for (std::size_t i = 0; i < files.size(); ++i)
                     if (per_file[i] < 0)
                         std::cerr << "error: cannot clean " << files[i] << "\n";
+                // The success path removes the per-thread stores after the
+                // merge; the failure path left them (~49 MB per day-file,
+                // ~1.5 GB for a month), and the next run's pre-clean only
+                // covers t < its own thread count.
+                if (!parquet)
+                    for (int t = 0; t < threads; ++t)
+                        remove_store(thread_store(out, t));
                 return 1;
             }
             for (const auto n : per_file) events += n;

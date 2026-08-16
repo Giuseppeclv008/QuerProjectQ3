@@ -19,6 +19,12 @@ int main(int argc, char** argv) {
     std::string store, out, since, until;
     try {
         for (int i = 1; i < argc; ++i) {
+            // Duplicates rejected rather than last-wins: a command pasted from
+            // two snippets exported 0 rows with exit 0.
+            const std::string cur = argv[i];
+            if ((cur == "--since" && !since.empty()) ||
+                (cur == "--until" && !until.empty()))
+                throw std::runtime_error(cur + " given more than once");
             if (take_value(argc, argv, i, "--since", since)) continue;
             if (take_value(argc, argv, i, "--until", until)) continue;
             const std::string arg = argv[i];

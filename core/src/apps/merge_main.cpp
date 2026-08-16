@@ -51,6 +51,13 @@ int main(int argc, char** argv) {
         // nothing — chaos_e2e.sh passes MCC777eda… while its workers wrote MCC.
         std::cerr << "note: merged rows keep their source machine_id; '" << argv[2]
                   << "' labels only rows this destination writes itself\n";
+        // Skipping a crashed worker's store is the designed resilience path,
+        // but skipping *every* source means the run produced nothing -- exit 0
+        // there made chaos_e2e.sh's `|| exit 1` guard dead code.
+        if (merged == 0 && !sources.empty()) {
+            std::cerr << "error: no source could be merged\n";
+            return 1;
+        }
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";
         return 1;

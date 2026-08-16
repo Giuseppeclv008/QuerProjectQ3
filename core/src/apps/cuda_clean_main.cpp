@@ -1,3 +1,4 @@
+#include "mas/apps/CliArgs.hpp"
 #include "../../cuda/CudaCleaner.hpp"
 #include "mas/domain/CapEventExtractorFlat.hpp"
 #include "mas/util/platform_metrics.hpp"
@@ -57,6 +58,10 @@ int main(int argc, char** argv) {
         if (std::string(argv[argi]) == "--verify") verify = true;
         else { std::cerr << "unknown flag " << argv[argi] << "\n"; return 2; }
         ++argi;
+    }
+    if (const auto err = mas::unconsumed_flag(argc, argv, argi)) {
+        std::cerr << "error: " << *err << "\n";
+        return 2;
     }
     if (argi >= argc) {
         std::cerr << "usage: mas_cuda_clean [--verify] <day1.csv> [day2.csv ...]\n";
