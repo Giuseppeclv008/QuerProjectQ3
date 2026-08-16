@@ -51,3 +51,4 @@ venv/
 pers_*
 
 /build-verify/
+/build-gpu-tests/

@@ -82,7 +82,14 @@ TEST(AtomicPublish, GlobMetacharactersInTheDestinationDoNotReachTheTemp) {
     // the temp back, so verification could match a different file entirely --
     // false negative (good export refused) or false positive (decoy verified).
     const auto d = scratch("meta");
+#ifdef _WIN32
+    // '*' and '?' are not legal in an NTFS name at all, so the destination
+    // itself cannot exist here; '[' and ']' are, and are still glob syntax to
+    // read_parquet(). Same property, the subset the filesystem allows.
+    const auto target = (d / "e[xy]port.parquet").string();
+#else
     const auto target = (d / "e[xy]port-*-?.parquet").string();
+#endif
     std::string tmp;
     mas::publish_atomically(target, [&](const std::string& t) {
         tmp = t;
@@ -99,7 +106,22 @@ TEST(AtomicPublish, ANearNameMaxBasenameIsStillPublishable) {
     // legal name over the limit; the writer then failed with an IO error
     // quoting the temp and never saying the name was the problem.
     const auto d = scratch("namemax");
+#ifdef _WIN32
+    // On Windows the binding limit is not the component's NAME_MAX but the
+    // whole path's MAX_PATH: 259 characters for a process not manifested
+    // longPathAware (this one is not), regardless of the registry policy. A
+    // 250-char basename under %TEMP% is over it before any suffix, so the
+    // POSIX fixture cannot run here. Same property, the platform's constant:
+    // a destination that sits AT the limit must still publish, which the old
+    // "destination + suffix" temp could not have done.
+    const std::string dir = d.string();
+    const int room = 259 - static_cast<int>(dir.size()) - 1 /* '\\' */ - 8 /* .parquet */;
+    if (room < 32)   // the temp must stay shorter than the destination
+        GTEST_SKIP() << "temp directory too deep for a MAX_PATH-length destination: " << dir;
+    const std::string base = std::string(static_cast<size_t>(room), 'a') + ".parquet";
+#else
     const std::string base = std::string(242, 'a') + ".parquet"; // 250 chars
+#endif
     const auto target = (d / base).string();
     mas::publish_atomically(target, [](const std::string& t) {
         std::ofstream(t) << "x";

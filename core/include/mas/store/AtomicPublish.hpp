@@ -80,7 +80,9 @@ inline void fsync_file(const std::string& path) {
 }
 
 inline void fsync_parent_dir(const std::string& path) {
-#ifndef _WIN32
+#ifdef _WIN32
+    (void)path;   // no directory fsync on Windows (see above); keeps /W4 quiet
+#else
     const auto dir = std::filesystem::path(path).parent_path();
     const std::string d = dir.empty() ? "." : dir.string();
     const int fd = ::open(d.c_str(), O_RDONLY);
