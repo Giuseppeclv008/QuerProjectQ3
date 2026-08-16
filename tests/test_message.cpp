@@ -74,6 +74,48 @@ TEST(Message, DecodeResultRejectsMissingOrEmptyWorkerId) {
     EXPECT_FALSE(mas::decode_result({"RESULT\nday.csv\n123\n4.5\n"}).has_value());
 }
 
+TEST(Message, ClaimRoundTrips) {
+    const auto m = mas::encode(mas::WorkClaim{"day.csv", "w3"});
+    const auto d = mas::decode_claim(m);
+    ASSERT_TRUE(d.has_value());
+    EXPECT_EQ(d->in_path, "day.csv");
+    EXPECT_EQ(d->worker_id, "w3");
+}
+
+TEST(Message, DecodeClaimRejectsWrongShape) {
+    EXPECT_FALSE(mas::decode_claim({"CLAIM\nday.csv"}).has_value());
+    EXPECT_FALSE(mas::decode_claim({"CLAIM\n\nw3"}).has_value());
+    EXPECT_FALSE(mas::decode_claim({"CLAIM\nday.csv\n"}).has_value());
+    EXPECT_FALSE(mas::decode_claim({"RESULT\nday.csv\nw3"}).has_value());
+}
+
+TEST(Message, GoodbyeRoundTrips) {
+    const auto m = mas::encode(mas::Goodbye{"w3"});
+    const auto d = mas::decode_goodbye(m);
+    ASSERT_TRUE(d.has_value());
+    EXPECT_EQ(d->worker_id, "w3");
+}
+
+TEST(Message, DecodeGoodbyeRejectsWrongShape) {
+    EXPECT_FALSE(mas::decode_goodbye({"BYE"}).has_value());
+    EXPECT_FALSE(mas::decode_goodbye({"BYE\n"}).has_value());
+    EXPECT_FALSE(mas::decode_goodbye({"HB\nw3"}).has_value());
+}
+
+TEST(Message, ClaimGoodbyeAndResultDoNotCrossDecode) {
+    // All three share the results socket; a decoder accepting a sibling's
+    // frame would mis-route lifecycle state.
+    const auto claim = mas::encode(mas::WorkClaim{"d.csv", "w1"});
+    const auto bye = mas::encode(mas::Goodbye{"w1"});
+    const auto res = mas::encode(mas::WorkResult{"d.csv", 1, 0.1, "w1"});
+    EXPECT_FALSE(mas::decode_result(claim).has_value());
+    EXPECT_FALSE(mas::decode_result(bye).has_value());
+    EXPECT_FALSE(mas::decode_claim(res).has_value());
+    EXPECT_FALSE(mas::decode_claim(bye).has_value());
+    EXPECT_FALSE(mas::decode_goodbye(claim).has_value());
+    EXPECT_FALSE(mas::decode_goodbye(res).has_value());
+}
+
 TEST(FakeTransport, SourceDrainsQueueThenReturnsNullopt) {
     mas::test::FakeSource src;
     src.queue.push_back(mas::Message{"a"});

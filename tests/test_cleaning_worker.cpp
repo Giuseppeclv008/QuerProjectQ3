@@ -33,13 +33,23 @@ TEST(CleaningWorker, ProcessesItemsInOrderThenStopsOnStop) {
 
     EXPECT_EQ(w.run(), 2);
     EXPECT_EQ(cleaned, (std::vector<std::string>{"day1.csv", "day2.csv"}));
-    ASSERT_EQ(results.sent.size(), 2u);
-    const auto r0 = mas::decode_result(results.sent[0]);
+    // claim/result pairs on one socket, claim first (per-pipe FIFO is what
+    // guarantees the coordinator learns the holder before the outcome). A STOP
+    // exit is the coordinator's own shutdown: no goodbye.
+    ASSERT_EQ(results.sent.size(), 4u);
+    const auto c0 = mas::decode_claim(results.sent[0]);
+    ASSERT_TRUE(c0.has_value());
+    EXPECT_EQ(c0->in_path, "day1.csv");
+    EXPECT_EQ(c0->worker_id, "w1");
+    const auto r0 = mas::decode_result(results.sent[1]);
     ASSERT_TRUE(r0.has_value());
     EXPECT_EQ(r0->in_path, "day1.csv");
     EXPECT_EQ(r0->events, 10);
     EXPECT_EQ(r0->worker_id, "w1");
-    const auto r1 = mas::decode_result(results.sent[1]);
+    const auto c1 = mas::decode_claim(results.sent[2]);
+    ASSERT_TRUE(c1.has_value());
+    EXPECT_EQ(c1->in_path, "day2.csv");
+    const auto r1 = mas::decode_result(results.sent[3]);
     ASSERT_TRUE(r1.has_value());
     EXPECT_EQ(r1->in_path, "day2.csv");
     EXPECT_EQ(r1->events, 20);
@@ -57,8 +67,10 @@ TEST(CleaningWorker, MalformedWorkItemIsSkippedWithoutResult) {
         [](const std::string&, mas::IEventStore&,
            const std::function<void()>&) -> long long { return 7; });
     EXPECT_EQ(w.run(), 1);
-    ASSERT_EQ(results.sent.size(), 1u);
-    const auto r = mas::decode_result(results.sent[0]);
+    // A malformed frame produces neither claim nor result.
+    ASSERT_EQ(results.sent.size(), 2u);
+    EXPECT_TRUE(mas::decode_claim(results.sent[0]).has_value());
+    const auto r = mas::decode_result(results.sent[1]);
     ASSERT_TRUE(r.has_value());
     EXPECT_EQ(r->in_path, "day1.csv");
     EXPECT_EQ(r->events, 7);
@@ -75,8 +87,8 @@ TEST(CleaningWorker, UnreadableInputForwardsMinusOne) {
         [](const std::string&, mas::IEventStore&,
            const std::function<void()>&) -> long long { return -1; });
     EXPECT_EQ(w.run(), 1);
-    ASSERT_EQ(results.sent.size(), 1u);
-    const auto r = mas::decode_result(results.sent[0]);
+    ASSERT_EQ(results.sent.size(), 2u);   // claim + failed result
+    const auto r = mas::decode_result(results.sent[1]);
     ASSERT_TRUE(r.has_value());
     EXPECT_EQ(r->in_path, "missing.csv");
     EXPECT_EQ(r->events, -1);
@@ -95,8 +107,8 @@ TEST(CleaningWorker, StampsWorkerIdAndHeartbeatsAroundWork) {
 
     EXPECT_EQ(worker.run(), 1);
 
-    ASSERT_EQ(results.sent.size(), 1u);
-    const auto r = mas::decode_result(results.sent[0]);
+    ASSERT_EQ(results.sent.size(), 2u);   // claim + result
+    const auto r = mas::decode_result(results.sent[1]);
     ASSERT_TRUE(r.has_value());
     EXPECT_EQ(r->worker_id, "w7");
     EXPECT_EQ(r->events, 5);
@@ -125,7 +137,13 @@ TEST(CleaningWorker, HeartbeatsEveryEmptyTickAndExitsAfterBudget) {
     // hello + one per empty tick until the budget exhausts.
     EXPECT_EQ(hb.sent.size(),
               1u + static_cast<std::size_t>(mas::CleaningWorker::kIdleExitTicks));
-    EXPECT_TRUE(results.sent.empty());
+    // An idle exit is voluntary and announced: exactly one goodbye, so the
+    // coordinator can tell "left" from "died" and neither reopens this
+    // worker's completions nor burns any item's re-dispatch budget on it.
+    ASSERT_EQ(results.sent.size(), 1u);
+    const auto bye = mas::decode_goodbye(results.sent[0]);
+    ASSERT_TRUE(bye.has_value());
+    EXPECT_EQ(bye->worker_id, "w1");
 }
 
 TEST(CleaningWorker, IdleCounterResetsWhenWorkArrives) {
@@ -144,7 +162,7 @@ TEST(CleaningWorker, IdleCounterResetsWhenWorkArrives) {
     // 2*(budget-1) empty ticks straddle one item: never 60 consecutive,
     // so the worker survives to the STOP and handles the item.
     EXPECT_EQ(worker.run(), 1);
-    ASSERT_EQ(results.sent.size(), 1u);
+    ASSERT_EQ(results.sent.size(), 2u);   // claim + result; STOP exit: no goodbye
 }
 
 TEST(CleaningWorker, CleanFnReceivesABeatCallbackItCanUse) {
@@ -174,6 +192,37 @@ TEST(CleaningWorker, CleanFnReceivesABeatCallbackItCanUse) {
     // bound, so a clean_fn that swallows the callback instead of calling it
     // makes this fail rather than pass on idle-tick beats alone.
     EXPECT_EQ(hbs.sent.size(), 3u);
+}
+
+TEST(CleaningWorker, AThrowingCleanFnFailsTheItemNotTheWorker) {
+    // A store exception (ROLLBACK; throw) or a beat() send timeout used to
+    // unwind past main: the process exited with NO result sent, the
+    // coordinator burned the 30 s death threshold, tombstoned a worker whose
+    // only sin was one bad item, and re-dispatched everything it held. The
+    // events == -1 failure channel existed and nothing routed into it.
+    mas::test::FakeSource work;
+    work.queue.push_back(mas::encode(mas::WorkItem{"bad.csv"}));
+    work.queue.push_back(mas::encode(mas::WorkItem{"good.csv"}));
+    work.queue.push_back(mas::make_stop());
+    mas::test::FakeSink results, hb;
+    FakeStore store;
+    mas::CleaningWorker w(work, results, hb, store, "w1",
+        [](const std::string& path, mas::IEventStore&,
+           const std::function<void()>&) -> long long {
+            if (path == "bad.csv") throw std::runtime_error("TransactionContext Error");
+            return 5;
+        });
+
+    EXPECT_EQ(w.run(), 2);   // both items handled; the worker outlives the throw
+    ASSERT_EQ(results.sent.size(), 4u);
+    const auto bad = mas::decode_result(results.sent[1]);
+    ASSERT_TRUE(bad.has_value());
+    EXPECT_EQ(bad->in_path, "bad.csv");
+    EXPECT_EQ(bad->events, -1);
+    const auto good = mas::decode_result(results.sent[3]);
+    ASSERT_TRUE(good.has_value());
+    EXPECT_EQ(good->in_path, "good.csv");
+    EXPECT_EQ(good->events, 5);
 }
 
 } // namespace

@@ -4,6 +4,7 @@
 #include <exception>
 #include <iostream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 int main(int argc, char** argv) {
@@ -52,13 +53,32 @@ int main(int argc, char** argv) {
         }
 
         std::vector<mas::WorkItem> items;
-        for (int i = next; i < argc; ++i) items.push_back({argv[i]});
+        for (int i = next; i < argc; ++i) {
+            // The wire format is newline-delimited with no escaping
+            // (Message.hpp): a path carrying '\n' encodes to a frame every
+            // decoder rejects, the worker drops it silently, and the item
+            // hangs open until the death machinery times the run out. Refuse
+            // it here, where the operator can still read the answer.
+            if (std::string_view(argv[i]).find('\n') != std::string_view::npos) {
+                std::cerr << "error: day-file path contains a newline, which "
+                             "the newline-delimited wire format cannot carry: "
+                          << argv[i] << "\n";
+                return 2;
+            }
+            items.push_back({argv[i]});
+        }
 
         zmq::context_t ctx(1);
         // Send-side liveness: a mute work socket (nobody ever drains it)
         // throws after 60 s instead of hanging this process forever.
+        // linger_ms bounded at 2 s: without it the sentinel couples linger to
+        // the 60 s send timeout, and teardown with any undelivered frame
+        // (e.g. a STOP for a peer that just vanished) stalled the process the
+        // full minute -- the same class of bug fixed on the worker's sinks.
+        // Not 0 like the worker's: this socket carries the STOPs, and 2 s is
+        // ample to flush them to every connected live pipe on loopback.
         mas::ZmqPushSink work(ctx, work_ep, /*bind=*/true,
-                              /*send_timeout_ms=*/60000);
+                              /*send_timeout_ms=*/60000, /*linger_ms=*/2000);
         // 200 ms of results silence = one loop tick: paces heartbeat drains
         // and deadline sweeps (resilience spec §6).
         mas::ZmqPullSource results(ctx, result_ep, /*bind=*/true,

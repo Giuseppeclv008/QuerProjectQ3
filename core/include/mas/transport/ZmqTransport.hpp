@@ -41,10 +41,17 @@ private:
 
 class ZmqPullSource : public IMessageSource {
 public:
+    // max_msg_bytes caps ZMQ_MAXMSGSIZE (libzmq default: unlimited). Protocol
+    // frames are a tag line plus a path and two short numbers -- hundreds of
+    // bytes -- while an unlimited PULL bound to a TCP endpoint will buffer
+    // whatever arrives, so one oversized frame could OOM the coordinator.
+    // 1 MiB is ~4,000x the largest legitimate frame. Pass a larger value if
+    // the protocol ever grows one; <= 0 keeps zmq's unlimited default.
     // timeout_ms < 0 blocks forever; otherwise recv() yields nullopt after
     // timeout_ms of silence.
-    ZmqPullSource(zmq::context_t& ctx, const std::string& endpoint, bool bind,
-                  int timeout_ms = -1);
+    ZmqPullSource(zmq::context_t& ctx, const std::string& endpoint,
+                  bool bind, int timeout_ms,
+                  long long max_msg_bytes = 1 << 20);
     std::optional<Message> recv() override;
 
 private:

@@ -29,9 +29,13 @@ void ZmqPushSink::send(const Message& m) {
 }
 
 ZmqPullSource::ZmqPullSource(zmq::context_t& ctx, const std::string& endpoint,
-                             bool bind, int timeout_ms)
+                             bool bind, int timeout_ms, long long max_msg_bytes)
     : sock_(ctx, zmq::socket_type::pull) {
     sock_.set(zmq::sockopt::rcvtimeo, timeout_ms);
+    // An over-limit frame is dropped by libzmq and the connection closed --
+    // loud on the peer, invisible here, which is the right trade for a
+    // loopback fabric whose only oversized frames are hostile or corrupt.
+    if (max_msg_bytes > 0) sock_.set(zmq::sockopt::maxmsgsize, max_msg_bytes);
     if (bind) sock_.bind(endpoint); else sock_.connect(endpoint);
 }
 

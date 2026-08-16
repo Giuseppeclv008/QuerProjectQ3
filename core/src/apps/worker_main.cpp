@@ -56,6 +56,11 @@ int main(int argc, char** argv) {
     const std::string work_ep = argv[argi], result_ep = argv[argi + 1],
                        hb_ep = argv[argi + 2];
     const std::string out = argv[argi + 3], worker_id = argv[argi + 4];
+    if (worker_id.find('\n') != std::string::npos) {
+        std::cerr << "error: worker_id contains a newline, which the "
+                     "newline-delimited wire format cannot carry\n";
+        return 2;
+    }
     const std::string machine = (argc > argi + 5) ? argv[argi + 5] : "MCC";
     try {
         zmq::context_t ctx(1);

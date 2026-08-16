@@ -16,9 +16,14 @@ struct DispatchSummary {
 
 struct CoordinatorConfig {
     // A worker silent longer than this is declared dead (resilience spec §6).
+    // An announced idle-exit (BYE frame) is departure, not death: nothing of
+    // that worker's is reopened or re-dispatched.
     std::chrono::milliseconds death_threshold{30000};
     // Re-sends allowed per item beyond its first dispatch; exceeding it marks
-    // the item permanently failed (poison-item protection).
+    // the item permanently failed (poison-item protection). Charged only when
+    // the item's own claimed holder died -- an unclaimed item re-sent on a
+    // death costs nothing, so unrelated deaths cannot fail an item a live
+    // worker is still cleaning.
     int redispatch_cap = 2;
     // Initial dispatch waits until this many distinct workers have registered
     // (hello heartbeat or result). 0 = dispatch immediately (previous
@@ -40,11 +45,14 @@ using ClockFn = std::function<std::chrono::steady_clock::time_point()>;
 // slow-joiner capture, where sending before any connect lands queues the
 // whole batch into the first pipe (Plan 5 bench sweep) — giving up after
 // registration_timeout (degraded start if some registered, abort if none).
-// Then: PUSH every item, then tick: drain heartbeats, take one result per
-// tick (the results source's recv timeout paces the loop), sweep deadlines
-// and re-dispatch a dead worker's open items and completions, until every
-// item is settled. Ends by PUSHing one STOP per live registry entry. The
-// dead worker's store file is written off — its rows are recreated in
+// Then: PUSH every item, then tick: take one lifecycle frame per tick (a
+// result, a CLAIM naming the item's holder, or a BYE announcing an idle
+// exit; the results source's recv timeout paces the loop), drain heartbeats,
+// sweep deadlines. A death re-dispatches the dead worker's claimed items
+// (charging their re-dispatch cap) and its reopened completions plus any
+// unclaimed items (uncharged); items held by live workers are left alone.
+// Runs until every item is settled, then PUSHes one STOP per registry entry.
+// The dead worker's store file is written off — its rows are recreated in
 // survivor stores and the idempotent upsert absorbs any overlap.
 DispatchSummary run_coordinator(const std::vector<WorkItem>& items,
                                 IMessageSink& work, IMessageSource& results,

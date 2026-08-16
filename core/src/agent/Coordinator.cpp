@@ -16,6 +16,10 @@ struct ItemState {
 struct WorkerState {
     std::chrono::steady_clock::time_point last_seen{};
     bool alive = true;
+    // Announced idle-exit (BYE frame). Also !alive, but the opposite of a
+    // tombstone everywhere it matters: the store is intact, so completions
+    // stay counted and nothing of this worker's is reopened or re-dispatched.
+    bool departed = false;
     // (in_path, events) of this worker's ok results: reopened if it dies,
     // because its store file is written off (resilience spec §3/§6).
     std::vector<std::pair<std::string, long long>> completed;
@@ -33,6 +37,10 @@ DispatchSummary run_coordinator(const std::vector<WorkItem>& items,
     std::size_t open = state.size();   // duplicate paths collapse by contract
 
     std::unordered_map<std::string, WorkerState> registry;
+    // Who holds which open item (CLAIM frames). The work socket is anonymous
+    // PUSH round-robin, so this map is the only attribution there is: an item
+    // absent from it may be queued in anyone's pipe, including a dead one.
+    std::unordered_map<std::string, std::string> holder;   // in_path -> worker
     const auto start = now();
 
     const auto touch = [&](const std::string& worker_id) -> WorkerState* {
@@ -41,11 +49,50 @@ DispatchSummary run_coordinator(const std::vector<WorkItem>& items,
             it->second.last_seen = now();
             std::cerr << "coordinator: worker " << worker_id << " joined\n";
         } else if (!it->second.alive) {
-            return nullptr;   // tombstoned: dead is dead (spec §8)
+            return nullptr;   // tombstoned or departed: gone is gone (spec §8)
         } else {
             it->second.last_seen = now();
         }
         return &it->second;
+    };
+
+    const auto count_live = [&] {
+        int live = 0;
+        for (const auto& [id, w] : registry) {
+            if (w.alive) ++live;
+            (void)id;
+        }
+        return live;
+    };
+
+    // A goodbye (announced idle-exit) is the opposite of a death: the store is
+    // intact, so completions stay counted, nothing reopens, no cap is charged,
+    // and workers_died is untouched. Without the distinction, three workers
+    // finishing their queue and idling out looked identical to three crashes
+    // -- and failed the whole remaining batch.
+    const auto mark_departed = [&](const std::string& worker_id) {
+        auto it = registry.find(worker_id);
+        if (it == registry.end() || !it->second.alive) return;
+        it->second.alive = false;
+        it->second.departed = true;
+        std::cerr << "coordinator: worker " << worker_id
+                  << " departed (announced idle exit)\n";
+        // A goodbye with a claim outstanding is not a path the worker takes
+        // (it claims, results, then idles), but stranding the item on the
+        // assumption would turn a protocol slip into a hung run.
+        for (auto h = holder.begin(); h != holder.end();) {
+            if (h->second != worker_id) {
+                ++h;
+                continue;
+            }
+            const auto st = state.find(h->first);
+            if (st != state.end() && !st->second.done && count_live() > 0) {
+                std::cerr << "coordinator: re-dispatch " << h->first
+                          << " (holder departed)\n";
+                work.send(encode(WorkItem{h->first}));
+            }
+            h = holder.erase(h);
+        }
     };
 
     // Registration gate (Plan 5): with expected_workers > 0, hold the initial
@@ -60,6 +107,10 @@ DispatchSummary run_coordinator(const std::vector<WorkItem>& items,
                     touch(r->worker_id);   // liveness only; no items are open yet
                     std::cerr << "coordinator: dropped pre-dispatch result from "
                               << r->worker_id << "\n";
+                } else if (const auto c = decode_claim(*msg)) {
+                    touch(c->worker_id);   // liveness only; nothing dispatched yet
+                } else if (const auto g = decode_goodbye(*msg)) {
+                    mark_departed(g->worker_id);
                 } else {
                     std::cerr << "coordinator: dropped malformed result\n";
                 }
@@ -89,38 +140,55 @@ DispatchSummary run_coordinator(const std::vector<WorkItem>& items,
     for (const auto& item : items) work.send(encode(item));
 
     // Loop-pass order is load-bearing for deterministic tests and pinned
-    // here: (1) one results tick — its recv timeout paces the loop and, under
-    // test fakes, advances virtual time; (2) heartbeat drain — refreshes are
-    // stamped with now() AFTER the tick, so a beat delivered this pass
-    // survives the deadline this pass; (3) deadline sweep; (4) aborts.
+    // here: (1) one lifecycle tick (result, claim, or goodbye) — its recv
+    // timeout paces the loop and, under test fakes, advances virtual time;
+    // (2) heartbeat drain — refreshes are stamped with now() AFTER the tick,
+    // so a beat delivered this pass survives the deadline this pass;
+    // (3) deadline sweep; (4) aborts.
     while (open > 0) {
-        // 1) One result tick (production recv timeout 200 ms paces the loop).
+        // 1) One lifecycle tick: a result, a claim, or a goodbye (they share
+        //    the socket, so claim-before-result is a FIFO guarantee). The
+        //    production recv timeout of 200 ms paces the loop.
         if (const auto msg = results.recv()) {
-            const auto r = decode_result(*msg);
-            if (!r) {
-                std::cerr << "coordinator: dropped malformed result\n";
-            } else if (WorkerState* w = touch(r->worker_id); !w) {
-                // Late result from a tombstoned worker: its store is written
-                // off, so counting this would credit rows we may never merge.
-                std::cerr << "coordinator: dropped result for " << r->in_path
-                          << " from dead worker " << r->worker_id << "\n";
-            } else {
-                const auto st = state.find(r->in_path);
-                if (st == state.end() || st->second.done) {
-                    std::cerr << "coordinator: dropped duplicate/unknown result for "
-                              << r->in_path << "\n";
+            if (const auto r = decode_result(*msg)) {
+                if (WorkerState* w = touch(r->worker_id); !w) {
+                    // Late result from a tombstoned worker: its store is
+                    // written off, so counting this would credit rows we may
+                    // never merge.
+                    std::cerr << "coordinator: dropped result for " << r->in_path
+                              << " from dead worker " << r->worker_id << "\n";
                 } else {
-                    st->second.done = true;
-                    --open;
-                    if (r->events >= 0) {
-                        ++s.files_ok;
-                        s.total_events += r->events;
-                        w->completed.emplace_back(r->in_path, r->events);
+                    const auto st = state.find(r->in_path);
+                    if (st == state.end() || st->second.done) {
+                        std::cerr << "coordinator: dropped duplicate/unknown result for "
+                                  << r->in_path << "\n";
                     } else {
-                        ++s.files_failed;   // unreadable input: deterministic,
-                                            // re-dispatch would not help
+                        st->second.done = true;
+                        holder.erase(r->in_path);
+                        --open;
+                        if (r->events >= 0) {
+                            ++s.files_ok;
+                            s.total_events += r->events;
+                            w->completed.emplace_back(r->in_path, r->events);
+                        } else {
+                            ++s.files_failed;   // the worker reported the item
+                                                // itself failed: deterministic,
+                                                // re-dispatch would not help
+                        }
                     }
                 }
+            } else if (const auto c = decode_claim(*msg)) {
+                if (touch(c->worker_id)) {
+                    const auto st = state.find(c->in_path);
+                    if (st != state.end() && !st->second.done)
+                        holder[c->in_path] = c->worker_id;
+                }
+                // A claim from a tombstoned worker needs nothing: its result
+                // will be dropped at the same gate.
+            } else if (const auto g = decode_goodbye(*msg)) {
+                mark_departed(g->worker_id);
+            } else {
+                std::cerr << "coordinator: dropped malformed result\n";
             }
         }
 
@@ -134,14 +202,15 @@ DispatchSummary run_coordinator(const std::vector<WorkItem>& items,
             touch(hb->worker_id);
         }
 
-        // 3) Deadline sweep: tombstone silent workers, write their stores
-        //    off, reopen their completions, re-dispatch every open item.
+        // 3) Deadline sweep: tombstone silent workers (announced departures
+        //    were already marked !alive and are skipped here), write their
+        //    stores off, reopen their completions.
         const auto t = now();
-        bool any_death = false;
+        std::vector<std::string> dead_now;
         for (auto& [id, w] : registry) {
             if (!w.alive || t - w.last_seen <= cfg.death_threshold) continue;
             w.alive = false;
-            any_death = true;
+            dead_now.push_back(id);
             ++s.workers_died;
             std::cerr << "coordinator: worker " << id << " dead (silent > "
                       << cfg.death_threshold.count() << " ms)\n";
@@ -161,15 +230,40 @@ DispatchSummary run_coordinator(const std::vector<WorkItem>& items,
         // PUSH re-dispatch send has no pipes to round-robin into (bind-mode
         // PUSH goes mute), which would otherwise block for the send timeout
         // instead of letting the abort check (section 4) fire.
-        int live = 0;
-        for (const auto& [id, w] : registry) {
-            if (w.alive) ++live;
-            (void)id;
-        }
+        const int live = count_live();
 
-        if (any_death) {
+        if (!dead_now.empty()) {
+            // Re-dispatch by attribution, not blanket. Three cases per open
+            // item:
+            //   holder died  -> re-send and charge its cap: repeated deaths of
+            //                   *its own* holders is the poison-item signature
+            //                   the cap exists for.
+            //   no holder    -> re-send free of charge: the item may be queued
+            //                   in a dead pipe, and no worker ever vouched for
+            //                   it, so its death count is evidence of nothing.
+            //                   Bounded: this only runs on a death, and there
+            //                   are at most as many deaths as workers.
+            //   holder alive -> leave it alone. It is mid-file on a live
+            //                   worker; the blanket re-send used to burn its
+            //                   cap on unrelated deaths until the run reported
+            //                   a completed item as a total loss.
+            const auto died_now = [&](const std::string& id) {
+                for (const auto& d : dead_now)
+                    if (d == id) return true;
+                return false;
+            };
             for (auto& [path, st] : state) {
                 if (st.done) continue;
+                const auto h = holder.find(path);
+                if (h != holder.end() && !died_now(h->second)) continue;
+                const bool charged = h != holder.end();
+                if (charged) holder.erase(h);
+                if (!charged) {
+                    std::cerr << "coordinator: re-dispatch " << path
+                              << " (unclaimed at a death; uncharged)\n";
+                    if (live > 0) work.send(encode(WorkItem{path}));
+                    continue;
+                }
                 if (st.redispatches >= cfg.redispatch_cap) {
                     st.done = true;
                     --open;
@@ -180,7 +274,7 @@ DispatchSummary run_coordinator(const std::vector<WorkItem>& items,
                 }
                 ++st.redispatches;
                 std::cerr << "coordinator: re-dispatch " << path << " (attempt "
-                          << (st.redispatches + 1) << ")\n";
+                          << (st.redispatches + 1) << ", holder died)\n";
                 if (live > 0) {
                     work.send(encode(WorkItem{path}));
                 }

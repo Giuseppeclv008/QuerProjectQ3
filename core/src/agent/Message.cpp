@@ -9,6 +9,8 @@ constexpr const char* kWorkTag = "WORK";
 constexpr const char* kResultTag = "RESULT";
 constexpr const char* kStopTag = "STOP";
 constexpr const char* kHeartbeatTag = "HB";
+constexpr const char* kClaimTag = "CLAIM";
+constexpr const char* kGoodbyeTag = "BYE";
 
 std::vector<std::string> split_lines(const std::string& s) {
     std::vector<std::string> out;
@@ -77,6 +79,27 @@ std::optional<Heartbeat> decode_heartbeat(const Message& m) {
     } catch (const std::exception&) {
         return std::nullopt;
     }
+}
+
+Message encode(const WorkClaim& c) {
+    return {std::string(kClaimTag) + "\n" + c.in_path + "\n" + c.worker_id};
+}
+
+std::optional<WorkClaim> decode_claim(const Message& m) {
+    const auto f = split_lines(m.payload);
+    if (f.size() != 3 || f[0] != kClaimTag || f[1].empty() || f[2].empty())
+        return std::nullopt;
+    return WorkClaim{f[1], f[2]};
+}
+
+Message encode(const Goodbye& g) {
+    return {std::string(kGoodbyeTag) + "\n" + g.worker_id};
+}
+
+std::optional<Goodbye> decode_goodbye(const Message& m) {
+    const auto f = split_lines(m.payload);
+    if (f.size() != 2 || f[0] != kGoodbyeTag || f[1].empty()) return std::nullopt;
+    return Goodbye{f[1]};
 }
 
 Message make_stop() { return {kStopTag}; }

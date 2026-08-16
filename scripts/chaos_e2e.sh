@@ -36,7 +36,12 @@ EXPECTED="$(python3 python/oracle_union.py "$@")" \
 case "$EXPECTED" in (*[!0-9]*|"") echo "oracle count failed: '$EXPECTED'"; exit 1;; esac
 echo "oracle total: $EXPECTED events"
 
-"$BUILD/mas_coordinator" "$WORK" "$RES" "$HB" "$@" 2>"$T/coord.log" &
+# --workers 2: the registration gate gets its only end-to-end exercise here
+# (unit tests fake the transport). Both workers say hello before dispatch, so
+# PUSH round-robins over both pipes instead of queueing everything into the
+# first -- and a regression in the gate now fails this script instead of
+# passing invisibly.
+"$BUILD/mas_coordinator" "$WORK" "$RES" "$HB" --workers 2 "$@" 2>"$T/coord.log" &
 COORD=$!
 PIDS+=("$COORD")
 "$BUILD/mas_worker" "$WORK" "$RES" "$HB" "$T/w1.duckdb" w1 2>"$T/w1.log" &

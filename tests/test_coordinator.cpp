@@ -21,6 +21,14 @@ mas::Message result(const std::string& path, long long events,
     return mas::encode(mas::WorkResult{path, events, 0.1, wid});
 }
 
+mas::Message claim(const std::string& path, const std::string& wid) {
+    return mas::encode(mas::WorkClaim{path, wid});
+}
+
+mas::Message bye(const std::string& wid) {
+    return mas::encode(mas::Goodbye{wid});
+}
+
 // Results source that advances a virtual clock per tick: entry (msg, dt)
 // advances *t by dt then yields msg (nullopt = an empty 200 ms tick).
 struct TimedSource : mas::IMessageSource {
@@ -218,32 +226,47 @@ TEST(Coordinator, DeadWorkersCompletionsAreReopenedAndRecounted) {
 
 TEST(Coordinator, RedispatchCapMarksItemPermanentlyFailed) {
     using namespace std::chrono_literals;
-    // One item, three workers that die one per pass while holding it:
-    // initial send + 2 re-dispatches exhaust the cap; the third death
-    // permanently fails the item instead of re-sending it.
+    // The poison-item story the cap exists for: an item that kills every
+    // worker that CLAIMS it. w1..w3 each claim it and die; the cap charges
+    // each holder-death, so the third exhausts it and the item fails
+    // permanently -- while bystander w4, alive and heartbeating throughout,
+    // is untouched and receives its STOP. (Before claims existed, the cap was
+    // consumed by *any* death, so three unrelated deaths failed every open
+    // item on the run.)
     const std::vector<mas::WorkItem> items = {{"poison.csv"}};
     sc::time_point t{};
     mas::test::FakeSink work;
     TimedSource results;
     results.t = &t;
-    results.script.push_back({std::nullopt, 31000ms});   // pass 1 -> t=31
-    results.script.push_back({std::nullopt, 31000ms});   // pass 2 -> t=62
-    results.script.push_back({std::nullopt, 31000ms});   // pass 3 -> t=93
-    results.script.push_back({std::nullopt, 31000ms});   // pass 4 -> t=124
+    results.script.push_back({claim("poison.csv", "w1"), 0ms});   // pass 1
+    results.script.push_back({std::nullopt, 31000ms});            // pass 2 -> t=31
+    results.script.push_back({claim("poison.csv", "w2"), 0ms});   // pass 3
+    results.script.push_back({std::nullopt, 31000ms});            // pass 4 -> t=62
+    results.script.push_back({claim("poison.csv", "w3"), 0ms});   // pass 5
+    results.script.push_back({std::nullopt, 31000ms});            // pass 6 -> t=93
     mas::test::FakeTickSource hbs;
-    // pass 1 (t=31): all three join.
+    // pass 1 (t=0): all four join.
     hbs.script.push_back(hb("w1", 0));
     hbs.script.push_back(hb("w2", 0));
     hbs.script.push_back(hb("w3", 0));
+    hbs.script.push_back(hb("w4", 0));
     hbs.script.push_back(std::nullopt);
-    // pass 2 (t=62): w2/w3 refresh; w1 (last 31) dies -> re-dispatch #1.
+    // pass 2 (t=31): w2/w3/w4 refresh; w1 (holder, last 0) dies -> charge #1.
     hbs.script.push_back(hb("w2", 1));
     hbs.script.push_back(hb("w3", 1));
+    hbs.script.push_back(hb("w4", 1));
     hbs.script.push_back(std::nullopt);
-    // pass 3 (t=93): w3 refreshes; w2 (last 62) dies -> re-dispatch #2.
+    // pass 3: w2's claim arrives.
+    hbs.script.push_back(std::nullopt);
+    // pass 4 (t=62): w3/w4 refresh; w2 (holder, last 31) dies -> charge #2.
     hbs.script.push_back(hb("w3", 2));
+    hbs.script.push_back(hb("w4", 2));
     hbs.script.push_back(std::nullopt);
-    // pass 4 (t=124): nobody beats; w3 (last 93) dies -> cap exceeded.
+    // pass 5: w3's claim arrives.
+    hbs.script.push_back(std::nullopt);
+    // pass 6 (t=93): w4 refreshes; w3 (holder, last 62) dies -> cap exceeded.
+    hbs.script.push_back(hb("w4", 3));
+    hbs.script.push_back(std::nullopt);
 
     const auto s = mas::run_coordinator(items, work, results, hbs,
                                         mas::CoordinatorConfig{},
@@ -252,10 +275,141 @@ TEST(Coordinator, RedispatchCapMarksItemPermanentlyFailed) {
     EXPECT_EQ(s.files_ok, 0);
     EXPECT_EQ(s.files_failed, 1);
     EXPECT_EQ(s.workers_died, 3);
-    // 1 initial WORK + 2 re-dispatches, no third re-send, no STOP (all dead).
-    ASSERT_EQ(work.sent.size(), 3u);
-    for (const auto& m : work.sent)
-        EXPECT_TRUE(mas::decode_work(m).has_value());
+    // 1 initial WORK + 2 re-dispatches + 4 STOPs (live w4 + 3 tombstones).
+    ASSERT_EQ(work.sent.size(), 7u);
+    for (int i = 0; i < 3; ++i)
+        EXPECT_TRUE(mas::decode_work(work.sent[i]).has_value()) << i;
+    for (int i = 3; i < 7; ++i) EXPECT_TRUE(mas::is_stop(work.sent[i])) << i;
+}
+
+TEST(Coordinator, LiveWorkersResultSurvivesUnrelatedDeaths) {
+    using namespace std::chrono_literals;
+    // The failure that motivated claims: wlive holds the only item and
+    // finishes it correctly, while three other workers fall silent one pass
+    // after another. Charging the item's cap for those deaths permanently
+    // failed it, and wlive's correct result was then dropped as a duplicate:
+    // a successful run reported as a total loss.
+    const std::vector<mas::WorkItem> items = {{"d1.csv"}};
+    sc::time_point t{};
+    mas::test::FakeSink work;
+    TimedSource results;
+    results.t = &t;
+    results.script.push_back({claim("d1.csv", "wlive"), 0ms});    // pass 1
+    results.script.push_back({std::nullopt, 31000ms});            // pass 2 -> t=31: w1 dies
+    results.script.push_back({std::nullopt, 31000ms});            // pass 3 -> t=62: w2 dies
+    results.script.push_back({std::nullopt, 31000ms});            // pass 4 -> t=93: w3 dies
+    results.script.push_back({result("d1.csv", 42, "wlive"), 0ms});
+    mas::test::FakeTickSource hbs;
+    hbs.script.push_back(hb("wlive", 0));
+    hbs.script.push_back(hb("w1", 0));
+    hbs.script.push_back(hb("w2", 0));
+    hbs.script.push_back(hb("w3", 0));
+    hbs.script.push_back(std::nullopt);
+    hbs.script.push_back(hb("wlive", 1));
+    hbs.script.push_back(hb("w2", 1));
+    hbs.script.push_back(hb("w3", 1));
+    hbs.script.push_back(std::nullopt);
+    hbs.script.push_back(hb("wlive", 2));
+    hbs.script.push_back(hb("w3", 2));
+    hbs.script.push_back(std::nullopt);
+    hbs.script.push_back(hb("wlive", 3));
+    hbs.script.push_back(std::nullopt);
+
+    const auto s = mas::run_coordinator(items, work, results, hbs,
+                                        mas::CoordinatorConfig{},
+                                        [&] { return t; });
+
+    EXPECT_EQ(s.files_ok, 1);
+    EXPECT_EQ(s.files_failed, 0);
+    EXPECT_EQ(s.total_events, 42);
+    EXPECT_EQ(s.workers_died, 3);
+    // No re-dispatch at all: the item's holder never died. 1 WORK + 4 STOPs.
+    ASSERT_EQ(work.sent.size(), 5u);
+    EXPECT_TRUE(mas::decode_work(work.sent[0]).has_value());
+    for (int i = 1; i < 5; ++i) EXPECT_TRUE(mas::is_stop(work.sent[i])) << i;
+}
+
+TEST(Coordinator, GoodbyeIsDepartureNotDeath) {
+    using namespace std::chrono_literals;
+    // w1 completes d1, announces its idle-exit, and falls silent -- as every
+    // worker that runs out of work does. Silence after a goodbye must not
+    // tombstone it: its store is intact, so d1 stays counted, nothing is
+    // re-dispatched, and workers_died stays 0.
+    const std::vector<mas::WorkItem> items = {{"d1.csv"}, {"d2.csv"}};
+    sc::time_point t{};
+    mas::test::FakeSink work;
+    TimedSource results;
+    results.t = &t;
+    results.script.push_back({claim("d1.csv", "w1"), 0ms});
+    results.script.push_back({result("d1.csv", 10, "w1"), 0ms});
+    results.script.push_back({bye("w1"), 0ms});
+    results.script.push_back({std::nullopt, 31000ms});   // w1 silent long past the threshold
+    results.script.push_back({claim("d2.csv", "w2"), 0ms});
+    results.script.push_back({result("d2.csv", 20, "w2"), 0ms});
+    mas::test::FakeTickSource hbs;
+    hbs.script.push_back(hb("w1", 0));
+    hbs.script.push_back(hb("w2", 0));
+    hbs.script.push_back(std::nullopt);
+    hbs.script.push_back(std::nullopt);
+    hbs.script.push_back(std::nullopt);
+    hbs.script.push_back(hb("w2", 1));
+    hbs.script.push_back(std::nullopt);
+
+    const auto s = mas::run_coordinator(items, work, results, hbs,
+                                        mas::CoordinatorConfig{},
+                                        [&] { return t; });
+
+    EXPECT_EQ(s.files_ok, 2);
+    EXPECT_EQ(s.files_failed, 0);
+    EXPECT_EQ(s.total_events, 30);     // d1's 10 events were never rolled back
+    EXPECT_EQ(s.workers_died, 0);
+    // 2 WORK, no re-dispatch, then STOPs (w2 live; a surplus one for the
+    // departed w1 is dropped at the closed pipe).
+    ASSERT_EQ(work.sent.size(), 4u);
+    EXPECT_TRUE(mas::decode_work(work.sent[0]).has_value());
+    EXPECT_TRUE(mas::decode_work(work.sent[1]).has_value());
+    EXPECT_TRUE(mas::is_stop(work.sent[2]));
+    EXPECT_TRUE(mas::is_stop(work.sent[3]));
+}
+
+TEST(Coordinator, DeathRedispatchesOnlyTheDeadWorkersItems) {
+    using namespace std::chrono_literals;
+    // w1 holds d1, w2 holds d2. w1's death re-dispatches d1 alone: d2's
+    // holder is alive and mid-file, and re-sending it would spend a second
+    // worker's time producing a result that gets dropped as a duplicate.
+    const std::vector<mas::WorkItem> items = {{"d1.csv"}, {"d2.csv"}};
+    sc::time_point t{};
+    mas::test::FakeSink work;
+    TimedSource results;
+    results.t = &t;
+    results.script.push_back({claim("d1.csv", "w1"), 0ms});       // pass 1
+    results.script.push_back({claim("d2.csv", "w2"), 0ms});       // pass 2
+    results.script.push_back({std::nullopt, 31000ms});            // pass 3 -> t=31: w1 dies
+    results.script.push_back({result("d2.csv", 20, "w2"), 0ms});
+    results.script.push_back({claim("d1.csv", "w2"), 0ms});
+    results.script.push_back({result("d1.csv", 10, "w2"), 0ms});
+    mas::test::FakeTickSource hbs;
+    hbs.script.push_back(hb("w1", 0));
+    hbs.script.push_back(hb("w2", 0));
+    hbs.script.push_back(std::nullopt);
+    hbs.script.push_back(std::nullopt);
+    hbs.script.push_back(hb("w2", 1));
+    hbs.script.push_back(std::nullopt);
+
+    const auto s = mas::run_coordinator(items, work, results, hbs,
+                                        mas::CoordinatorConfig{},
+                                        [&] { return t; });
+
+    EXPECT_EQ(s.files_ok, 2);
+    EXPECT_EQ(s.total_events, 30);
+    EXPECT_EQ(s.workers_died, 1);
+    // d1, d2, re-dispatched d1 (and ONLY d1), STOP x2 (live w2 + tomb w1).
+    ASSERT_EQ(work.sent.size(), 5u);
+    const auto resent = mas::decode_work(work.sent[2]);
+    ASSERT_TRUE(resent.has_value());
+    EXPECT_EQ(resent->in_path, "d1.csv");
+    EXPECT_TRUE(mas::is_stop(work.sent[3]));
+    EXPECT_TRUE(mas::is_stop(work.sent[4]));
 }
 
 TEST(Coordinator, AbortsWhenNoWorkerEverJoins) {
