@@ -4,11 +4,11 @@
 Shape matches the real telemetry files (ts + 36 counts + 36 torques + 36
 statuses). Day 1 takes head 1's counter 1 -> 2, day 2 CONTINUES it 2 -> 3 —
 mirroring real day-files, whose machine counter is monotonic across days.
-(cap_seq IS that counter value; if day 2 replayed 1 -> 2 the idempotent
-UNIQUE(machine, head, cap_seq) store would dedupe the second event, and a
-2-file run would report 2 events but hold only 1 row — caught at execution
-time on 2026-07-10.) Expected totals: 1 event per file, 2 events and 2 rows
-for both files together.
+The store identity is (machine_id, head_id, ts) — the retired cap_seq key
+would have deduped a replayed counter range; with the ts key the fixtures'
+distinct timestamps are what keeps the two files' events distinct rows.
+Expected totals: 1 event per file, 2 events and 2 rows for both files
+together.
 """
 import sys, pathlib
 

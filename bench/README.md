@@ -31,6 +31,23 @@ volume only (it refuses to overwrite existing results CSVs without `--force`).
 Outputs `bench/results_cuda.csv` and `bench/results_cuda_stages.csv`. Paste both
 back.
 
+## Running the GPU/CPU differential test
+
+`MAS_BENCH_ONLY=ON` builds **no tests** — its contract is "downloads nothing"
+and the test suite is a googletest fetch, so the recipe above never compiles
+`tests/test_cuda_cleaner.cpp`. Before pasting numbers back, build and run the
+8-case differential from a second build directory (this one downloads
+googletest and the DuckDB asset; Windows has a pinned DuckDB branch):
+
+```
+cmake -S . -B build-gpu-tests -DMAS_ENABLE_CUDA=ON -DMAS_ENABLE_ZMQ=OFF
+cmake --build build-gpu-tests --config Release
+ctest --test-dir build-gpu-tests --output-on-failure
+```
+
+The CUDA cases skip without a device; on the GPU box they must run, not skip —
+check for `CudaCleaner` in the test output.
+
 ## Adding the `e2e` rows
 
 `MAS_BENCH_ONLY=ON` builds no DuckDB, so there is no store to write and no `e2e`

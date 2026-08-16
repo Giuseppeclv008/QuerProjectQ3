@@ -18,6 +18,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -153,8 +154,12 @@ def run(cmd, cwd=None):
     if p.returncode != 0:
         die(f"{' '.join(str(c) for c in cmd)} exited {p.returncode}\n{blob}")
     m = _METRICS.search(blob)
-    wall, cpu, rss = (float(m.group(2)), float(m.group(3)), float(m.group(4))) \
-        if m else (0.0, 0.0, 0.0)
+    if not m:
+        # A missing metrics line used to default to (0.0, 0.0, 0.0), and
+        # emit() then wrote total_s=0.000, rows_per_s="0", cpu_pct="0" --
+        # exactly the bogus row this harness exists to refuse.
+        die(f"{' '.join(str(c) for c in cmd)} printed no metrics line\n{blob}")
+    wall, cpu, rss = float(m.group(2)), float(m.group(3)), float(m.group(4))
     ev = last_match(_EVENTS, blob)
     cl = last_match(_CLEAN, blob)
     mg = last_match(_MERGE, blob)
@@ -162,6 +167,18 @@ def run(cmd, cwd=None):
     clean_s = float(cl.group(1)) if cl else wall
     merge_s = float(mg.group(1)) if mg else 0.0
     return blob, wall, cpu, rss, events, clean_s, merge_s
+
+
+def machine_id_of(path):
+    """The machine id embedded in a pool day-file's name.
+
+    telemetry_<id>_<date>.csv -- the same derivation run_bench.sh hardcodes.
+    """
+    base = os.path.basename(path)
+    parts = base.split("_")
+    if len(parts) < 3 or parts[0] != "telemetry":
+        die(f"cannot derive machine id from {base}; expected telemetry_<id>_<date>.csv")
+    return parts[1]
 
 
 def oracle_union(files):
@@ -175,10 +192,13 @@ def oracle_union(files):
 
 def emit(writer, arch, mode, threads, nfiles, rep, clean_s, total_s, events,
          rss, cpu_s, merge_s=0.0, note=""):
-    """total_s is the whole run: the process wall clock where one is measured
-    (cpp, cuda, mono), the in-process loop time for the Python contenders,
-    which have no separate wall. rows_per_s, events_per_s and cpu_pct all
-    divide by it -- one denominator, one meaning, every row."""
+    """total_s is the whole process for every row: cpp/cuda/mono report their
+    own wall in the metrics line, and the Python contenders' is measured
+    around the subprocess by py_arch_time. rows_per_s, events_per_s and
+    cpu_pct all divide by it -- one denominator, one meaning, every row.
+    rss/cpu_s may be None (the Python contenders do not measure them): an
+    unmeasured quantity is an empty cell, never a 0.0 pretending to be one.
+    """
     writer.writerow({
         "arch": arch, "mode": mode, "n_workers": 0, "threads": threads,
         "files": nfiles, "repeat": rep,
@@ -186,14 +206,21 @@ def emit(writer, arch, mode, threads, nfiles, rep, clean_s, total_s, events,
         "total_s": f"{total_s:.3f}", "events": events,
         "rows_per_s": f"{ROWS_PER_DAY * nfiles / total_s:.1f}" if total_s else "0",
         "events_per_s": f"{events / total_s:.1f}" if total_s else "0",
-        "peak_rss_mb": f"{rss:.1f}",
-        "cpu_pct": f"{100.0 * cpu_s / total_s:.1f}" if total_s else "0",
+        "peak_rss_mb": "" if rss is None else f"{rss:.1f}",
+        "cpu_pct": ("" if cpu_s is None
+                    else f"{100.0 * cpu_s / total_s:.1f}" if total_s else "0"),
         "note": note,
     })
 
 
 def py_arch_time(module, files):
-    """Time a Python cleaner in-process-per-file, summing events."""
+    """Time a Python cleaner. Returns (events, clean_s, proc_wall_s).
+
+    clean_s is the in-process extract loop; proc_wall_s is the whole
+    subprocess (interpreter start and imports included), measured here so the
+    python rows' total_s means the same thing as the cpp/cuda rows' -- one
+    denominator, one meaning, every row.
+    """
     script = (
         "import sys, time; sys.path.insert(0, '.');"
         f"import {module} as m;"
@@ -201,13 +228,16 @@ def py_arch_time(module, files):
         "for p in sys.argv[1:]: n += len(m.extract(p))\n"
         "print(f'{n} events'); print(f'clean {time.perf_counter()-t:.3f} s')"
     )
+    t0 = time.perf_counter()
     p = subprocess.run([sys.executable, "-c", script] + files,
                        cwd=PY_DIR, capture_output=True, text=True)
+    proc_wall = time.perf_counter() - t0
     if p.returncode != 0:
         die(f"{module} failed:\n{p.stdout}{p.stderr}")
     blob = p.stdout + p.stderr
     return (int(last_match(_EVENTS, blob).group(1)),
-            float(last_match(_CLEAN, blob).group(1)))
+            float(last_match(_CLEAN, blob).group(1)),
+            proc_wall)
 
 
 def main():
@@ -251,11 +281,14 @@ def main():
               "-DMAS_BENCH_ONLY=OFF (or a separate build dir) to include "
               "them.\n")
 
-    # Reference only, and only meaningful for `e2e`: this is UNIQUE(head,
-    # cap_seq) after the counter reset dedupes replayed ranges, i.e. what a
-    # *store* ends up holding. Store-free runs emit more than this on
-    # multi-day volumes. The `clean` gate is the cross-arch check below.
-    print("Store row counts the e2e runs should land on (oracle_union):")
+    # oracle_union counts distinct (head_id, ts) -- the store identity. The
+    # day-files are contiguous and non-overlapping, so this EQUALS the sum of
+    # per-file event counts: the same number gates both the e2e rows (store
+    # row count) and the store-free clean rows (emitted events). The old
+    # rationale for not gating clean runs ("store-free runs emit more than
+    # the store keeps") was the retired cap_seq-key theory;
+    # python/oracle_union.py's docstring records why it was false.
+    print("Row counts every run should land on (oracle_union):")
     oracle = {v: oracle_union(files[:v]) for v in volumes}
     for v, n in oracle.items():
         print(f"  {v:2d} day-file(s): {n} rows")
@@ -274,13 +307,20 @@ def main():
 
         for v in volumes:
             sub = files[:v]
+            if cuda:
+                # The bitwise CPU differential, once per volume, OUTSIDE the
+                # timed repeats: a mismatch dies with the dump before any
+                # number is recorded, and the untimed pass doubles as the GPU
+                # warm-up repeat 1 never had (clock ramp, pinned-buffer first
+                # touch, context creation).
+                print(f"verify: cuda v={v}d (untimed differential + warm-up)")
+                run([cuda, "--verify"] + sub)
             for rep in range(1, REPEATS + 1):
-                # Every arch cleaning the same files must emit the same number of
-                # events. That cross-check is the correctness gate for `clean`
-                # mode: oracle_union counts UNIQUE(head, cap_seq) rows, which is
-                # what a *store* holds after the counter reset dedupes replays --
-                # not what a store-free run emits. Comparing against it here
-                # would fail for the wrong reason on multi-day volumes.
+                # Every arch cleaning the same files must emit the same
+                # number of events (cross-arch agreement), and that number
+                # must equal the independent Python oracle (absolute gate,
+                # checked after the arch loop) -- agreement alone would pass
+                # five implementations sharing one bug.
                 seen = {}
 
                 # --- Python contenders ---------------------------------------
@@ -289,9 +329,12 @@ def main():
                     if arch == "py-naive" and v > PY_NAIVE_MAX_FILES:
                         continue
                     rel = [os.path.relpath(f, PY_DIR) for f in sub]
-                    events, clean_s = py_arch_time(module, rel)
+                    events, clean_s, proc_wall = py_arch_time(module, rel)
                     seen[arch] = events
-                    emit(w, arch, "clean", 1, v, rep, clean_s, clean_s, events, 0.0, 0.0)
+                    # total_s = subprocess wall (same denominator as cpp/cuda);
+                    # rss/cpu are None -- unmeasured is an empty cell, not 0.0.
+                    emit(w, arch, "clean", 1, v, rep, clean_s, proc_wall,
+                         events, None, None)
                     print(f"done: {arch} v={v}d rep={rep} clean={clean_s:.3f}s")
 
                 # --- C++ contender -------------------------------------------
@@ -304,24 +347,19 @@ def main():
 
                 # --- CUDA ----------------------------------------------------
                 if cuda:
-                    # --verify on the first repeat runs the bitwise differential
-                    # against CapEventExtractorFlat inside the binary; a mismatch
-                    # exits non-zero and run() aborts the sweep with the dump.
-                    verify = ["--verify"] if rep == 1 else []
                     blob, wall, cpu_s, rss, events, clean_s, _m = run(
-                        [cuda] + verify + sub)
+                        [cuda] + sub)
                     seen["cuda"] = events
                     # total_s is the process wall clock, not the sum of stage
                     # timers: the stage sum used to hide the event
                     # materialization and every cudaMalloc/cudaHostAlloc, and
                     # at 28 day-files the hidden part cost about as much as the
-                    # reported one.
-                    # note="verify": repeat 1 runs the full CPU differential
-                    # inside the timed wall clock, a 7x spread in one column
-                    # of one configuration -- a row that must be identifiable
-                    # as such in the CSV, not discovered by counting repeats.
+                    # reported one. The differential --verify run happens once
+                    # per volume BEFORE the repeats (see below): it used to run
+                    # inside repeat 1's timed wall, making that row's total_s
+                    # 58.9 s against 8.4 s and its derived rates meaningless.
                     emit(w, "cuda", "clean", 1, v, rep, clean_s, wall, events,
-                         rss, cpu_s, note="verify" if verify else "")
+                         rss, cpu_s)
                     m = _STAGE.search(blob)
                     if m:
                         kv = dict(p.split("=") for p in m.group(1).split())
@@ -335,6 +373,12 @@ def main():
                         f"{v} day-file(s), repeat {rep}: {seen}",
                         "a fast implementation that is wrong must not produce a "
                         "number; re-run the disagreeing arch with --verify")
+                if seen and distinct != {oracle[v]}:
+                    die(f"arches agree with each other but not with the "
+                        f"oracle at {v} day-file(s), repeat {rep}: "
+                        f"{distinct.pop()} vs oracle {oracle[v]}",
+                        "five implementations sharing one bug is still wrong; "
+                        "investigate before re-running the sweep")
 
                 # --- e2e, only if the full build is present -------------------
                 if mono:
@@ -343,8 +387,13 @@ def main():
                                            ("mono-MT", 8, [])):
                         mode = "clean" if flag else "e2e"
                         out_db = os.path.join(ROOT, "bench_tmp.duckdb")
+                        # The pool's real 35-char id, not "MCC": the 3-char id
+                        # stays inline in DuckDB and roughly halves per-row
+                        # write cost (run_bench.sh and docs/bench/results.md
+                        # document this at length), so "MCC" made the e2e rows
+                        # unrepresentative of the store share.
                         _, wall, cpu_s, rss, events, clean_s, merge_s = run(
-                            [mono] + flag + [out_db, "MCC", str(th)] + sub)
+                            [mono] + flag + [out_db, machine_id_of(sub[0]), str(th)] + sub)
                         # The oracle is computed for every volume and was only
                         # ever printed; run_bench.sh gates every run and this
                         # sweep claimed to but did not. Store-backed runs must

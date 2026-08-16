@@ -81,13 +81,13 @@ PIDS=()
 cleanup() { for p in "${PIDS[@]:-}"; do kill -9 "$p" 2>/dev/null || true; done; rm -rf "$T"; }
 trap cleanup EXIT
 
-# --- oracle cache: expected UNIQUE(head,cap_seq) rows per volume -------------
-# python/oracle_union.py (independent Python reference, spec §11) instead of
-# summing per-file `clean` counts: the real month's Count counter reset
-# mid-day-16, so days 16-24 replay cap_seq ranges from days 1-15 and the
-# store's UNIQUE constraint dedupes them — the per-file sum overcounts the
-# union (21,872,663 events vs 14,372,237 rows across 28 days; found at the
-# Task 5 gate, where mono T=1 and T=8 both hold exactly the union count).
+# --- oracle cache: expected distinct (head_id, ts) rows per volume -----------
+# python/oracle_union.py (independent Python reference, spec §11). The store
+# identity is (machine_id, head_id, ts); the old cap_seq-key teaching (days
+# 16-24 "replaying" cap_seq ranges, 21.9M events vs 14.4M rows) is retired --
+# oracle_union.py's docstring records why it was false. On this contiguous,
+# non-overlapping pool the union equals the per-file sum; the union form is
+# kept so an overlapping or re-delivered file still yields the right answer.
 # Plain indexed array, NOT `declare -A`: /usr/bin/env bash resolves to macOS's
 # stock bash 3.2.57 here (verified — no Homebrew bash on PATH), which lacks
 # associative arrays (`declare -A` errors under set -e and kills the script

@@ -152,9 +152,18 @@ def main():
              "'MCC', Config's default). A mismatch silently scopes every query "
              "to ~0 rows instead of failing loudly -- which is exactly what the "
              "pre-flight scope check exists to catch instead.")
+    parser.add_argument(
+        "--force", action="store_true",
+        help="overwrite an existing bench/read_results.csv (refused otherwise)")
     args = parser.parse_args()
     duck, pq, reps, machine_id = (
         args.duckdb_store, args.parquet_dir, args.repeats, args.machine_id)
+
+    # Same clobber guard as run_bench.sh and run_bench_cuda.py: this is the one
+    # harness the fix did not reach, and read_results.csv is a committed
+    # artifact the docs quote six figures from.
+    if os.path.exists(OUT) and not args.force:
+        sys.exit(f"refusing to overwrite {OUT}; pass --force or move it aside")
 
     check_scope(duck, pq, machine_id)
 

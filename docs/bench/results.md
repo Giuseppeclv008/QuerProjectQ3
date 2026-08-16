@@ -2,33 +2,33 @@
 
 | arch | n_workers | threads | files | clean_s | merge_s | total_s | events_per_s | peak_rss_mb | cpu_pct |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| mas | 1 | 1 | 1 | 18.939 | 15.067 | 34.008 | 22515.6 | 203.5 | 186.8 |
-| mas | 1 | 1 | 7 | 94.042 | 76.042 | 169.857 | 22966.5 | 655.9 | 190.6 |
-| mas | 1 | 1 | 28 | 514.587 | 430.401 | 944.32 | 23162.3 | 3197.5 | 192.9 |
-| mas | 2 | 1 | 1 | 19.031 | 2.614 | 21.675 | 35326.9 | 290.4 | 124.9 |
-| mas | 2 | 1 | 7 | 49.726 | 11.951 | 61.544 | 63385.8 | 975.2 | 234.9 |
-| mas | 2 | 1 | 28 | 279.52 | 69.076 | 348.14 | 62827.2 | 4460.3 | 238.4 |
-| mas | 4 | 1 | 1 | 19.001 | 2.576 | 21.632 | 35397.1 | 340.2 | 124.6 |
-| mas | 4 | 1 | 7 | 37.776 | 12.031 | 49.838 | 78273.9 | 1073.4 | 312.5 |
-| mas | 4 | 1 | 28 | 151.484 | 68.621 | 219.834 | 99496.3 | 4287.9 | 439.8 |
+| mas | 1 | 1 | 1 | 18.939 | 15.069 | 34.008 | 22515.6 | 202.7 | 186.2 |
+| mas | 1 | 1 | 7 | 93.806 | 76.051 | 169.857 | 22966.5 | 658.7 | 190.6 |
+| mas | 1 | 1 | 28 | 513.919 | 430.401 | 944.32 | 23162.3 | 3207 | 193.2 |
+| mas | 2 | 1 | 1 | 19.093 | 2.582 | 21.675 | 35326.9 | 293.6 | 125.5 |
+| mas | 2 | 1 | 7 | 49.593 | 11.951 | 61.544 | 63385.8 | 975.2 | 239.7 |
+| mas | 2 | 1 | 28 | 279.52 | 68.62 | 348.14 | 62827.2 | 4458 | 238.4 |
+| mas | 4 | 1 | 1 | 18.967 | 2.665 | 21.632 | 35397.1 | 333.8 | 125.6 |
+| mas | 4 | 1 | 7 | 37.807 | 12.031 | 49.838 | 78273.9 | 1077.9 | 312.5 |
+| mas | 4 | 1 | 28 | 151.678 | 68.156 | 219.834 | 99496.3 | 4299.5 | 446.6 |
 | mas | 8 | 1 | 1 | 19.071 | 2.741 | 21.812 | 35105 | 427.9 | 127.5 |
-| mas | 8 | 1 | 7 | 24.763 | 11.366 | 36.295 | 107481 | 1192.2 | 516.9 |
-| mas | 8 | 1 | 28 | 111.884 | 70.814 | 182.591 | 119790 | 4577.6 | 721.4 |
-| mas | 16 | 1 | 1 | 19.262 | 2.665 | 21.993 | 34816.1 | 607 | 134.7 |
-| mas | 16 | 1 | 7 | 24.942 | 11.513 | 36.482 | 106930 | 1376.8 | 515.1 |
-| mas | 16 | 1 | 28 | 74.9 | 64.847 | 140.438 | 155746 | 4858.6 | 1488.1 |
-| mono-1T | 0 | 1 | 1 | 18.441 | 0 | 18.441 | 41522.2 | 71.6 | 106 |
-| mono-1T | 0 | 1 | 7 | 97.617 | 0 | 97.617 | 39962.5 | 103.4 | 106.6 |
-| mono-1T | 0 | 1 | 28 | 537.787 | 0 | 537.787 | 40671.6 | 220.5 | 111.2 |
-| mono-MT | 0 | 2 | 1 | 18.618 | 2.46 | 21.105 | 36281 | 191.6 | 110.5 |
-| mono-MT | 0 | 2 | 7 | 48.937 | 11.868 | 60.961 | 63992 | 796.9 | 196.5 |
-| mono-MT | 0 | 2 | 28 | 264.91 | 72.184 | 338.338 | 64647.4 | 3371.6 | 197 |
-| mono-MT | 0 | 4 | 1 | 18.61 | 2.398 | 21.008 | 36448.5 | 193.2 | 107.2 |
-| mono-MT | 0 | 4 | 7 | 28.086 | 11.185 | 39.264 | 99353.5 | 733.4 | 307.2 |
-| mono-MT | 0 | 4 | 28 | 134.907 | 69.672 | 204.579 | 106916 | 3569.8 | 317.7 |
-| mono-MT | 0 | 8 | 1 | 18.731 | 2.402 | 21.16 | 36186.7 | 199.2 | 109.6 |
-| mono-MT | 0 | 8 | 7 | 26.828 | 11.439 | 38.301 | 101852 | 731 | 393.7 |
-| mono-MT | 0 | 8 | 28 | 86.043 | 70.592 | 157.347 | 139009 | 3855.7 | 521 |
+| mas | 8 | 1 | 7 | 24.763 | 11.532 | 36.295 | 107481 | 1197.1 | 505.7 |
+| mas | 8 | 1 | 28 | 111.884 | 70.707 | 182.591 | 119790 | 4599.4 | 721.4 |
+| mas | 16 | 1 | 1 | 19.262 | 2.731 | 21.993 | 34816.1 | 603.9 | 140.4 |
+| mas | 16 | 1 | 7 | 24.942 | 11.54 | 36.482 | 106930 | 1376.8 | 508.5 |
+| mas | 16 | 1 | 28 | 75.591 | 64.847 | 140.438 | 155746 | 4858.6 | 1492.5 |
+| mono-1T | 0 | 1 | 1 | 18.441 | 0 | 18.441 | 41522.2 | 70.5 | 106 |
+| mono-1T | 0 | 1 | 7 | 97.617 | 0 | 97.617 | 39962.5 | 105 | 106.4 |
+| mono-1T | 0 | 1 | 28 | 537.787 | 0 | 537.787 | 40671.6 | 222 | 111.2 |
+| mono-MT | 0 | 2 | 1 | 18.618 | 2.486 | 21.105 | 36281 | 188.9 | 117.6 |
+| mono-MT | 0 | 2 | 7 | 49.092 | 11.868 | 60.961 | 63992 | 800.7 | 197.3 |
+| mono-MT | 0 | 2 | 28 | 264.91 | 73.428 | 338.338 | 64647.4 | 3374.4 | 197 |
+| mono-MT | 0 | 4 | 1 | 18.61 | 2.398 | 21.008 | 36448.5 | 193.6 | 105.5 |
+| mono-MT | 0 | 4 | 7 | 28.086 | 11.178 | 39.264 | 99353.5 | 747.3 | 306.1 |
+| mono-MT | 0 | 4 | 28 | 134.907 | 69.672 | 204.579 | 106916 | 3575.8 | 317.6 |
+| mono-MT | 0 | 8 | 1 | 18.731 | 2.429 | 21.16 | 36186.7 | 199.2 | 107.6 |
+| mono-MT | 0 | 8 | 7 | 26.828 | 11.473 | 38.301 | 101852 | 731 | 397.9 |
+| mono-MT | 0 | 8 | 28 | 86.043 | 71.303 | 157.347 | 139009 | 3832.2 | 521 |
 
 Caveats: measured on an actively-cooled i7-13700H laptop (6P+8E cores, 20 threads — N=16 exceeds the P-cores but not the hardware threads), median-of-3, merge phase reported separately; mono-MT uses a std::thread atomic-counter pool (dynamic load balancing, slightly fairer than PUSH/PULL round-robin).
 
@@ -65,8 +65,10 @@ history; the reference numbers are now these.
   id everywhere; without that fix the sweep would have handed MAS a 2× head
   start on the clean phase and measured a default argument.
 - **The merge cost is flat across N≥2 — reconfirmed on a second platform.** At
-  28 days: 69.1 / 68.6 / 70.8 / 64.8 s for N=2/4/8/16, and 72.2 / 69.7 / 70.6 s
-  for mono-MT T=2/4/8. `merge_all`'s set-based pass costs what the volume
+  28 days: 68.6 / 68.2 / 70.7 / 64.8 s for N=2/4/8/16, and 73.4 / 69.7 / 71.3 s
+  for mono-MT T=2/4/8. (The table now reports the median repeat by `total_s`,
+  each row one physical run whose components add up, so these differ in the
+  decimals from the earlier per-column medians.) `merge_all`'s set-based pass costs what the volume
   costs, not what the partitioning costs. The N=1 row is the control:
   `merge_all` falls back to the per-row `merge_from` path for a single source,
   and that path costs **430.4 s here — 6.2× the set-based pass** over the same
@@ -298,6 +300,29 @@ spread, because n=3 on a laptop does not support three significant figures
 | py-naive | 74.64 s [74.32–76.31] | 11.6x |
 | py-numpy | 85.82 s [84.53–86.99] | 13.4x |
 
+**Kernel provenance.** These numbers were measured at the kernel of commit
+`45d4831` (2026-08-13, the last GPU session). The kernel now in the tree was
+revised after that (`f461b6d`, 2026-08-16: 169 lines, several inside timed
+regions — the column-count guard in `parse_s`, the trailing-newline append in
+`h2d_s`/`index_s`, the whole-file flag scan and offset-repair path in
+`materialize_s`) and **has not been compiled or measured**. Until the sweep is
+re-run on the RTX box, this table describes the 2026-08-13 kernel, not HEAD.
+
+**What each contender's `clean_s` includes** — the rows above do not share one
+measurement window, so before quoting a ratio, know what each number is:
+
+| contender | `clean_s` window | events held in memory |
+|---|---|---|
+| cuda | sum of 8 stage timers; excludes `check_header`, `cudaHostAlloc`, every `cudaMalloc`, context creation (those are inside its wall: 8.43 s median) | full per-file vector (765,711) |
+| cpp-1T / cpp-MT | whole process (`clean_s == total_s` in every CSV row) | **≤ 8,192** — `bench_cpu` counts and clears its batch, so it never materializes a file's events at once (spec §6.1 says "materialize events in memory"; the 7.5 / 14.6 MB `peak_rss_mb` against CUDA's 350.9 is this asymmetry) |
+| py-naive / py-numpy | in-process loop; excludes interpreter start and imports | full per-file list |
+
+**Wall to wall, same denominator: CUDA 8.43 s vs cpp-MT 8.21 s — the GPU row
+is not faster than the 8-thread C++ at 28 files.** The 1.3x holds only on the
+stage-sum window, and the asymmetry runs *against* CUDA here (its window pays
+materialization the CPU rows dodge), but neither number is like-for-like and
+both readings are published now rather than left to the CSV.
+
 (py-naive is measured at every volume now that the extrapolation machinery is
 gone — and the estimate that machinery was built on measured true: "~75 s per
 28-day repeat" came out 74.6 s median.)
@@ -362,7 +387,8 @@ Two qualifications this section keeps:
   persistence conclusion: with a competent CPU parser the clean phase shrinks
   further below the store cost. And the same reading now applies to the GPU
   row itself: 72% of its clean time is a single-threaded host loop building
-  strings.
+  strings — a cost the `bench_cpu` rows do not pay at all (they hold at most
+  8,192 events; see the contender-window table above).
 - Every number in this section is n=3 on a laptop with ordinary desktop
   background load. The intervals are the honest resolution; the medians are
   the claim.
