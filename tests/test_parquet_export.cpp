@@ -3,6 +3,7 @@
 #include "mas/store/SqlQuote.hpp"
 #include <duckdb.hpp>
 #include <gtest/gtest.h>
+#include <chrono>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -52,8 +53,16 @@ long long parquetCount(const std::string& pq) {
 class ParquetExportTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        dir_ = fs::temp_directory_path() / "mas_export_test";
-        fs::remove_all(dir_);
+        // Unique per test AND per run: gtest_discover_tests gives every TEST
+        // its own ctest entry with no RESOURCE_LOCK, so under `ctest -j` a
+        // shared fixed directory let one test's SetUp remove_all a store
+        // another test was mid-export on (and collided between users on a
+        // shared /tmp). Nothing here is shared, so nothing needs a lock.
+        const auto* info = ::testing::UnitTest::GetInstance()->current_test_info();
+        dir_ = fs::temp_directory_path() /
+               (std::string("mas_export_test.") + info->name() + "." +
+                std::to_string(std::chrono::steady_clock::now()
+                                   .time_since_epoch().count()));
         fs::create_directories(dir_);
     }
     void TearDown() override {

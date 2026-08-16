@@ -1,6 +1,7 @@
 #include "mas/domain/CapEventExtractor.hpp"
 #include "mas/domain/CapEventExtractorFlat.hpp"
 #include <gtest/gtest.h>
+#include <filesystem>
 #include <cstdio>
 #include <fstream>
 #include <initializer_list>
@@ -163,6 +164,15 @@ void writeTiny(const std::string& path, const std::string& eol) {
         f << eol;
     }
 }
+
+// Anchored on this source file, not the CWD: gtest_discover_tests runs every
+// test from the build directory, where a repo-root-relative pool path never
+// resolves. Same convention as python/tests/test_clean_vectorized.py.
+std::string repo_path(const std::string& rel) {
+    return (std::filesystem::path(__FILE__).parent_path().parent_path() / rel)
+        .string();
+}
+
 } // namespace
 
 TEST(ExtractorFlat, CrlfYieldsIdenticalEventsToLf) {
@@ -181,9 +191,9 @@ TEST(ExtractorFlat, CrlfYieldsIdenticalEventsToLf) {
 
 // The real-data gate. Skipped when the pool has not been extracted.
 TEST(ExtractorFlat, AgreesWithStatefulExtractorOnARealDayFile) {
-    const std::string p =
+    const std::string p = repo_path(
         "telemetry_MCC777eda3db57348ef8a3113a642ae74db_2026-02/"
-        "telemetry_MCC777eda3db57348ef8a3113a642ae74db_2026-02-01.csv";
+        "telemetry_MCC777eda3db57348ef8a3113a642ae74db_2026-02-01.csv");
     std::ifstream probe(p);
     if (!probe.good()) GTEST_SKIP() << "pool not extracted: " << p;
     probe.close();
