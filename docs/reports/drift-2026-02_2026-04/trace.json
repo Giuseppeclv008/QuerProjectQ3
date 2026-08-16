@@ -1,55 +1,64 @@
-[
-  {
-    "step": 1,
-    "tool": "trend",
-    "args": {
-      "period": "2026-02..2026-04",
-      "signal": "torque",
-      "by": "day",
-      "window": 7
-    },
-    "rationale": "Rolling mean/sigma of torque per head, with Mann-Kendall drift.",
-    "status": "ok",
-    "rows_scanned": 31647915,
-    "message": ""
+{
+  "store": {
+    "store_path": "events_3mo.duckdb",
+    "rows": 55132433,
+    "ts_min": "2026-01-31 16:00:06",
+    "ts_max": "2026-04-30 16:59:59",
+    "distinct_heads": 36
   },
-  {
-    "step": 2,
-    "tool": "trend",
-    "args": {
-      "period": "2026-02..2026-04",
-      "signal": "success_rate",
-      "by": "day",
-      "window": 7
+  "steps": [
+    {
+      "step": 1,
+      "tool": "trend",
+      "args": {
+        "period": "2026-02..2026-04",
+        "signal": "torque",
+        "by": "day",
+        "window": 7
+      },
+      "rationale": "Rolling mean/sigma of torque per head, with Mann-Kendall drift.",
+      "status": "ok",
+      "rows_scanned": 31647915,
+      "message": ""
     },
-    "rationale": "Whether quality moved with torque, or independently of it.",
-    "status": "ok",
-    "rows_scanned": 31647915,
-    "message": ""
-  },
-  {
-    "step": 3,
-    "tool": "torque_stats",
-    "args": {
-      "period": "2026-02..2026-04",
-      "outcome": "successful",
-      "by": "head"
+    {
+      "step": 2,
+      "tool": "trend",
+      "args": {
+        "period": "2026-02..2026-04",
+        "signal": "success_rate",
+        "by": "day",
+        "window": 7
+      },
+      "rationale": "Whether quality moved with torque, or independently of it.",
+      "status": "ok",
+      "rows_scanned": 31647915,
+      "message": ""
     },
-    "rationale": "Variability ranking, to separate a drifting head from a noisy one.",
-    "status": "ok",
-    "rows_scanned": 31634351,
-    "message": ""
-  },
-  {
-    "step": 4,
-    "tool": "head_correlation",
-    "args": {
-      "period": "2026-02..2026-04",
-      "by": "day"
+    {
+      "step": 3,
+      "tool": "torque_stats",
+      "args": {
+        "period": "2026-02..2026-04",
+        "outcome": "successful",
+        "by": "head"
+      },
+      "rationale": "Variability ranking, to separate a drifting head from a noisy one.",
+      "status": "ok",
+      "rows_scanned": 31634351,
+      "message": ""
     },
-    "rationale": "Which head is out of step with the rest of the machine.",
-    "status": "ok",
-    "rows_scanned": 31647915,
-    "message": ""
-  }
-]
+    {
+      "step": 4,
+      "tool": "head_correlation",
+      "args": {
+        "period": "2026-02..2026-04",
+        "by": "day"
+      },
+      "rationale": "Which head is out of step with the rest of the machine.",
+      "status": "ok",
+      "rows_scanned": 31647915,
+      "message": ""
+    }
+  ]
+}

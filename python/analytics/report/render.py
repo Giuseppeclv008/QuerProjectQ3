@@ -366,7 +366,13 @@ Every call this report is built from, in order. The full record is in
 
     with open(out_dir + "/report.md", "w", encoding="utf-8") as fh:
         fh.write(text)
+    # The store fingerprint travels with the steps: a trace that names its
+    # tool calls but not the data they ran against is the archaeology
+    # store_fingerprint() exists to end. This is the shape the executor's
+    # round-trip test asserts; it used to write the bare step list, so the
+    # fingerprint reached report.md and never this file.
     with open(out_dir + "/trace.json", "w", encoding="utf-8") as fh:
-        json.dump(execution.trace, fh, indent=2, default=str)
+        json.dump({"store": execution.store, "steps": execution.trace},
+                  fh, indent=2, default=str)
     log.info("wrote %s/report.md (%d figures)", out_dir, len(figures))
     return text

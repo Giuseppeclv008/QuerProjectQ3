@@ -36,7 +36,12 @@ def test_the_tool_call_trace_is_appended_and_machine_readable(tiny_cfg, tmp_path
     ex, text = _kpi(tiny_cfg, tmp_path)
     assert "## Tool-call trace" in text
     trace = json.loads((tmp_path / "trace.json").read_text())
-    assert trace == ex.trace
+    # Steps AND the store fingerprint, read back from what render actually
+    # wrote: the executor test asserts this shape but builds the dict itself,
+    # so it passed while render still dumped the bare step list.
+    assert trace["steps"] == ex.trace
+    assert trace["store"] == ex.store
+    assert trace["store"]["rows"] == 8          # the tiny fixture
 
 
 def test_report_md_is_written_to_disk(tiny_cfg, tmp_path):

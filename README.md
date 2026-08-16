@@ -264,7 +264,7 @@ organized by layer.
 │       │   ├── torque.py                   # Per-head torque distribution
 │       │   ├── speed.py                    # Capping speed (pieces/hour)
 │       │   ├── idle.py                     # Idle periods (gaps-and-islands)
-│       │   ├── anomaly.py                  # Threshold + robust (median +/- k*MAD) detection
+│       │   ├── anomaly.py                  # Threshold + robust (median +/- k*1.4826*MAD, floored) detection
 │       │   ├── trend.py                    # Mann-Kendall drift
 │       │   └── correlation.py              # Per-head torque correlation
 │       ├── agent/                          # WP3: the report agent

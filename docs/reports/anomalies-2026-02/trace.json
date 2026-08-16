@@ -1,37 +1,46 @@
-[
-  {
-    "step": 1,
-    "tool": "anomalies",
-    "args": {
-      "period": "2026-02",
-      "method": "both"
-    },
-    "rationale": "Threshold hits, robust per-head deviation, and rejected closures.",
-    "status": "ok",
-    "rows_scanned": 21971506,
-    "message": ""
+{
+  "store": {
+    "store_path": "events_3mo.duckdb",
+    "rows": 55132433,
+    "ts_min": "2026-01-31 16:00:06",
+    "ts_max": "2026-04-30 16:59:59",
+    "distinct_heads": 36
   },
-  {
-    "step": 2,
-    "tool": "overview",
-    "args": {
-      "period": "2026-02"
+  "steps": [
+    {
+      "step": 1,
+      "tool": "anomalies",
+      "args": {
+        "period": "2026-02",
+        "method": "both"
+      },
+      "rationale": "Threshold hits, robust per-head deviation, and rejected closures.",
+      "status": "ok",
+      "rows_scanned": 21971506,
+      "message": ""
     },
-    "rationale": "Denominator for every count above, plus data-quality flags.",
-    "status": "ok",
-    "rows_scanned": 21971506,
-    "message": ""
-  },
-  {
-    "step": 3,
-    "tool": "success_rates",
-    "args": {
-      "period": "2026-02",
-      "by": "day"
+    {
+      "step": 2,
+      "tool": "overview",
+      "args": {
+        "period": "2026-02"
+      },
+      "rationale": "Denominator for every count above, plus data-quality flags.",
+      "status": "ok",
+      "rows_scanned": 21971506,
+      "message": ""
     },
-    "rationale": "Daily rates, to place any abnormal interval in context.",
-    "status": "ok",
-    "rows_scanned": 14824304,
-    "message": ""
-  }
-]
+    {
+      "step": 3,
+      "tool": "success_rates",
+      "args": {
+        "period": "2026-02",
+        "by": "day"
+      },
+      "rationale": "Daily rates, to place any abnormal interval in context.",
+      "status": "ok",
+      "rows_scanned": 14824304,
+      "message": ""
+    }
+  ]
+}

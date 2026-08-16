@@ -1,6 +1,6 @@
 # Capping KPI report for 2026-02.
 
-*Generated 2026-08-11T11:00:08Z — narrative source: template, plan source: router.*
+*Generated 2026-08-16T21:52:46Z — narrative source: template, plan source: router, model: none (deterministic template and router).*
 
 ## Goal
 
@@ -9,6 +9,7 @@ Capping KPI report for 2026-02.
 ## Data used
 
 - Store: `events_3mo.duckdb`, machine `MCC`
+- Store fingerprint: 55,132,433 rows, 36 heads, 2026-01-31 16:00:06 → 2026-04-30 16:59:59
 - Torque band: 1.5–2.5 Nm; robust band k = 3.0; idle threshold 300s
 - Rows scanned across all steps: 88,415,924
 
@@ -22,7 +23,7 @@ Capping KPI report for 2026-02.
 
 ## Findings
 
-- **Scope.** 14,824,304 capping operations across heads 1-36, from 2026-02-01 00:00:09 to 2026-02-28 23:59:59. 7,141,531 no-load cycles are excluded from every rate below.
+- **Scope.** 14,824,304 capping operations across 36 heads, from 2026-02-01 00:00:09 to 2026-02-28 23:59:59. 7,141,531 no-load cycles are excluded from every rate below.
 - **Data quality.** 130 closures carry torque outside the configured band; 0 carry no torque reading at all.
 - **Counter resets.** 145 reset markers in scope.
 - **Success rate.** 99.9950% (14,817,976 successful, 748 rejected). Lowest head: 29. A further 5,580 closures carry no pass/fail verdict and are outside the rate.
@@ -49,6 +50,7 @@ Capping KPI report for 2026-02.
 - **Assumption.** a capping operation is a closure with torque > 0; no-load cycles (status 2, torque 0) are excluded from success denominators.
 - **Assumption.** an idle period is a sustained run of no-load cycles (status 2.0, torque 0).
 - **Assumption.** buckets with zero capping operations are never emitted, so a fully idle hour or day does not pull the mean down.
+- **Assumption.** counts are rows, i.e. polls at which a head's counter advanced; a poll that caught up on several caps (delta > 1) counts once. Measured undercount on real data: 0.0017% of caps.
 - **Assumption.** rate = closures / hours that actually saw a closure in the bucket, not / the bucket's calendar length; a day with 10 productive hours is not divided by 24.
 
 ## Next checks

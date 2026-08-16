@@ -1514,3 +1514,65 @@ the wall by 6.6x yields 1.08x; the persistence conclusion is unchanged, and
 now stands on the kernel that ships. `docs/bench/results.md`, the README's
 benchmark table and the three `cuda_*.png` carry these numbers; the "Kernel
 provenance" caveat is deleted, its reason gone.
+
+## 2026-08-16 — Store rebuilt from the three extracted months; the committed reports regenerated under the review's statistics (closes review C8)
+
+Same box, same evening as the entry above, after the sweep. The committed
+reports under `docs/reports/` had been generated at `55a1bd9`; since then the
+renderer and the tools changed (store fingerprint, Mann-Kendall tau-b, the
+sigma-consistent anomaly band `1.4826*MAD` with a 0.01 Nm floor, `arol`
+exiting 1 when every step fails), and no store existed on this box to
+regenerate them against.
+
+**Store.** `scripts/build_store.sh events_3mo.duckdb telemetry_*/` over the
+three extracted month directories (no zips on this box; the script skips the
+unzip when the target is a directory, and now finds the monolith in
+`build/Release/` — the MSVC multi-config layout — instead of only `build/`).
+It printed `cleaning 89 day-files into events_3mo.duckdb`, then: **89 files,
+55,132,433 events, clean 184.8 s + merge 181.2 s = 366.0 s** (mas_monolith,
+4 threads, engine cpu, `machine_id` MCC, peak RSS 7.25 GB), **store holds
+55,132,433 rows** — exactly the row count every doc quotes, so the store the
+review's numbers were computed against is reproducible from the pool and the
+tree. Store fingerprint: 55,132,433 rows, 36 heads, 2026-01-31 16:00:06 →
+2026-04-30 16:59:59.
+
+**Python suite with the store present: 282 passed, 0 skipped, 42 s.** The 5
+real-data tests (path-broken until 2026-08-16, anchored on the test file
+since) and the one day-file test ran instead of skipping — first time on this
+box.
+
+**Reports.** `scripts/demo.sh events_3mo.duckdb` ran to completion under Git
+Bash once `scripts/arol` learned the Windows venv layout
+(`.venv/Scripts/python.exe`; it also had to be pinned to LF — no extension,
+so `autocrlf` gave it CRLF and bash could not run it): 12/12 steps returned
+data, three report directories replaced in place, 23 s wall. Reconciled
+against the docs:
+
+- **Anomalies, February.** 748 rejected, 130 outside the configured band,
+  **162,019 beyond their head's robust band — ≈1.1% of the month's
+  14,824,304 capping operations**, against the 1,612,634 (≈10.9%) the
+  uncalibrated raw-MAD band reported at `55a1bd9`. Same data, ten times fewer
+  hits: raw MAD is ~0.6745σ, so the old "3·MAD" band was a ~2σ band read as
+  three sigma; the report's assumptions now spell out `k*(1.4826*MAD)` and
+  the 0.01 Nm floor. `docs/analytics-methods.md` carries the new count, its
+  rate, and the calibration paragraph; nothing else in the tree quoted the
+  old figure outside dated log entries.
+- **Head 9 σ = 0.0729 Nm about a median of 1.997 Nm** in the drift report —
+  unchanged, so `docs/analytics-methods.md` ~275 stands as written.
+- The drift report's assumptions carry `|tau| >= 0.5 AND p < 0.05
+  (tie-corrected normal approximation)` and the "fewer than 3 shared
+  buckets" clause; no head crosses the drift gate on either signal over the
+  three months, all 36 heads correlate at 0.9999–1.0000.
+- Every `report.md` "Data used" shows the store-fingerprint line, and the
+  KPI figures the README quotes (14,817,976 successful / 748 rejected in
+  February, head 29 weakest at 99.9781%) reproduce.
+
+**One thing the review's own commit claimed and had not done.** `abedf5b`
+says the fingerprint travels "into trace.json and the report's Data used
+section", and its executor test asserts the trace.json shape `{"store": …,
+"steps": […]}` — but the test builds that dict itself, and `render.py` still
+dumped the bare step list, so the fingerprint reached `report.md` and never
+`trace.json`. Fixed here: render writes the asserted shape, and
+`test_render` now reads it back from disk (steps and fingerprint, 8 rows on
+the tiny fixture); the reports were regenerated once more so the committed
+`trace.json` files carry it. 282 Python tests still green.

@@ -182,7 +182,8 @@ Three counts, computed together:
 - **Threshold hits** — torque outside the *configured* band `[torque_min,
   torque_max]`. This is an absolute, product-specific limit.
 - **Deviation hits** — torque outside its own head's robust band, `median ± k ·
-  MAD` (default `k = 3`).
+  1.4826 · MAD` (default `k = 3`), with the scale floored at `mad_floor`
+  (default 0.01 Nm).
 
 **Why MAD and not σ.** Standard deviation is computed from the very points you
 are trying to find. A handful of extreme outliers inflate σ enough that they fall
@@ -190,24 +191,35 @@ inside their own band and hide themselves. The median and the median absolute
 deviation have a 50% breakdown point, so the band stays where the bulk of the
 data is regardless of how extreme the outliers are.
 
+**Why 1.4826, and why a floor.** Raw MAD is ~0.6745σ under normality, so a
+band written `median ± 3 · MAD` is really a ~2σ band while every reader
+takes it for three sigma — and on February it flagged ~10.9% of production
+with no calibration for the reader. Multiplying by 1.4826 (the consistency
+constant) makes `k` mean sigma-equivalents; the 0.01 Nm floor keeps a
+quantised sensor's tiny-but-nonzero MAD from collapsing the band to sensor
+noise. Both are declared in every report's assumptions.
+
 **When MAD is zero.** That same 50% breakdown point means MAD is exactly 0 for a
 head whose readings are more than half identical — routine for a quantised
 sensor, and guaranteed for a head stuck at one value, which is precisely the
 failure this detector exists to catch. Such heads are *not* dropped. The band
-falls back to `median ± k · IQR/2` (the same σ-multiple as the MAD band under
-normality: MAD ≈ 0.6745σ and IQR ≈ 1.349σ), and when the IQR is 0 too, any
-reading off the median is a deviation. Heads on a fallback are listed in the
-result's `deviation_fallbacks`, so a "0 deviation hits" claim is checkable
-against which band produced it.
+falls back to `median ± k · 1.4826 · IQR/2` (the same σ-multiple as the MAD
+band under normality: MAD ≈ 0.6745σ and IQR ≈ 1.349σ), and when the IQR is
+0 too, any reading off the median is a deviation. Heads on a fallback are
+listed in the result's `deviation_fallbacks`, so a "0 deviation hits" claim
+is checkable against which band produced it.
 
 The two detectors are independent on purpose: a head can drift entirely within
 the configured band (deviation hits, no threshold hits), and a correctly centred
 head can run a product whose band is wrong (threshold hits, no deviation hits).
 
-Measured, February: 748 rejected, 130 outside the configured band, 1,612,634
-beyond their head's robust band. The itemised lists are capped at
-`max_anomaly_items` (default 5,000) per category; the reported counts stay
-exact.
+Measured, February (store fingerprint 55,132,433 rows, reports regenerated
+2026-08-16): 748 rejected, 130 outside the configured band, **162,019** beyond
+their head's robust band — **≈1.1% of the month's 14,824,304 capping
+operations**. The uncalibrated raw-MAD band reported 1,612,634 (≈10.9%) for
+the same data; the ten-fold difference is the calibration, not the data. The
+itemised lists are capped at `max_anomaly_items` (default 5,000) per
+category; the reported counts stay exact.
 
 ---
 

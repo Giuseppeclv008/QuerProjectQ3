@@ -1,60 +1,69 @@
-[
-  {
-    "step": 1,
-    "tool": "overview",
-    "args": {
-      "period": "2026-02"
-    },
-    "rationale": "Establish the scope: counts, heads, time range, data-quality flags.",
-    "status": "ok",
-    "rows_scanned": 21971506,
-    "message": ""
+{
+  "store": {
+    "store_path": "events_3mo.duckdb",
+    "rows": 55132433,
+    "ts_min": "2026-01-31 16:00:06",
+    "ts_max": "2026-04-30 16:59:59",
+    "distinct_heads": 36
   },
-  {
-    "step": 2,
-    "tool": "success_rates",
-    "args": {
-      "period": "2026-02",
-      "by": "overall"
+  "steps": [
+    {
+      "step": 1,
+      "tool": "overview",
+      "args": {
+        "period": "2026-02"
+      },
+      "rationale": "Establish the scope: counts, heads, time range, data-quality flags.",
+      "status": "ok",
+      "rows_scanned": 21971506,
+      "message": ""
     },
-    "rationale": "The headline KPI the brief asks for first.",
-    "status": "ok",
-    "rows_scanned": 14824304,
-    "message": ""
-  },
-  {
-    "step": 3,
-    "tool": "success_rates",
-    "args": {
-      "period": "2026-02",
-      "by": "head"
+    {
+      "step": 2,
+      "tool": "success_rates",
+      "args": {
+        "period": "2026-02",
+        "by": "overall"
+      },
+      "rationale": "The headline KPI the brief asks for first.",
+      "status": "ok",
+      "rows_scanned": 14824304,
+      "message": ""
     },
-    "rationale": "Per-head breakdown, to name the weakest head.",
-    "status": "ok",
-    "rows_scanned": 14824304,
-    "message": ""
-  },
-  {
-    "step": 4,
-    "tool": "capping_speed",
-    "args": {
-      "period": "2026-02",
-      "bucket": "day"
+    {
+      "step": 3,
+      "tool": "success_rates",
+      "args": {
+        "period": "2026-02",
+        "by": "head"
+      },
+      "rationale": "Per-head breakdown, to name the weakest head.",
+      "status": "ok",
+      "rows_scanned": 14824304,
+      "message": ""
     },
-    "rationale": "Production rate in pieces/hour, day by day.",
-    "status": "ok",
-    "rows_scanned": 14824304,
-    "message": ""
-  },
-  {
-    "step": 5,
-    "tool": "idle_periods",
-    "args": {
-      "period": "2026-02"
+    {
+      "step": 4,
+      "tool": "capping_speed",
+      "args": {
+        "period": "2026-02",
+        "bucket": "day"
+      },
+      "rationale": "Production rate in pieces/hour, day by day.",
+      "status": "ok",
+      "rows_scanned": 14824304,
+      "message": ""
     },
-    "rationale": "Sustained No-Load runs, to separate downtime from failure.",
-    "status": "ok",
-    "rows_scanned": 21971506,
-    "message": ""
-  }
-]
+    {
+      "step": 5,
+      "tool": "idle_periods",
+      "args": {
+        "period": "2026-02"
+      },
+      "rationale": "Sustained No-Load runs, to separate downtime from failure.",
+      "status": "ok",
+      "rows_scanned": 21971506,
+      "message": ""
+    }
+  ]
+}
