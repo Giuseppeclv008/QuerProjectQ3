@@ -112,3 +112,20 @@ def test_validate_step_rejects_types_and_bounds_not_just_names():
     assert validate_step(Step("trend", {"window": 7}, "")) is None
     assert validate_step(Step("head_correlation", {"heads": [1, 5]}, "")) is None
     assert validate_step(Step("trend", {"window": None}, "")) is None
+
+
+def test_flat_plan_schema_carries_no_unsupported_keywords():
+    """Anthropic structured outputs reject numeric and array-size constraints.
+
+    llm.py passes this schema to the API verbatim (no SDK stripping on the
+    raw-dict path), so one unsupported keyword fails every `ask` into the
+    keyword router -- silently, but for the limits section. validate_step()
+    enforces the same constraints strictly after the model answers, so
+    stripping loses nothing.
+    """
+    import json
+
+    flat = json.dumps(registry.plan_json_schema("flat"))
+    for kw in ("minimum", "maximum", "maxItems", "minItems",
+               "maxLength", "minLength"):
+        assert f'"{kw}"' not in flat, f"unsupported keyword {kw} in flat schema"

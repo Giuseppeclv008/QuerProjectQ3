@@ -235,7 +235,7 @@ def plan_json_schema(style="flat"):
         raise ValueError(f"style must be 'flat' or 'per_tool', got {style!r}")
     if style == "per_tool":
         return _per_tool_plan_schema()
-    return {
+    return _strip_unsupported_keywords({
         "type": "object",
         "properties": {
             "goal": {
@@ -268,7 +268,29 @@ def plan_json_schema(style="flat"):
         },
         "required": ["goal", "steps"],
         "additionalProperties": False,
-    }
+    })
+
+
+# Keywords Anthropic structured outputs reject: numeric constraints and array
+# sizes are not in the supported subset (basic types, enum, const,
+# anyOf/allOf, $ref, string formats, additionalProperties: false). The SDK
+# strips these only on the messages.parse() path; llm.py passes a raw dict
+# through output_config["format"]["schema"], so it reaches the API verbatim
+# -- and a rejected schema fails every `ask` into the keyword router, which
+# is exactly the flagship path never running. Nothing is lost by stripping:
+# validate_step() enforces minimum/maxItems strictly after the model answers.
+# Schema permissive, validation strict; never the other way round.
+_UNSUPPORTED_KEYWORDS = ("minimum", "maximum", "maxItems", "minItems",
+                         "maxLength", "minLength")
+
+
+def _strip_unsupported_keywords(schema):
+    if isinstance(schema, dict):
+        return {k: _strip_unsupported_keywords(v)
+                for k, v in schema.items() if k not in _UNSUPPORTED_KEYWORDS}
+    if isinstance(schema, list):
+        return [_strip_unsupported_keywords(v) for v in schema]
+    return schema
 
 
 _JSON_TYPES = {"string": str, "integer": int, "number": (int, float),

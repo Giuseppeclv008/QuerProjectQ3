@@ -184,3 +184,47 @@ def test_anomalies_detects_multiple_reject_codes(multi_reject_store):
     assert "No InTorque" in reasons[0] or "No InTorque" in reasons[1]
     # Verify they are distinct
     assert reasons[0] != reasons[1]
+
+
+def test_deviation_band_is_sigma_consistent_with_floor(tmp_path):
+    """The band is k * 1.4826*MAD with a floor, not raw k*MAD.
+
+    Raw MAD is ~0.6745 sigma, so k=3 against raw MAD was ~2.02 sigma while
+    every reader of "median +/- 3*MAD" understood 3 sigma -- the ~10.9%-of-
+    production flag rate in the February report was this, uncalibrated. A
+    reading must escape 3 * 1.4826 * MAD to flag now.
+    """
+    import duckdb
+
+    from tests.conftest import CAP_EVENTS_DDL
+
+    path = tmp_path / "sigma.duckdb"
+    con = duckdb.connect(str(path))
+    con.execute(CAP_EVENTS_DDL)
+    # Head 1: torques 1.9/2.0/2.1 alternating -> median 2.0, MAD 0.1,
+    # sigma-consistent scale 0.14826, band at k=3: +/-0.4448.
+    torques = [2.0, 1.9, 2.1, 2.0, 1.9, 2.1, 2.0]
+    for i, tq in enumerate(torques):
+        con.execute(
+            "INSERT INTO cap_events VALUES ('MCC',1,?,?,?,0.0,1,false,false,false)",
+            [f"2026-02-01 00:00:{i:02d}", i + 1, tq],
+        )
+    # 2.35 is 0.35 from the median: outside raw 3*MAD (0.3), INSIDE the
+    # sigma-consistent 3*1.4826*MAD (0.445). It must NOT flag.
+    con.execute(
+        "INSERT INTO cap_events VALUES ('MCC',1,'2026-02-01 00:00:07',8,2.35,0.0,1,false,false,false)")
+    # 2.5 is 0.5 out: beyond 0.445, must flag.
+    con.execute(
+        "INSERT INTO cap_events VALUES ('MCC',1,'2026-02-01 00:00:08',9,2.5,0.0,1,false,false,false)")
+    con.close()
+
+    res = anomalies(Config(store_path=str(path), machine_id="MCC",
+                           torque_min=0.5, torque_max=5.0), period="2026-02",
+                    method="deviation")
+    assert res.status == "ok"
+    devs = [d["app_torque"] for d in res.values["deviation_hits"]]
+    assert 2.5 in devs, "a 3.37-sigma-equivalent reading must flag"
+    assert 2.35 not in devs, (
+        "2.35 is inside 3 sigma-equivalents; flagging it means the band is "
+        "still raw MAD")
+    assert "mad_floor=0.01" in res.provenance.filters

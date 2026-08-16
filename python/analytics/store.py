@@ -9,6 +9,29 @@ import os
 import duckdb
 
 
+def store_fingerprint(cfg):
+    """Identify the data a run was computed against.
+
+    Nothing beyond a basename used to identify the store, so two stores
+    differing 2.71x in row count (the retired cap_seq-keyed build vs the
+    rebuilt one) were indistinguishable from a report or its trace -- which is
+    exactly how a committed report and a doc came to quote different sigmas
+    for the same measurement. Four numbers make "which store produced this?"
+    a one-line check instead of archaeology.
+    """
+    con = connect(cfg)
+    n, ts_min, ts_max, heads = con.execute(
+        "SELECT COUNT(*), MIN(ts), MAX(ts), COUNT(DISTINCT head_id) "
+        "FROM cap_events").fetchone()
+    return {
+        "store_path": os.path.basename(cfg.store_path),
+        "rows": int(n),
+        "ts_min": str(ts_min),
+        "ts_max": str(ts_max),
+        "distinct_heads": int(heads),
+    }
+
+
 def connect(cfg):
     """A read-only connection whose `cap_events` is the configured store.
 

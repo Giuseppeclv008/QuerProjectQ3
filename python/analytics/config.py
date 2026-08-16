@@ -30,8 +30,15 @@ class Config:
     torque_min: float = 1.5
     torque_max: float = 2.5
 
-    # Robust deviation band: median +/- mad_k * MAD.
+    # Robust deviation band: median +/- mad_k sigma-equivalents, where the
+    # scale is 1.4826*MAD (the consistency constant: MAD ~ 0.6745*sigma under
+    # normality, so raw MAD read as "3*MAD = 3 sigma" was really ~2.02 sigma
+    # -- a band ~1 sigma tighter than every reader assumed). mad_floor is the
+    # minimum scale in Nm: a quantised torque sensor can produce a tiny but
+    # nonzero MAD that collapses the band to sensor noise and flags a double-
+    # digit percentage of production.
     mad_k: float = 3.0
+    mad_floor: float = 0.01
 
     # A head is idle after this many seconds of sustained No-Load.
     idle_min_seconds: int = 300

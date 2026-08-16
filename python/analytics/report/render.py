@@ -225,7 +225,9 @@ def summarise(execution):
 def _figures(execution, out_dir):
     """Draw whatever the results support. Returns [(caption, filename), ...]."""
     figures = []
-    for step, result in zip(execution.plan.steps, execution.results):
+    seen = set()
+    for index, (step, result) in enumerate(
+            zip(execution.plan.steps, execution.results), start=1):
         # Read the step the way the executor did: a null argument means the tool's
         # own default was used, so that default is what decides the figure. A model
         # plan spells out every argument, nulling the ones it does not set, and
@@ -242,7 +244,13 @@ def _figures(execution, out_dir):
         elif result.tool == "anomalies":
             keys = [("anomalies", None)]
         for key in keys:
-            name = _PLOTTERS[key](result, out_dir)
+            # Two same-signal steps in one plan used to overwrite each other's
+            # PNG (filenames were constants; the 12-step plan tier has no
+            # dedup). First writer keeps the plain name; repeats get a step
+            # suffix so every figure the report references exists.
+            suffix = "" if key not in seen else f"_step{index}"
+            seen.add(key)
+            name = _PLOTTERS[key](result, out_dir, suffix)
             if name:
                 figures.append((name.replace("_", " ").replace(".png", ""), name))
     return figures
@@ -293,8 +301,16 @@ def render(execution, cfg, out_dir, narrative, generated_at):
         f" — {t['rationale']} → **{t['status']}**"
         for t in execution.trace
     )
+    fp = execution.store or {}
+    fingerprint = (
+        f"- Store fingerprint: {fp['rows']:,} rows, {fp['distinct_heads']} heads, "
+        f"{fp['ts_min']} → {fp['ts_max']}"
+        if fp and "rows" in fp
+        else f"- Store fingerprint: unavailable ({fp.get('error', 'not recorded')})"
+    )
     data_used = "\n".join([
         f"- Store: `{os.path.basename(cfg.store_path)}`, machine `{cfg.machine_id}`",
+        fingerprint,
         f"- Torque band: {cfg.torque_min}–{cfg.torque_max} Nm; "
         f"robust band k = {cfg.mad_k}; idle threshold {cfg.idle_min_seconds}s",
         f"- Rows scanned across all steps: "

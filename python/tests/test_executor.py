@@ -107,7 +107,15 @@ def test_a_tool_returning_non_toolresult_becomes_error(tiny_cfg, monkeypatch):
     assert "ToolResult" in ex.results[0].message
 
 
-def test_the_trace_is_json_serialisable(tiny_cfg):
+def test_the_trace_round_trips_through_json_with_its_fingerprint(tiny_cfg):
+    # A bare json.dumps with no assertion could only fail on a trace built
+    # from ints, strs and the test's own dict -- i.e. never. Assert the
+    # round-trip AND the exact shape render writes to trace.json, fingerprint
+    # included.
     import json
     ex = execute(tiny_cfg, _plan(PlanStep("overview", {"period": "2026-02"}, "scope")))
-    json.dumps(ex.trace)   # must not raise
+    on_disk = json.loads(json.dumps({"store": ex.store, "steps": ex.trace}))
+    assert on_disk["steps"] == ex.trace
+    for key in ("rows", "ts_min", "ts_max", "distinct_heads", "store_path"):
+        assert key in on_disk["store"], f"fingerprint lost {key}"
+    assert on_disk["store"]["rows"] == 8          # the tiny fixture

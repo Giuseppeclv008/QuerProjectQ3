@@ -186,3 +186,35 @@ def test_success_rate_signal_counts_every_reject_code(odd_status_trend_store):
     # all 3 rejects count -> 3/(3+3)=0.5, NOT 3/(3+1)=0.75. tiny_store can't catch
     # this (it only ever carries one reject code per head).
     assert [s["value"] for s in r.values["series"]] == pytest.approx([0.5])
+
+
+def test_tau_is_tie_corrected_tau_b():
+    """The effect size must match the tie-corrected test it gates with.
+
+    On a tie-dominated series (success_rate is mostly exact 1.0 buckets),
+    tau-a shrinks relative to what the tie-corrected p tests -- the drift
+    gate was silently stricter on that signal. Tau-b divides by the untied
+    pair count: a monotone movement over the non-tied pairs reads full
+    strength, and equals tau-a when there are no ties.
+    """
+    import math
+
+    # 6 buckets, four tied at 1.0, movement only at the end: S = counted over
+    # untied pairs. tau-a divides by D=15; tau-b by sqrt(15 * (15 - 6)).
+    vals = [1.0, 1.0, 1.0, 1.0, 0.9, 0.8]
+    s = sum(
+        (1 if vals[j] > vals[i] else -1 if vals[j] < vals[i] else 0)
+        for i in range(len(vals)) for j in range(i + 1, len(vals))
+    )
+    expected_b = s / math.sqrt(15 * (15 - (4 * 3 / 2)))
+    assert mann_kendall_tau(vals) == pytest.approx(expected_b)
+    assert abs(mann_kendall_tau(vals)) > abs(s / 15), \
+        "tau-b must not be shrunk by the tied pairs the way tau-a is"
+
+    # No ties: tau-b == tau-a exactly.
+    untied = [1.0, 2.0, 3.0, 2.5, 4.0]
+    s2 = sum(
+        (1 if untied[j] > untied[i] else -1 if untied[j] < untied[i] else 0)
+        for i in range(len(untied)) for j in range(i + 1, len(untied))
+    )
+    assert mann_kendall_tau(untied) == pytest.approx(s2 / 10)

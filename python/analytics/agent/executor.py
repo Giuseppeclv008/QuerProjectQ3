@@ -18,6 +18,7 @@ from dataclasses import dataclass, field, replace
 from analytics.agent.plan import effective_args
 from analytics.agent.registry import TOOLS, validate_step
 from analytics.result import ToolResult
+from analytics.store import store_fingerprint
 
 log = logging.getLogger(__name__)
 
@@ -27,10 +28,19 @@ class Execution:
     plan: object
     results: list = field(default_factory=list)
     trace: list = field(default_factory=list)
+    # What data this run was computed against (store.store_fingerprint):
+    # row count, ts range, distinct heads. None only when even the
+    # fingerprint query failed (e.g. missing store) -- the trace then says so.
+    store: dict = None
 
 
 def execute(cfg, plan):
     """Run every step. A failing step is recorded and the plan continues."""
+    try:
+        fingerprint = store_fingerprint(cfg)
+    except Exception as exc:                          # noqa: BLE001
+        log.warning("store fingerprint unavailable: %s", exc)
+        fingerprint = {"error": f"{type(exc).__name__}: {exc}"}
     results, trace = [], []
     for index, step in enumerate(plan.steps, start=1):
         args = effective_args(step)
@@ -65,4 +75,4 @@ def execute(cfg, plan):
             "rows_scanned": result.provenance.rows_scanned,
             "message": result.message,
         })
-    return Execution(plan=plan, results=results, trace=trace)
+    return Execution(plan=plan, results=results, trace=trace, store=fingerprint)

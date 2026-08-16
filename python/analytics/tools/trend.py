@@ -53,11 +53,25 @@ def _mann_kendall_s(values):
 
 
 def mann_kendall_tau(values):
-    """Kendall's tau-a: S / (n*(n-1)/2). Range [-1, 1]."""
+    """Kendall's tau-b: S / sqrt(D * (D - T)), tie-corrected. Range [-1, 1].
+
+    Tau-b, not tau-a, because mann_kendall_p below applies the tie correction
+    to Var(S): pairing an untied effect size with a tie-corrected significance
+    test shrank tau on exactly the signals ties dominate (success_rate is
+    mostly exact 1.0 buckets), which made the |tau| >= 0.5 drift gate
+    undocumentedly stricter on that signal than on torque. The time axis is
+    the untied bucket index, so only the value ties enter the correction.
+    With no ties, tau-b equals tau-a.
+    """
     n = len(values)
     if n < 2:
         return 0.0
-    return _mann_kendall_s(values) / (n * (n - 1) / 2)
+    d = n * (n - 1) / 2
+    ties = Counter(float(v) for v in values).values()
+    t = sum(tj * (tj - 1) / 2 for tj in ties)
+    if d - t <= 0:      # every value tied: no trend to measure
+        return 0.0
+    return _mann_kendall_s(values) / math.sqrt(d * (d - t))
 
 
 def mann_kendall_p(values):

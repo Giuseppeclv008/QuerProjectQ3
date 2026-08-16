@@ -82,9 +82,16 @@ TOOLS = [
 
 
 @pytest.mark.parametrize("name,call", TOOLS, ids=[t[0] for t in TOOLS])
-def test_both_backends_agree(name, call, tiny_store, tiny_store_parquet):
-    duck = call(Config(store_path=tiny_store, machine_id="MCC"))
-    pq = call(Config(store_path=tiny_store_parquet, machine_id="MCC"))
+def test_both_backends_agree(name, call, parity_store, parity_store_parquet):
+    # The parity fixture is built so every tool reaches its real SQL: the tiny
+    # store spans one day and 40 seconds, which short-circuited
+    # head_correlation (MIN_BUCKETS) and idle (300 s threshold) into
+    # insufficient_data on BOTH backends -- values_close({}, {}) was trivially
+    # true and 2 of 9 parity cases compared nothing. The status assertion
+    # makes that vacuous path fail loudly if the fixture ever regresses.
+    duck = call(Config(store_path=parity_store, machine_id="MCC"))
+    pq = call(Config(store_path=parity_store_parquet, machine_id="MCC"))
+    assert duck.status == "ok", f"{name}: parity fixture must exercise the real query, got {duck.status}: {duck.error or duck.values}"
     assert duck.status == pq.status, f"{name}: status differs"
     assert values_close(duck.values, pq.values), (
         f"{name}: values differ beyond float tolerance\nduck={duck.values!r}\npq={pq.values!r}"

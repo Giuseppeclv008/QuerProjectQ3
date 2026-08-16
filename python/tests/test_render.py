@@ -157,7 +157,11 @@ def test_a_failed_step_is_named_in_limits_not_hidden(tiny_cfg, tmp_path):
     text = render.render(ex, tiny_cfg, tmp_path, render.summarise(ex),
                          generated_at=FIXED_TIME)
     limits = text.split("## Confidence and limits")[1].split("##")[0]
-    assert "not-a-month" in limits or "error" in limits.lower()
+    # The claim is that the offending period is NAMED, so assert the name.
+    # `... or "error" in limits.lower()` made this unfailable: _limits emits
+    # the literal word "error" for any failed step, which the test guarantees
+    # by construction.
+    assert "not-a-month" in limits
 
 
 def test_router_note_is_disclosed_in_limits(tiny_cfg, tmp_path):
@@ -182,3 +186,25 @@ def test_golden_report_is_byte_stable(tiny_cfg, tmp_path):
         "The KPI report changed. If that is intentional, regenerate the golden "
         "with `../.venv/bin/python -m tests.regen_golden` -- then read the diff."
     )
+
+
+def test_two_same_signal_steps_do_not_overwrite_each_others_figure(tiny_cfg, tmp_path):
+    """plots.py filenames were constants and render._figures appended per
+    step: a 12-step model plan with two trend(torque) steps silently kept
+    only the second PNG under the first's name."""
+    plan = Plan(
+        goal="two identical trend steps",
+        steps=[
+            PlanStep(tool="trend", args={"period": "2026-02", "signal": "torque"},
+                     rationale="first"),
+            PlanStep(tool="trend", args={"period": "2026-02", "signal": "torque"},
+                     rationale="second"),
+        ],
+        source="router",
+    )
+    ex = execute(tiny_cfg, plan)
+    figures = render._figures(ex, str(tmp_path))
+    names = [n for _, n in figures]
+    assert len(names) == len(set(names)), f"figure names collide: {names}"
+    for _, name in figures:
+        assert (tmp_path / name).exists(), f"referenced figure {name} not written"

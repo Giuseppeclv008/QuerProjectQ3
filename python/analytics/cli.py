@@ -123,6 +123,16 @@ def main(argv=None):
     log.info("%s/%d steps returned data; report written to %s",
              ok, len(execution.results), out_dir)
     print(out_dir)
+    # A run in which EVERY step errored (a missing store makes each tool
+    # raise, and each raise becomes a ToolResult.error) used to print the
+    # output directory and exit 0 -- indistinguishable from success to any
+    # caller, including demo.sh under `set -e`. insufficient_data does not
+    # count against this: "the period holds too little data" is an answer,
+    # not a failure.
+    errors = sum(1 for r in execution.results if r.status == "error")
+    if execution.results and errors == len(execution.results):
+        log.error("every step failed; the report documents the failures")
+        return 1
     return 0
 
 

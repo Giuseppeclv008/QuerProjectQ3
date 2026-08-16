@@ -9,6 +9,30 @@ from pathlib import Path
 import pytest
 
 from analytics import cli
+from analytics.agent import llm
+
+
+@pytest.fixture(autouse=True)
+def no_live_model(monkeypatch):
+    """No test in this file may reach a real provider.
+
+    Deleting ANTHROPIC_API_KEY alone was not isolation: the SDK also reads
+    ANTHROPIC_AUTH_TOKEN and ANTHROPIC_BASE_URL, so on a machine carrying
+    either, `ask` reached planner.plan() and narrator.narrate() with
+    client=None, constructed a real client, and issued two live opus calls --
+    then failed its "keyword router" assertion. Suite colour must not depend
+    on the environment: force the no-client path the way test_planner and
+    test_narrator already do.
+    """
+    # planner and narrator bind `from analytics.agent.llm import client as
+    # _client` at import time, so patching llm.client alone would not reach
+    # them -- patch every binding.
+    from analytics.agent import narrator, planner
+    monkeypatch.setattr(llm, "client", lambda cfg: None)
+    monkeypatch.setattr(planner, "_client", lambda cfg: None)
+    monkeypatch.setattr(narrator, "_client", lambda cfg: None)
+    for var in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"):
+        monkeypatch.delenv(var, raising=False)
 
 
 def _cfg_file(tmp_path, store_path):
@@ -70,7 +94,10 @@ def test_a_malformed_period_exits_cleanly_not_with_a_traceback(tiny_store, tmp_p
     out = tmp_path / "out"
     code = cli.main(["report", "kpi", "--period", "February",
                      "--config", _cfg_file(tmp_path, tiny_store), "--out", str(out)])
-    assert code == 0                              # the report explains the failure
+    # Cleanly = no traceback and a report that explains the failure -- but not
+    # exit 0: every step errored on the malformed period, and a caller
+    # (demo.sh under `set -e`) must be able to tell that from success.
+    assert code == 1
     assert "February" in (out / "kpi" / "report.md").read_text(encoding="utf-8")
 
 
@@ -92,3 +119,14 @@ def test_an_unknown_report_type_exits_2(tiny_store, tmp_path):
     assert cli.main(["report", "quarterly",
                      "--config", _cfg_file(tmp_path, tiny_store),
                      "--out", str(tmp_path / "o")]) == 2
+
+
+def test_a_run_where_every_step_fails_exits_nonzero(tmp_path):
+    """arol used to exit 0 with every step failed (missing store -> every tool
+    raises -> every ToolResult an error) -- indistinguishable from success to
+    any caller, including demo.sh under `set -e`."""
+    out = tmp_path / "out"
+    code = cli.main(["report", "kpi", "--period", "2026-02",
+                     "--config", _cfg_file(tmp_path, str(tmp_path / "nope.duckdb")),
+                     "--out", str(out)])
+    assert code == 1

@@ -9,6 +9,7 @@ Capping KPI report for 2026-02.
 ## Data used
 
 - Store: `tiny.duckdb`, machine `MCC`
+- Store fingerprint: 8 rows, 3 heads, 2026-02-01 00:00:00 → 2026-02-01 00:00:40
 - Torque band: 1.5–2.5 Nm; robust band k = 3.0; idle threshold 300s
 - Rows scanned across all steps: 26
 

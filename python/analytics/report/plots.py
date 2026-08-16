@@ -31,7 +31,7 @@ def _save(fig, out_dir, name):
     return name
 
 
-def success_rate_per_head(result, out_dir):
+def success_rate_per_head(result, out_dir, suffix=""):
     """Bar chart: success rate per head, with the weakest head highlighted."""
     if not _usable(result) or not isinstance(result.values, list):
         return None
@@ -48,14 +48,25 @@ def success_rate_per_head(result, out_dir):
     ax.set_xlabel("head")
     ax.set_ylabel("success rate (%)")
     ax.set_title("Success rate per capping head")
-    # A machine at 99.99% needs a zoomed axis or every bar looks identical.
+    # A machine at 99.99% needs a zoomed axis or every bar looks identical --
+    # but a truncated y-axis with no annotation lets a 0.02pp spread fill the
+    # frame and one head read as a catastrophe (the same standard f63ee24
+    # applied to the bench plots). Say what the frame shows.
     low = min(rates)
-    ax.set_ylim(max(0.0, low - (100 - low) * 0.5 - 0.01), 100.0)
+    y0 = max(0.0, low - (100 - low) * 0.5 - 0.01)
+    ax.set_ylim(y0, 100.0)
+    if y0 > 0.0:
+        ax.set_title(f"Success rate per capping head (y-axis zoomed: {y0:.3f}\u2013100%)")
+        ax.annotate(
+            f"note: axis starts at {y0:.3f}%, not 0 \u2014 "
+            f"full spread is {max(rates) - low:.3f}pp",
+            xy=(0.5, 0.02), xycoords="axes fraction", ha="center",
+            fontsize=7, color="#555555")
     ax.grid(axis="y", alpha=0.3)
-    return _save(fig, out_dir, "success_rate_per_head.png")
+    return _save(fig, out_dir, f"success_rate_per_head{suffix}.png")
 
 
-def capping_speed_over_time(result, out_dir):
+def capping_speed_over_time(result, out_dir, suffix=""):
     """Line chart: pieces/hour per bucket, with the mean over active buckets."""
     if not _usable(result) or not result.values.get("buckets"):
         return None
@@ -75,10 +86,10 @@ def capping_speed_over_time(result, out_dir):
     ax.legend(loc="best", fontsize="small")
     ax.grid(alpha=0.3)
     fig.autofmt_xdate()
-    return _save(fig, out_dir, "capping_speed.png")
+    return _save(fig, out_dir, f"capping_speed{suffix}.png")
 
 
-def torque_rolling_mean(result, out_dir):
+def torque_rolling_mean(result, out_dir, suffix=""):
     """One line per head: rolling mean torque, so a walking head is visible."""
     if not _usable(result) or not result.values.get("series"):
         return None
@@ -105,10 +116,10 @@ def torque_rolling_mean(result, out_dir):
         ax.legend(loc="best", fontsize="small")
     ax.grid(alpha=0.3)
     fig.autofmt_xdate()
-    return _save(fig, out_dir, "torque_rolling_mean.png")
+    return _save(fig, out_dir, f"torque_rolling_mean{suffix}.png")
 
 
-def drift_ranking(result, out_dir):
+def drift_ranking(result, out_dir, suffix=""):
     """Heads ranked by |Mann-Kendall tau|, with the drift threshold marked."""
     if not _usable(result) or not result.values.get("drift"):
         return None
@@ -129,10 +140,10 @@ def drift_ranking(result, out_dir):
     ax.set_title("Drift magnitude per head (rising = positive)")
     ax.legend(loc="best", fontsize="small")
     ax.grid(axis="y", alpha=0.3)
-    return _save(fig, out_dir, "drift_ranking.png")
+    return _save(fig, out_dir, f"drift_ranking{suffix}.png")
 
 
-def anomalies_over_time(result, out_dir):
+def anomalies_over_time(result, out_dir, suffix=""):
     """Scatter of every flagged closure, coloured by why it was flagged."""
     if not _usable(result):
         return None
@@ -163,4 +174,4 @@ def anomalies_over_time(result, out_dir):
     ax.legend(loc="best", fontsize="small")
     ax.grid(alpha=0.3)
     fig.autofmt_xdate()
-    return _save(fig, out_dir, "anomalies_over_time.png")
+    return _save(fig, out_dir, f"anomalies_over_time{suffix}.png")

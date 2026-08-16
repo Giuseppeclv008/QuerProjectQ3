@@ -87,8 +87,13 @@ def test_the_ollama_request_omits_every_anthropic_only_field():
     payload, reason = llm.json_call(_ollama_cfg(), client, "sys", "prompt", {"x": 1})
     assert (payload, reason) == ({"ok": True}, None)
     body = client.bodies[0]
-    for banned in ("thinking", "output_config", "temperature_top_p", "max_tokens"):
+    # "temperature_top_p" was a typo fusing two keys no code produces, so it
+    # banned nothing -- and temperature is not banned anyway: llm.py sends
+    # options.temperature=0 to Ollama deliberately (determinism). The
+    # Anthropic-only fields are what must be absent.
+    for banned in ("thinking", "output_config", "max_tokens", "top_p", "top_k"):
         assert banned not in body
+    assert body["options"]["temperature"] == 0
     assert body["format"] == {"x": 1}
     assert body["options"]["num_ctx"] == 8192
     assert body["messages"][0] == {"role": "system", "content": "sys"}

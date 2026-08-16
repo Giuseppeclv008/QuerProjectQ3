@@ -81,16 +81,23 @@ def anomalies(cfg, period=None, method="both"):
 
     deviation_hits, n_deviation, fallbacks = [], 0, {}
     if method in ("deviation", "both"):
-        # MEDIAN(|x - median|) per head, then flag |x - median| > k * scale.
+        # MEDIAN(|x - median|) per head, then flag |x - median| > k * scale,
+        # where scale is the SIGMA-CONSISTENT spread: 1.4826*MAD. Raw MAD is
+        # ~0.6745*sigma under normality, so "k = 3" against raw MAD was
+        # really ~2.02 sigma -- internally consistent, but a reader seeing
+        # "median +/- 3*MAD" reads three sigma, and the band flagged ~10.9%
+        # of February production with no calibration for the reader. The
+        # floor (cfg.mad_floor, in Nm) keeps a quantised sensor's tiny-but-
+        # nonzero MAD from collapsing the band to sensor noise.
         #
-        # The scale is MAD when MAD > 0. A head whose readings are more than
-        # half identical has MAD = 0 -- routine for a quantised sensor and
-        # guaranteed for a head stuck at one value, which is the failure this
-        # detector exists to catch. `WHERE mad > 0` used to drop such heads
-        # from the query entirely, and the report then claimed an exact zero
-        # where the statistic was undefined. Fallbacks, in order:
-        #   iqr    scale = IQR/2 (same sigma-multiple as MAD under normality:
-        #          MAD ~ 0.6745*sigma and IQR ~ 1.349*sigma)
+        # A head whose readings are more than half identical has MAD = 0 --
+        # routine for a quantised sensor and guaranteed for a head stuck at
+        # one value, which is the failure this detector exists to catch.
+        # `WHERE mad > 0` used to drop such heads from the query entirely,
+        # and the report then claimed an exact zero where the statistic was
+        # undefined. Fallbacks, in order:
+        #   iqr    scale = 1.4826*(IQR/2) (the same sigma-multiple: under
+        #          normality IQR/2 ~ 0.6745*sigma, exactly like MAD)
         #   exact  IQR = 0 too (head hard-stuck at the median): any reading
         #          that leaves the median is a deviation
         scale_ctes = f"""
@@ -111,7 +118,9 @@ def anomalies(cfg, period=None, method="both"):
                 ),
                 scale AS (
                     SELECT head_id, m,
-                           CASE WHEN mad > 0 THEN mad ELSE half_iqr END AS s,
+                           GREATEST(1.4826 * CASE WHEN mad > 0 THEN mad
+                                                  ELSE half_iqr END,
+                                    ?) AS s,
                            CASE WHEN mad > 0 THEN 'mad'
                                 WHEN half_iqr > 0 THEN 'iqr'
                                 ELSE 'exact' END AS basis
@@ -125,10 +134,12 @@ def anomalies(cfg, period=None, method="both"):
                 WHERE ABS(c.app_torque - scale.m) > ? * scale.s
                 ORDER BY c.ts, c.cap_seq
                 """,
-                params + [cfg.mad_k], cap)
+                params + [cfg.mad_floor, cfg.mad_k], cap)
         reasons = {
-            "mad": f"torque deviates > {cfg.mad_k}*MAD from head median {{m:.3f}}",
-            "iqr": f"torque deviates > {cfg.mad_k}*(IQR/2) from head median {{m:.3f}} "
+            "mad": f"torque deviates > {cfg.mad_k} sigma-equivalents "
+                   f"(1.4826*MAD) from head median {{m:.3f}}",
+            "iqr": f"torque deviates > {cfg.mad_k} sigma-equivalents "
+                   f"(1.4826*IQR/2) from head median {{m:.3f}} "
                    "(MAD = 0: quantised readings)",
             "exact": "torque differs from head median {m:.3f} on a head otherwise "
                      "stuck there (MAD and IQR both 0)",
@@ -145,7 +156,7 @@ def anomalies(cfg, period=None, method="both"):
             int(h): basis
             for h, basis in con.execute(
                 scale_ctes + " SELECT head_id, basis FROM scale WHERE basis <> 'mad'",
-                params).fetchall()
+                params + [cfg.mad_floor]).fetchall()
         }
 
     return ToolResult.ok(
@@ -172,10 +183,14 @@ def anomalies(cfg, period=None, method="both"):
         period=period,
         rows_scanned=scanned,
         filters=[f"method={method}", f"band=[{cfg.torque_min}, {cfg.torque_max}]",
-                 f"mad_k={cfg.mad_k}"],
+                 f"mad_k={cfg.mad_k}", f"mad_floor={cfg.mad_floor}"],
         assumptions=[
-            "deviation uses median +/- k*MAD (robust); mean/sigma would let "
-            "extreme outliers inflate the band and hide themselves",
+            "deviation uses median +/- k*(1.4826*MAD), the sigma-consistent "
+            "robust band (raw MAD is ~0.6745 sigma, so k would otherwise "
+            "overstate the band's width); mean/sigma would let extreme "
+            "outliers inflate the band and hide themselves",
+            f"the deviation scale has a floor of {cfg.mad_floor} Nm so a "
+            "quantised sensor cannot collapse the band to noise",
             "a head with MAD = 0 (readings mostly identical) falls back to a "
             "half-IQR band, and to exact-median comparison when the IQR is 0 "
             "too; affected heads are listed in `deviation_fallbacks`",

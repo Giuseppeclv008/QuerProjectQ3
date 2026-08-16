@@ -14,10 +14,14 @@ from analytics.tools.success import success_rates
 from analytics.tools.torque import torque_stats
 from analytics.tools.trend import trend
 
-# The store is built in the repo root by scripts/build_store.sh; pytest runs from
-# python/, so the path is one level up (matching the plan's record-numbers script,
-# which uses "../events_3mo.duckdb").
-STORE = "../events_3mo.duckdb"
+# Anchored on this source file, not the CWD: the CWD-relative
+# "../events_3mo.duckdb" resolved to the repo's PARENT when pytest ran from
+# the repo root, so the gate was unsatisfiable there even with the store
+# built -- the C++ twins got exactly this fix in 226f04a and the Python side
+# was missed. The store lives in the repo root (where scripts/demo.sh
+# defaults to and scripts/build_store.sh is documented to write).
+STORE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                     os.pardir, os.pardir, "events_3mo.duckdb")
 pytestmark = pytest.mark.skipif(
     not os.path.exists(STORE), reason=f"{STORE} absent; run scripts/build_store.sh"
 )

@@ -106,3 +106,53 @@ def reject_without_load_store(tmp_path):
         )
     con.close()
     return str(path)
+
+
+PARITY_ROWS = [
+    # Three day-buckets with torque variance on heads 1-2 (head_correlation's
+    # MIN_BUCKETS=3 floor), and a 400 s no-load run on head 3 (idle's 300 s
+    # threshold): every parity tool must exercise its real SQL, not its
+    # insufficient_data early-return -- values_close({}, {}) proves nothing.
+    # machine_id, head_id, ts,                     cap_seq, torque, status
+    ("MCC", 1, "2026-02-01 00:10:00", 1, 2.00, 0.0),
+    ("MCC", 1, "2026-02-01 08:00:00", 2, 2.10, 0.0),
+    ("MCC", 2, "2026-02-01 00:10:00", 1, 1.90, 0.0),
+    ("MCC", 2, "2026-02-01 08:00:00", 2, 1.95, 65.0),   # reject, with load
+    ("MCC", 3, "2026-02-01 00:00:00", 1, 0.00, 2.0),    # no-load run: 400 s
+    ("MCC", 3, "2026-02-01 00:01:40", 2, 0.00, 2.0),
+    ("MCC", 3, "2026-02-01 00:03:20", 3, 0.00, 2.0),
+    ("MCC", 3, "2026-02-01 00:05:00", 4, 0.00, 2.0),
+    ("MCC", 3, "2026-02-01 00:06:40", 5, 0.00, 2.0),
+    ("MCC", 1, "2026-02-02 00:10:00", 3, 2.05, 0.0),
+    ("MCC", 2, "2026-02-02 00:10:00", 3, 2.02, 0.0),
+    ("MCC", 1, "2026-02-03 00:10:00", 4, 1.95, 0.0),
+    ("MCC", 2, "2026-02-03 00:10:00", 4, 2.08, 0.0),
+]
+
+
+@pytest.fixture
+def parity_store(tmp_path):
+    path = tmp_path / "parity.duckdb"
+    con = duckdb.connect(str(path))
+    con.execute(CAP_EVENTS_DDL)
+    for m, h, ts, seq, tq, st in PARITY_ROWS:
+        con.execute(
+            "INSERT INTO cap_events VALUES (?,?,?,?,?,?,1,?,false,false)",
+            [m, h, ts, seq, tq, st, int(st) % 2 == 1],
+        )
+    con.close()
+    return str(path)
+
+
+@pytest.fixture
+def parity_store_parquet(tmp_path, parity_store):
+    """The parity store's rows as Parquet -- built from the DuckDB fixture for
+    the same reason tiny_store_parquet is: a parity failure must mean a backend
+    defect, not fixture drift."""
+    out = tmp_path / "parity_parquet"
+    out.mkdir()
+    con = duckdb.connect(parity_store, read_only=True)
+    dest = str(out / "part-0.parquet").replace("'", "''")
+    con.execute(f"COPY (SELECT * FROM cap_events) TO '{dest}' (FORMAT PARQUET)")
+    con.close()
+    return str(out)

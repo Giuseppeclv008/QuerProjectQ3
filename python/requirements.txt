@@ -1,7 +1,13 @@
-duckdb>=1.0
-pandas>=2.0
-numpy>=1.24
-matplotlib>=3.7
-pytest>=7.0
-anthropic>=0.116
-markdown-it-py>=3.0
+# Pinned exactly (==, not >=): the suite byte-compares a golden report whose
+# formatting depends on pandas/DuckDB/matplotlib behaviour, so "any newer
+# version" is a moving target that can fail the golden test with no code
+# change. These are the versions the committed reports and goldens were
+# generated with. Upgrade deliberately: bump, regenerate the golden
+# (python -m tests.regen_golden), read the diff, commit both.
+duckdb==1.5.5
+pandas==3.0.5
+numpy==2.5.2
+matplotlib==3.11.1
+pytest==9.1.1
+anthropic==0.121.0
+markdown-it-py==4.2.0
