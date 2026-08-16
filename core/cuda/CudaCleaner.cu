@@ -6,6 +6,7 @@
 // CCCL 3.0 (CUDA 13) removed cub::CountingInputIterator; the unified library's
 // replacement is thrust's counting_iterator, which CUB's device algorithms take.
 #include <thrust/iterator/counting_iterator.h>
+#include <cerrno>
 #include <chrono>
 #include <climits>
 #include <cstdio>
@@ -129,7 +130,15 @@ __global__ void flag_newlines(const char* buf, size_t n, unsigned char* flags,
 // fabricate a reset plus an aggregated event against the neighbouring rows --
 // the one failure mode worse than losing the row); bit 3 = the timestamp is
 // longer than the device slot (host restores it from the raw line -- the CPU
-// keeps the full string, so silent truncation would diverge).
+// keeps the full string, so silent truncation would diverge); bit 4 = the
+// line is blank ("" or a lone CR, i.e. nothing left once the line ends are
+// trimmed). Both CPU readers `continue` past a blank line before parsing it,
+// so it is not a row at all: the delta kernel treats it as absent, and the
+// host never sees an event from it. It used to fall into the column-count
+// refusal (0 columns) and a CSV ending "\n\n" cleaned on the CPU and was
+// refused on the GPU.
+constexpr unsigned char ROW_BLANK = 16u;
+
 __global__ void parse_rows(const char* buf, const unsigned long long* nl,
                            unsigned int n_rows, double* count, double* torque,
                            double* status, char* ts_out, unsigned char* row_flags) {
@@ -144,11 +153,25 @@ __global__ void parse_rows(const char* buf, const unsigned long long* nl,
     const char* e = buf + nl[r + 1];
     while (e > p && (e[-1] == '\r' || e[-1] == '\n')) --e;
 
+    // Blank line: skipped, not refused -- see ROW_BLANK. The cells are zeroed
+    // only so the row never holds uninitialized device memory; nothing reads
+    // them (the delta kernel steps over blank rows in both directions).
+    if (p == e) {
+        for (int i = 0; i < TS_LEN; ++i)
+            ts_out[static_cast<size_t>(r) * TS_LEN + i] = '\0';
+        for (int h = 0; h < NUM_HEADS; ++h) {
+            const size_t idx = static_cast<size_t>(r) * NUM_HEADS + h;
+            count[idx] = 0.0; torque[idx] = 0.0; status[idx] = 0.0;
+        }
+        row_flags[r] = ROW_BLANK;
+        return;
+    }
+
     // Column-count guard before any parsing. parse_num now flags an empty
     // range as inexact, but a short row would still mis-align every field
     // after the gap; refusing the row keeps GPU semantics identical to the
     // CPU readers, which skip it.
-    int cols = (p < e) ? 1 : 0;
+    int cols = 1;
     for (const char* s = p; s < e; ++s)
         if (*s == ',') ++cols;
     if (cols != 1 + 3 * NUM_HEADS) {
@@ -186,9 +209,12 @@ __global__ void parse_rows(const char* buf, const unsigned long long* nl,
     row_flags[r] = fl;
 }
 
-// One thread per (row, head) for rows 1..n_rows-1. Row 0 is the seed.
+// One thread per (row, head) for rows 1..n_rows-1. The first non-blank row is
+// the seed and emits nothing, exactly as in the CPU extractors, whose readers
+// never hand a blank line to process().
 __global__ void delta_kernel(const double* count, const double* torque,
-                             const double* status, unsigned int n_rows,
+                             const double* status, const unsigned char* row_flags,
+                             unsigned int n_rows,
                              CapEventDevice* slots, unsigned char* flags) {
     const size_t t = blockIdx.x * static_cast<size_t>(blockDim.x) + threadIdx.x;
     const size_t total = static_cast<size_t>(n_rows - 1) * NUM_HEADS;
@@ -196,8 +222,17 @@ __global__ void delta_kernel(const double* count, const double* torque,
 
     const unsigned int i = static_cast<unsigned int>(t / NUM_HEADS) + 1;
     const int h = static_cast<int>(t % NUM_HEADS);
+    // A blank line is not a row: it emits nothing, and the row after it takes
+    // its delta against the last real row before it -- a zeroed row in the
+    // chain would fabricate 36 resets against the row before and 36 events
+    // against the row after. The walk is bounded by the run of consecutive
+    // blank lines; on the pool (none) it is one byte read.
+    if (row_flags[i] & ROW_BLANK) { flags[t] = 0; return; }
+    unsigned int j = i;
+    while (j > 0 && (row_flags[j - 1] & ROW_BLANK)) --j;
+    if (j == 0) { flags[t] = 0; return; }   // no real row before this one: seed
     const size_t cur = static_cast<size_t>(i) * NUM_HEADS + h;
-    const size_t prv = static_cast<size_t>(i - 1) * NUM_HEADS + h;
+    const size_t prv = static_cast<size_t>(j - 1) * NUM_HEADS + h;
 
     const long long c_cur = llround(count[cur]);
     const long long c_prv = llround(count[prv]);
@@ -422,7 +457,8 @@ bool cuda_clean_file(const std::string& path, std::vector<CapEvent>& out,
     {
         const int blk = 256;
         const unsigned int grid = static_cast<unsigned int>((slots + blk - 1) / blk);
-        delta_kernel<<<grid, blk>>>(d_count, d_torque, d_status, n_rows, d_slots, d_evflags);
+        delta_kernel<<<grid, blk>>>(d_count, d_torque, d_status, d_rowflags, n_rows,
+                                    d_slots, d_evflags);
     }
     times.delta_s = t.stop();
     FAIL_IF(cudaGetLastError(), "S4 delta");
@@ -532,6 +568,39 @@ bool cuda_clean_file(const std::string& path, std::vector<CapEvent>& out,
                     if (*p == ',') fld[f++] = p + 1;
                 for (; f < 1 + 3 * NUM_HEADS; ++f) fld[f] = end;  // short row
                 cached_row = d.row_index;
+                if (rf & 1u) {
+                    // The shared row policy (RowParse) fails the WHOLE row --
+                    // every head's events, not just the offending cell's --
+                    // when any torque/status cell is not a number (stod
+                    // throws: BadNumeric), overflows (stod throws
+                    // out_of_range on ERANGE), or is non-finite / beyond
+                    // float range (BadReal). The CPU readers skip such a row
+                    // before the extractor sees it; this pipeline is past the
+                    // delta stage and cannot, so the only honest option is to
+                    // refuse the file. Checked once per flagged row over all
+                    // 72 cells: checking only the emitting heads' cells let a
+                    // row the CPU drops for a "nan" on head 6 ship head 1's
+                    // event. strtod mirrors stod otherwise -- leading
+                    // whitespace and trailing garbage are tolerated by both
+                    // (" 1.5", "1.2.3", "2.0\r"), and every cell here ends at
+                    // ',' or at the row's CR/LF, never mid-number.
+                    for (int c = 1 + NUM_HEADS; c < 1 + 3 * NUM_HEADS; ++c) {
+                        char* endp = nullptr;
+                        errno = 0;
+                        const double v = std::strtod(fld[c], &endp);
+                        if (endp == fld[c] || errno == ERANGE || !is_valid_real(v)) {
+                            error = path + ": data row " +
+                                    std::to_string(d.row_index + 1) + " has " +
+                                    (c < 1 + 2 * NUM_HEADS ? "an AppTorque" : "a Status") +
+                                    " cell the shared row policy rejects (no "
+                                    "number, out of range, or non-finite); the "
+                                    "CPU readers skip such a row, and past the "
+                                    "delta stage this pipeline cannot";
+                            cleanup();
+                            return false;
+                        }
+                    }
+                }
             }
             if (rf & 8u) {
                 // Device slot too small for this timestamp: the CPU readers
@@ -540,37 +609,11 @@ bool cuda_clean_file(const std::string& path, std::vector<CapEvent>& out,
                 e.ts = std::string(fld[0], fld[1] - 1);
             }
             if (rf & 1u) {
-                // strtod mirrors the CPU readers' stod: leading whitespace and
-                // trailing garbage are tolerated (both parse " 1.5" and
-                // "2.0\r" alike). What it cannot do is conjure a value from a
-                // cell with no number at all -- the CPU reader skips such a
-                // row before the extractor sees it, and this pipeline is past
-                // the delta stage, so the only honest option left is to
-                // refuse the file rather than ship a 0.0 nobody measured.
+                // Every cell of this row passed the check above, so these
+                // parse and are in range by construction.
                 const int h0 = d.head_id - 1;
-                char* endp = nullptr;
-                const char* tq = fld[1 + NUM_HEADS + h0];
-                e.app_torque = std::strtod(tq, &endp);
-                if (endp == tq) {
-                    error = path + ": data row " +
-                            std::to_string(d.row_index + 1) +
-                            " has an AppTorque cell with no parseable number; "
-                            "the CPU readers skip such a row, and past the "
-                            "delta stage this pipeline cannot";
-                    cleanup();
-                    return false;
-                }
-                const char* st = fld[1 + 2 * NUM_HEADS + h0];
-                e.status = std::strtod(st, &endp);
-                if (endp == st) {
-                    error = path + ": data row " +
-                            std::to_string(d.row_index + 1) +
-                            " has a Status cell with no parseable number; "
-                            "the CPU readers skip such a row, and past the "
-                            "delta stage this pipeline cannot";
-                    cleanup();
-                    return false;
-                }
+                e.app_torque = std::strtod(fld[1 + NUM_HEADS + h0], nullptr);
+                e.status = std::strtod(fld[1 + 2 * NUM_HEADS + h0], nullptr);
                 e.is_fault = is_reject(e.status);
             }
         }
