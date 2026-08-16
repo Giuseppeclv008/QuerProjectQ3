@@ -50,14 +50,31 @@ void publish_atomically(const std::string& final_path, F&& write_to) {
     const std::string tmp = temp_sibling_of(final_path);
     try {
         write_to(tmp);
+        // What write_to left behind has to be a file before it is given the
+        // destination's name. rename() does not care: handed a directory it
+        // renames the directory, and `store/day.parquet` becomes a directory
+        // that every reader then globs. DuckDB's COPY writes a directory rather
+        // than a file when partitioning is on, so that is one option away from
+        // reachable rather than hypothetical -- and a helper on both write paths
+        // should have no way to publish something that is not a file. It also
+        // turns "write_to produced nothing" from a rename ENOENT into a sentence
+        // that says what went wrong.
+        std::error_code st_ec;
+        if (!std::filesystem::is_regular_file(tmp, st_ec))
+            throw std::runtime_error(
+                "refusing to publish " + final_path + ": nothing wrote a file at " +
+                tmp + (st_ec ? " (" + st_ec.message() + ")" : ""));
+
         std::error_code ec;
         std::filesystem::rename(tmp, final_path, ec);
         if (ec)
             throw std::runtime_error("cannot rename " + tmp + " to " + final_path +
                                      ": " + ec.message());
     } catch (...) {
+        // remove_all, not remove: the check above rejects a directory at tmp,
+        // and this is what clears it. On a regular file the two are identical.
         std::error_code ignored;
-        std::filesystem::remove(tmp, ignored);
+        std::filesystem::remove_all(tmp, ignored);
         throw;
     }
 }

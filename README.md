@@ -1049,7 +1049,7 @@ cmake --build build --parallel
 | `MAS_BUILD_TESTS` | `ON` | Build the GoogleTest suite. `OFF` drops the last dependency that needs network. |
 
 The default triple (`OFF, ON, OFF, ON`) is the build this project has always
-had: **140 tests green**. With `MAS_BENCH_ONLY=ON` the suite is the 51 tests that
+had: **146 tests green**. With `MAS_BENCH_ONLY=ON` the suite is the 57 tests that
 need neither DuckDB nor ZeroMQ; with `MAS_BUILD_TESTS=OFF` on top of that,
 `_deps/` is never created at all — nothing is downloaded:
 
@@ -1299,19 +1299,19 @@ it, `--pdf` logs how to install it and writes Markdown and HTML as normal.
 
 ## Testing
 
-The project has **140 C++ unit tests** across 18 Google Test files, plus **250
+The project has **146 C++ unit tests** across 19 Google Test files, plus **250
 Python tests** for the analytics tier. Both counts are asserted by
 `python/tests/test_readme_counts.py`, so adding a test and forgetting this
 paragraph fails the suite rather than quietly dating it.
 
 ```bash
-cd build && ctest --output-on-failure           # 140 C++ tests
+cd build && ctest --output-on-failure           # 146 C++ tests
 cd python && ../.venv/bin/python -m pytest -q   # 250 Python tests (5 need the rebuilt store or a real day-file and skip without them)
 ```
 
-Under `-DMAS_BENCH_ONLY=ON` the C++ suite is the 51 tests that need neither
+Under `-DMAS_BENCH_ONLY=ON` the C++ suite is the 57 tests that need neither
 DuckDB nor ZeroMQ — the rest are excluded by design, not skipped. (Two of the
-51 skip without the extracted pool beside the binary.)
+57 skip without the extracted pool beside the binary.)
 
 | Test File | What It Tests |
 |-----------|---------------|
@@ -1322,6 +1322,7 @@ DuckDB nor ZeroMQ — the rest are excluded by design, not skipped. (Two of the
 | `test_csv_raw_reader.cpp` | Happy path, truncated rows, malformed numerics, missing file |
 | `test_bench_cpu_parity.cpp` | `bench_cpu`'s streamed loop == `load_columns` + `extract_flat`, event for event, on real data |
 | `test_engine_select.cpp` | `--engine=cpu\|cuda` selection, and that the CUDA path is refused when it was not compiled in |
+| `test_atomic_publish.cpp` | `publish_atomically`: nothing is visible under the destination's name until the rename, a throw from the writer propagates unmasked with the temp removed, a writer that produced nothing or produced a directory is refused, two publishes to one path use different temps, and a temp cannot be mistaken for a `.parquet` |
 | `test_cli_args.cpp` | `unconsumed_flag`: a flag after the positionals is an error, `--format=x` says where the value goes, and `-`/`-1` stay positional |
 | `test_pipeline.cpp` | End-to-end CSV→events flow, batch boundary, error codes |
 | `test_duckdb_smoke.cpp` | DuckDB library linkage sanity |
