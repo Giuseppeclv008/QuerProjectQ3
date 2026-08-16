@@ -3,5 +3,9 @@
 # Resolves the repo's venv so the tool works from any directory.
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# POSIX venv layout first; the Windows layout (.venv/Scripts) when run from
+# Git Bash on the Windows box, where .venv/bin does not exist.
+py="$here/.venv/bin/python"
+[ -x "$py" ] || py="$here/.venv/Scripts/python.exe"
 PYTHONPATH="$here/python${PYTHONPATH:+:$PYTHONPATH}" \
-  exec "$here/.venv/bin/python" -m analytics.cli "$@"
+  exec "$py" -m analytics.cli "$@"

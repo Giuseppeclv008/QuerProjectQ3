@@ -288,93 +288,107 @@ accurate for what it measured; it measured about a quarter of the phase.) The
 CPU and Python rows always measured their whole work.
 
 28-day results on the Windows target box (RTX 4070 Laptop, CUDA 13.3), sweep
-of 2026-08-13 with the corrected timers — median of 3, with the min–max
-spread, because n=3 on a laptop does not support three significant figures
-(the same lesson the entry above records for the M2):
+of 2026-08-16 on the kernel in the tree (`981c411`, i.e. after the review's
+`f461b6d` and the fixes the first compile of that kernel forced) — median of
+3, with the min–max spread, because n=3 on a laptop does not support three
+significant figures (the same lesson the entry above records for the M2):
 
 | arch | clean 28d, median [min–max] | vs CUDA |
 |---|---:|---:|
-| **cuda** | **6.43 s** [6.33–8.34] | — |
-| cpp-MT (8 threads) | 8.21 s [8.12–8.32] | 1.3x |
-| cpp-1T | 46.26 s [45.91–46.57] | 7.2x |
-| py-naive | 74.64 s [74.32–76.31] | 11.6x |
-| py-numpy | 85.82 s [84.53–86.99] | 13.4x |
+| **cuda** | **6.99 s** [6.92–7.05] | — |
+| cpp-MT (8 threads) | 7.53 s [7.48–7.61] | 1.08x |
+| cpp-1T | 46.45 s [46.06–46.59] | 6.6x |
+| py-naive | 78.35 s [77.86–78.58] | 11.2x |
+| py-numpy | 90.68 s [90.61–91.92] | 13.0x |
 
-**Kernel provenance.** These numbers were measured at the kernel of commit
-`45d4831` (2026-08-13, the last GPU session). The kernel now in the tree was
-revised after that (`f461b6d`, 2026-08-16: 169 lines, several inside timed
-regions — the column-count guard in `parse_s`, the trailing-newline append in
-`h2d_s`/`index_s`, the whole-file flag scan and offset-repair path in
-`materialize_s`) and **has not been compiled or measured**. Until the sweep is
-re-run on the RTX box, this table describes the 2026-08-13 kernel, not HEAD.
+Against the 2026-08-13 sweep (6.43 / 8.21 / 46.26 / 74.64 / 85.82 s): the
+CUDA row is 0.56 s slower, of which 0.44 s is `materialize_s` (5.08 vs 4.64
+s — the host loop, which now also carries the review's per-row flag repair
+and this session's row-policy check on the rows that need it), and cpp-MT is
+0.68 s faster; the single-thread CPU rows moved 0.4–6% between the two
+sessions (cpp-1T +0.4%, py-naive +5%), which is the box's day-to-day
+resolution. The 1.3x of 2026-08-13 is therefore **1.08x** on the kernel that
+ships. Every arch at every volume × repeat landed on the oracle counts
+(765,711 / 3,901,017 / 21,872,663), with the `--verify` differential run
+once per volume before the timed repeats.
 
 **What each contender's `clean_s` includes** — the rows above do not share one
 measurement window, so before quoting a ratio, know what each number is:
 
 | contender | `clean_s` window | events held in memory |
 |---|---|---|
-| cuda | sum of 8 stage timers; excludes `check_header`, `cudaHostAlloc`, every `cudaMalloc`, context creation (those are inside its wall: 8.43 s median) | full per-file vector (765,711) |
-| cpp-1T / cpp-MT | whole process (`clean_s == total_s` in every CSV row) | **≤ 8,192** — `bench_cpu` counts and clears its batch, so it never materializes a file's events at once (spec §6.1 says "materialize events in memory"; the 7.5 / 14.6 MB `peak_rss_mb` against CUDA's 350.9 is this asymmetry) |
-| py-naive / py-numpy | in-process loop; excludes interpreter start and imports | full per-file list |
+| cuda | sum of 8 stage timers; excludes `check_header`, `cudaHostAlloc`, every `cudaMalloc`, context creation (those are inside its wall: 9.08 s median [8.99–9.17]) | full per-file vector (765,711) |
+| cpp-1T / cpp-MT | whole process (`clean_s == total_s` in every CSV row) | **≤ 8,192** — `bench_cpu` counts and clears its batch, so it never materializes a file's events at once (spec §6.1 says "materialize events in memory"; the 8.3 / 15.3 MB `peak_rss_mb` against CUDA's 352.4 is this asymmetry) |
+| py-naive / py-numpy | in-process loop; excludes interpreter start and imports (their `total_s` is the whole subprocess: 78.4 / 91.8 s) | full per-file list |
 
-**Wall to wall, same denominator: CUDA 8.43 s vs cpp-MT 8.21 s — the GPU row
-is not faster than the 8-thread C++ at 28 files.** The 1.3x holds only on the
-stage-sum window, and the asymmetry runs *against* CUDA here (its window pays
-materialization the CPU rows dodge), but neither number is like-for-like and
-both readings are published now rather than left to the CSV.
+**Wall to wall, same denominator: CUDA 9.08 s vs cpp-MT 7.53 s — the GPU row
+is 1.2x *slower* than the 8-thread C++ at 28 files.** The 1.08x holds only on
+the stage-sum window, and the asymmetry runs *against* CUDA here (its window
+pays materialization the CPU rows dodge), but neither number is like-for-like
+and both readings are published rather than left to the CSV.
 
 (py-naive is measured at every volume now that the extrapolation machinery is
 gone — and the estimate that machinery was built on measured true: "~75 s per
-28-day repeat" came out 74.6 s median.)
+28-day repeat" came out 74.6 s median in August's first sweep and 78.4 s in
+this one.)
 
-Repeat 1 is still the caveat in miniature: its `clean_s` reads 8.34 s and its
-*wall* reads 58.9 s, because `--verify` runs the full CPU differential in the
-same process on the first repeat. The 8.34 s is **not** (only) a cold file
-cache: the stage CSV shows the inflation on pure device work that touches no
-files — `h2d_s` 0.639 vs 0.154, `index_s` 0.375 vs 0.049, `compact_s` 0.304
-vs 0.027 (4–11×) — so GPU clock ramp-up, first-touch of the pinned buffer,
-and context warm-up are the plausible causes. Either way the published
-[6.33–8.34] interval is one cold run and two warm ones. The median absorbs
-both; the spread is why the interval is published. The CUDA context and
-allocations sit outside `clean_s` and inside the wall clock, where spec §6.1
-puts them: total 8.43 s median against 6.43 s clean.
+Repeat 1 is no longer a caveat. The `--verify` differential now runs once per
+volume *before* the timed repeats, untimed, and doubles as the warm-up the
+first repeat never had; the 2026-08-13 CSV carried a repeat-1 `clean_s` of
+8.34 s and a *wall* of 58.9 s for exactly that reason (the differential ran
+inside repeat 1's process, and the cold device paid 4–11× on `h2d_s`,
+`index_s` and `compact_s`). This sweep's three 28-day repeats read 6.92 /
+7.05 / 6.99 s clean and 8.99–9.17 s wall, and the stage CSV shows no cold
+repeat (`h2d_s` 0.209 / 0.213 / 0.205). The CUDA context and allocations sit
+outside `clean_s` and inside the wall clock, where spec §6.1 puts them: total
+9.08 s median against 6.99 s clean.
 
-`mono-1T` end to end is **257.6 s** [254.5–266.6] against 45.5 s of
-store-free clean, so persistence costs **~212 s — around 82% of wall-clock**.
-Substituting a faster clean leaves that untouched:
+`mono-1T` end to end is **533.3 s** [533.0–534.6] against 46.7 s of
+store-free clean, so persistence costs **~487 s — around 91% of wall-clock**.
+That is twice the 2026-08-13 figure (257.6 s, 82%) and it is the harness,
+not the store, that changed: the e2e rows now carry the pool's real 35-char
+machine id instead of `MCC` (the CPU sweep at the top of this document
+already did — its mono-1T month is 537.8 s, which this row reproduces to
+0.8%). A 3-char id stays inline in DuckDB and roughly halves the per-row
+write cost, so the earlier e2e rows measured a default argument. Substituting
+a faster clean leaves the store untouched:
 
 | | clean + store | e2e vs mono-1T |
 |---|---:|---:|
-| cpp-1T | 46.3 + 212.1 = 258.4 s | 1.00x |
-| cpp-MT 8T | 8.2 + 212.1 = 220.3 s | 1.17x |
-| cuda | 6.4 + 212.1 = 218.5 s | **1.18x** |
+| cpp-1T | 46.4 + 486.6 = 533.0 s | 1.00x |
+| cpp-MT 8T | 7.5 + 486.6 = 494.1 s | 1.08x |
+| cuda | 7.0 + 486.6 = 493.6 s | **1.08x** |
 
-**CUDA against the 8-thread C++ already in the project: 1.3x on the clean
-phase becomes ~1.01x end to end.** The measurement-window correction shrank
-the clean-phase ratios by more than the review's halving estimate (cpp-MT
-~2x estimated, 1.3x measured; cpp-1T ~13x estimated, 7.2x measured) and moved
-the end-to-end number from ~1.23x to a measured 1.18x — which is the point:
-the conclusion never depended on the flattered number.
+**CUDA against the 8-thread C++ already in the project: 1.08x on the clean
+phase becomes 1.00x end to end.** Two corrections moved the headline from the
+review's ~1.23x estimate to a measured 1.18x on 2026-08-13 and to 1.08x here:
+the measurement-window correction shrank the clean-phase ratios (cpp-MT ~2x
+estimated, 1.3x then 1.08x measured; cpp-1T ~13x estimated, 7.2x then 6.6x
+measured), and the real machine id doubled the store's share of the wall.
+Neither moved the conclusion, which is the point: it never depended on the
+flattered number.
 
-This is Amdahl applied honestly. Speeding a phase that is ~18% of the total
-by 7.2x yields 1.18x, and 1.18x is what is measured. The stage breakdown, now
-with nothing left outside it, says the same thing from inside: of the 6.43 s,
-4.64 s is host-side event materialization, 1.20 s is disk read, 0.32 s is
-PCIe transfer both ways, and ~0.29 s is GPU compute (index + parse + delta +
-compact — the pre-correction "~0.29 s" estimate of the kernels' cost held
-exactly). The kernel stopped being the bottleneck before the pipeline did —
+This is Amdahl applied honestly. Speeding a phase that is ~9% of the total
+by 6.6x yields 1.08x, and 1.08x is what is measured. The stage breakdown, now
+with nothing left outside it, says the same thing from inside: of the 6.99 s,
+5.08 s is host-side event materialization, 1.22 s is disk read, 0.36 s is
+PCIe transfer both ways, and ~0.33 s is GPU compute (index + parse + delta +
+compact — against ~0.29 s on 2026-08-13; the kernels' cost has never been the
+story). The kernel stopped being the bottleneck before the pipeline did —
 and, measured, so did the rest of the GPU path: what remains is a
-single-threaded, allocation-bound host loop.
+single-threaded, allocation-bound host loop, 73% of the phase.
 
 **The defensible claim is not "the GPU makes cleaning faster" — it is that
 cleaning has stopped being the problem.** Three independent paths were measured
 — multithreaded CPU, distributed MAS, GPU — and all three land on the same
 place: the cost is persistence, not transformation. `merge_all` attacked it
 from one side (2.89x on the merge in isolation); CUDA proved it from the
-other, by driving GPU compute to ~0.29 s and moving the total only to 1.18x.
+other, by driving GPU compute to ~0.33 s and moving the total only to 1.08x.
 The re-run also put a measured number where a hardcoded zero had been:
-mono-MT's 28-day merge is 58.7 s [57.7–62.5], not the 0.000 the driver used
-to write — and not the ~150 s the review guessed while flagging the hardcode.
+mono-MT's 28-day merge is 77.9 s [71.5–80.1] with the real id (58.7 s
+[57.7–62.5] with `MCC` on 2026-08-13; the CPU sweep's T=8 row says 71.3 s),
+not the 0.000 the driver used to write — and not the ~150 s the review
+guessed while flagging the hardcode.
 
 Two qualifications this section keeps:
 
@@ -382,16 +396,22 @@ Two qualifications this section keeps:
   `cpp-1T` parses at ~35 MB/s because `CsvRawReader` builds an
   `std::istringstream` per row and calls `std::stod` 108 times per row; a
   `std::from_chars` parser over the same buffer would plausibly close much of
-  the gap on its own. "7.2x over C++ 1T" measures the distance between a tuned
+  the gap on its own. "6.6x over C++ 1T" measures the distance between a tuned
   GPU pipeline and an untuned CPU parser — which strengthens, not weakens, the
   persistence conclusion: with a competent CPU parser the clean phase shrinks
   further below the store cost. And the same reading now applies to the GPU
-  row itself: 72% of its clean time is a single-threaded host loop building
+  row itself: 73% of its clean time is a single-threaded host loop building
   strings — a cost the `bench_cpu` rows do not pay at all (they hold at most
   8,192 events; see the contender-window table above).
 - Every number in this section is n=3 on a laptop with ordinary desktop
   background load. The intervals are the honest resolution; the medians are
-  the claim.
+  the claim. This sweep is the third launch of the evening: the first was
+  aborted at 10 minutes when its 1-day CUDA rows (0.33–0.40 s against 0.21 s)
+  exposed a +0.12 s/day-file cost in the row-policy check this session had
+  just added (fixed in `981c411` before anything was recorded), the second at
+  15 minutes when interactive use of the box halved every single-thread row
+  (py-naive at 7 day-files 38.9 s against 18.0 s here). Neither left a row in
+  the committed CSVs; both are in the validation log.
 
 It also settles the question the kernel was written to answer: **how much
 headroom was left in the clean phase? Almost none, and that is now measured

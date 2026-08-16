@@ -34,4 +34,11 @@ echo "cleaning ${#CSVS[@]} day-files into $OUT"
 # opens in append mode. mas_monolith now removes its own, but a store built
 # before that fix still has them sitting next to it.
 rm -f "$OUT" "$OUT".wal "$OUT".t*.duckdb "$OUT".t*.duckdb.wal
-./build/mas_monolith "$OUT" MCC 4 "${CSVS[@]}"
+# The MSVC multi-config generator puts the binary in build/Release; the
+# single-config ones (Makefiles, Ninja) in build/. Same rule as the bench
+# harness's find_binary: only the documented build directory is searched.
+mono=./build/mas_monolith
+for cand in ./build/mas_monolith ./build/mas_monolith.exe ./build/Release/mas_monolith.exe; do
+    if [ -f "$cand" ]; then mono="$cand"; break; fi
+done
+"$mono" "$OUT" MCC 4 "${CSVS[@]}"

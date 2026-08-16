@@ -1378,3 +1378,139 @@ day's commits.
   a success (CliArgs.hpp), and chaos_e2e.sh demonstrated the failure — workers
   launched unlabelled, merged into a destination labelled with the real
   35-char id. The command as recorded no longer runs; append the machine id.
+
+## 2026-08-16 — Post-review GPU session: the kernel meets a compiler, and the sweep is re-run on the kernel that ships
+
+Same box as 2026-08-13: HP Victus 16 (i7-13700H, RTX 4070 Laptop 8 GB,
+driver 592.82), Windows 11, MSVC 19.41 (VS 2022), **nvcc 13.3.73**, mains
+power, active cooling. Base `0bea14b` (= origin/main after the review's fixes).
+The review laptop had no CUDA toolchain, so nothing under `core/cuda/` had met a
+compiler since 2026-08-13; this entry closes review items C3 and I7 and records
+what the first compile of the revised kernel found.
+
+**A1 — compile and differential.** `cmake -S . -B build-gpu-tests
+-DMAS_ENABLE_CUDA=ON -DMAS_ENABLE_ZMQ=OFF`, Release: nvcc accepted the revised
+`CudaCleaner.cu` (the `saturated_delta()` call through `DeltaPolicy.hpp`
+included) with only CUB's own `/W4` noise. First `ctest -C Release`: **176
+tests, 3 failed** — 176, not the 184 the runbook expected, because that count
+includes the 8 ZMQ tests the recipe switches off. The three:
+
+- `CudaDifferential.HostileTorqueAndStatusCellsMatchViaTheRepairPath` — CPU 0
+  events, GPU 6. The review's `d81f9fc` made `RowParse` fail a whole row on a
+  torque/status cell that is non-finite / beyond float range (`BadReal`) or
+  unparseable (`BadNumeric`); the fixture's `nan`/`inf` cells now drop the row
+  on the CPU, and the GPU's host repair path still shipped them as values. A
+  real divergence the review could not have seen without a compiler. Fixed in
+  `87b2020`: on the host, a row holding any cell *foreign* to the device
+  grammar (exponent form, nan/inf, whitespace, empty, garbage) has all 72
+  torque/status cells validated with `strtod` + `is_valid_real` (ERANGE
+  mirrors `stod`'s `out_of_range`) and the file is refused if any fails —
+  row-wide, because RowParse drops the whole row, so a `nan` on head 6 must
+  also stop head 1's event; past the delta stage the pipeline cannot skip a
+  row, and refusing loudly is what every other unrepairable case does. Test
+  split: the Hostile fixture keeps the cells RowParse accepts (asserted 4
+  events, identical); `ACellTheRowPolicyRejectsRefusesTheFileEvenOnASilentHead`
+  pins `nan` / `inf` / `1e300` / `1e400` / `""` on a non-emitting head (CPU:
+  empty; GPU: refuses, message names the policy).
+- `AtomicPublish.GlobMetacharactersInTheDestinationDoNotReachTheTemp` and
+  `AtomicPublish.ANearNameMaxBasenameIsStillPublishable` — POSIX fixtures:
+  `*` and `?` are not legal NTFS characters, and a 250-char basename under
+  `%TEMP%` is past Win32's MAX_PATH (259 for a process not manifested
+  longPathAware) before any suffix. Product code untouched; the fixtures now
+  test the same two properties with the platform's constants (`d37c638`).
+
+**A2 — review I7, blank lines.** A blank line (`""` or a lone CR) fell into the
+GPU's column-count refusal, so a CSV ending `\n\n` cleaned on the CPU (both
+readers `continue` past blank lines) and was refused on the GPU. It is now a
+row flag (`ROW_BLANK`) the delta kernel treats as absent — a blank row emits
+nothing, the row after it takes its delta against the last real row before
+it, and the first non-blank row is the seed, as on the CPU. Two fixtures:
+`TrailingBlankLineIsSkippedLikeTheCpuReaders` (the I7 case) and
+`BlankLinesInsideTheFileAreAbsentFromTheDeltaChain` (blank first, mid-file LF
+and lone CR, two in a row; a zeroed row left in the chain would fabricate 36
+resets and 36 events). Same commit `87b2020`.
+
+**Suite after the fixes: ctest 179/179 in `build-gpu-tests`, Release**, the
+**11 `CudaDifferential` cases run and passed** (not skipped: the fixture
+GTEST_SKIPs without a device), one legitimate skip
+(`ParquetExportTest.APathThatCannotBeStatedFailsByName`, a self-referential
+symlink needs a privilege this session lacks). `mas_cuda_clean --verify` on
+2026-02-01: 765,711 events, identical to the CPU pair. README counts follow:
+187 C++ tests, 11-case differential (`56bc3be`).
+
+**A3, first attempt — a regression caught by its own numbers.** The row-wide
+check as first written ran on *every* row with an inexact cell. On the pool
+that is about half of all rows (~2% of AppTorque cells carry the 17-digit
+repr of a double, and a row has 36 of them), i.e. ~3.2 M `strtod` calls per
+day-file that validated nothing: the sweep's 1-day CUDA rows read 0.33 / 0.34
+/ 0.40 s against 0.21 s on 2026-08-13 with every CPU contender unchanged, and
+a standalone run put `materialize_s` at 0.275 s against 0.150. Aborted at 10
+minutes, before any row was recorded. Fix `981c411`: `parse_num` now also
+reports whether a cell is *foreign* to the plain-decimal grammar; a plain
+decimal that is merely too long for the integer mantissa is finite and far
+inside float range by construction, so its row cannot fail RowParse and only
+its emitting cells need the host `strtod` — the 2026-08-13 fast path. Same
+refusals, same 179 tests. Measured after: day 1 clean 0.218 / 0.219 / 0.220
+s, `materialize_s` 0.160 / 0.160 / 0.162 s.
+
+**A3, second attempt — the box was not quiet.** Aborted at 15 minutes:
+interactive use of the machine (a browser and Task Manager, 22:11–22:24)
+halved every single-thread row — py-naive at 7 day-files 38.9 s against 18.0
+s in the clean run, `mono-1T e2e` at 1 day-file 18.5 → 31.5 → 45.2 s across
+the three repeats — while the 8-thread and CUDA rows barely moved. Recorded
+because it is the M2 lesson in a different costume: a laptop's single-thread
+number is a function of what else the box is doing. `bench_cpu 1` on day 1
+read 1.69 / 1.65 s once the box was idle again (2026-08-13: 1.71), which was
+the gate for the third launch.
+
+**A3, third attempt — the sweep, 22:28–23:33, one uninterrupted session,
+binaries untouched.** `build` reconfigured with the *full* build
+(`-DMAS_BENCH_ONLY=OFF -DMAS_ENABLE_CUDA=ON -DMAS_ENABLE_ZMQ=OFF
+-DMAS_BUILD_TESTS=OFF`), not the bench-only recipe: `find_binary` searches
+only `build/` and `build/Release/`, and a bench-only configure would have left
+the 2026-08-13 `mas_monolith.exe` in place for the e2e rows — the harness would
+have silently benchmarked the pre-review store code. All three binaries were
+rebuilt from `981c411`, the stale ones deleted first. 72 rows, 3 volumes × 3
+repeats; every arch at every volume × repeat matched the oracle (765,711 /
+3,901,017 / 21,872,663); `--verify` once per volume before the timed repeats.
+
+28-day medians [min–max], clean mode:
+
+| arch | clean_s | vs cuda |
+|---|---:|---:|
+| cuda | 6.99 [6.92–7.05] (wall 9.08 [8.99–9.17]) | — |
+| cpp-MT 8T | 7.53 [7.48–7.61] | 1.08x |
+| cpp-1T | 46.45 [46.06–46.59] | 6.6x |
+| py-naive | 78.35 [77.86–78.58] | 11.2x |
+| py-numpy | 90.68 [90.61–91.92] | 13.0x |
+
+Against 2026-08-13 (6.43 / 8.21 / 46.26 / 74.64 / 85.82): CUDA +0.56 s, of
+which +0.44 s is `materialize_s` (5.08 vs 4.64) and the rest spread over the
+device stages (GPU compute 0.33 vs 0.29, PCIe 0.36 vs 0.32); cpp-MT −0.68 s;
+the single-thread CPU rows +0.4–6% (cpp-1T +0.4%, py-naive +5%, py-numpy
++5.7%), the box's day-to-day resolution. Wall to wall, CUDA 9.08 s against
+cpp-MT 7.53 s: the GPU row is 1.2x slower than the 8-thread C++ at 28 files.
+Repeat 1 is no longer inflated (clean 6.92 / 7.05 / 6.99; stage `h2d_s`
+0.209 / 0.213 / 0.205): the pre-timing `--verify` pass is the warm-up the
+2026-08-13 CSV lacked, whose repeat 1 read 8.34 s clean and 58.9 s wall.
+
+CUDA stage medians at 28 days (s): read 1.219, h2d 0.209, index 0.077, parse
+0.170, delta 0.027, compact 0.055, d2h 0.154, materialize 5.075 (73% of the
+phase). Sum 6.986. Peak RSS 352.4 MB against 8.3 / 15.3 for the C++ rows —
+the events-in-memory asymmetry the results document names.
+
+End to end at 28 days, **e2e rows now with the pool's real 35-char machine
+id** (the harness change; the 2026-08-13 CUDA sweep's e2e rows used `MCC`):
+mono-1T e2e **533.3 s** [533.0–534.6] against 46.7 s store-free clean →
+persistence 486.6 s, **91% of wall** — and 0.8% from the 537.8 s the CPU
+resweep measured for the same row with the same id, which is the
+cross-check. cuda clean + store = 493.6 s → **1.08x** vs mono-1T; cpp-MT
+494.1 s → 1.08x; CUDA over cpp-MT end to end 1.00x. mono-MT e2e 168.5 s
+[161.8–172.1] with `merge_s` 77.9 s [71.5–80.1] (CPU resweep T=8: 157.3 /
+71.3). Ratio history for the headline, all measured on this box: review
+estimate ~1.23x → 1.18x (2026-08-13, `MCC`, pre-review kernel) → 1.08x
+(2026-08-16, real id, the kernel in the tree). Speeding a phase that is 9% of
+the wall by 6.6x yields 1.08x; the persistence conclusion is unchanged, and
+now stands on the kernel that ships. `docs/bench/results.md`, the README's
+benchmark table and the three `cuda_*.png` carry these numbers; the "Kernel
+provenance" caveat is deleted, its reason gone.

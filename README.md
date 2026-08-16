@@ -521,10 +521,13 @@ Design notes:
 > 13's CCCL later. `--verify` earned its keep on the first run: it caught the
 > GPU parse one ulp under the CPU on the pool's 17-digit torque cells, bitwise.
 > Re-measured on 2026-08-13 with the corrected timers (an eighth
-> `materialize_s` stage, process wall clock recorded as `total_s`): the
-> numbers below are measurements, not estimates. See
-> [`docs/validation-log.md`](docs/validation-log.md), entries 2026-08-10 and
-> 2026-08-13.
+> `materialize_s` stage, process wall clock recorded as `total_s`), and again
+> on 2026-08-16 on the kernel that ships — the review's parser edits had
+> never met a compiler until then, and the first compile found the GPU
+> accepting cells the CPU readers had started to reject. The numbers below
+> are measurements, not estimates. See
+> [`docs/validation-log.md`](docs/validation-log.md), entries 2026-08-10,
+> 2026-08-13 and 2026-08-16.
 
 ---
 
@@ -986,31 +989,33 @@ for the design.
 
 **Two timing modes.** `clean` times the transform alone (`--no-store`,
 `bench_cpu`, the Python `extract()` calls); `e2e` includes the DuckDB write. At
-GPU speeds the store is ~33× the transform, so reporting only `e2e` would
+GPU speeds the store is ~70× the transform, so reporting only `e2e` would
 flatten every architecture into the same number.
 
 **Measured — Windows target box (RTX 4070 Laptop), 28 day-files, median of 3,
-`clean` mode, corrected timers (sweep 2026-08-13):**
+`clean` mode, corrected timers, kernel as in the tree (sweep 2026-08-16):**
 
 | Arch | clean_s, median [min–max] |
 |------|---------------------------|
-| `cuda` | 6.43 [6.33–8.34] |
-| `cpp-MT` (8 threads) | 8.21 [8.12–8.32] |
-| `cpp-1T` | 46.26 [45.91–46.57] |
-| `py-naive` (`oracle.py`) | 74.64 [74.32–76.31] |
-| `py-numpy` (`clean_vectorized.py`) | 85.82 [84.53–86.99] |
+| `cuda` | 6.99 [6.92–7.05] |
+| `cpp-MT` (8 threads) | 7.53 [7.48–7.61] |
+| `cpp-1T` | 46.45 [46.06–46.59] |
+| `py-naive` (`oracle.py`) | 78.35 [77.86–78.58] |
+| `py-numpy` (`clean_vectorized.py`) | 90.68 [90.61–91.92] |
 
 Every arch at every volume × repeat emitted identical event counts (21,872,663
-for the month); the sweep aborts if any two disagree. With `materialize_s`
-timed, the CUDA row reads **1.3× the 8-thread C++ and 7.2× the single-thread**
-on the stage-sum window — and **1.18× end to end**, because the DuckDB store is
-~82% of the wall clock. One qualification the ratio needs: CUDA's `clean_s` is
-the sum of its stage timers, while the C++ rows time their whole process —
-**wall to wall it is CUDA 8.43 s vs cpp-MT 8.21 s, i.e. not faster than the
-8-thread C++**. These numbers were measured at the kernel of commit `45d4831`
-(2026-08-13); the kernel now in the tree was revised after that and is not yet
-re-measured. The full analysis, intervals and the per-contender measurement
-windows included, is in [`docs/bench/results.md`](docs/bench/results.md).
+for the month), equal to the independent Python oracle; the sweep aborts if any
+two disagree. With `materialize_s` timed, the CUDA row reads **1.08× the
+8-thread C++ and 6.6× the single-thread** on the stage-sum window — and
+**1.08× end to end**, because the DuckDB store is ~91% of the wall clock once
+the e2e rows carry the pool's real machine id. One qualification the ratio
+needs: CUDA's `clean_s` is the sum of its stage timers, while the C++ rows time
+their whole process — **wall to wall it is CUDA 9.08 s vs cpp-MT 7.53 s, i.e.
+slower than the 8-thread C++**. The 2026-08-13 sweep read 1.3× / 7.2× / 1.18×
+on the pre-review kernel and with `MCC` as the store's machine id; both moved
+the numbers, neither the conclusion. The full analysis, intervals and the
+per-contender measurement windows included, is in
+[`docs/bench/results.md`](docs/bench/results.md).
 
 **The vectorized Python contender is slower than the naive loop** — the reverse
 of what was expected. The cost is not vectorization failing to pay, it is float
@@ -1023,10 +1028,11 @@ kept — see [`docs/validation-log.md`](docs/validation-log.md) for the full
 write-up, including why the sweep's own cross-arch gate would *not* have caught
 it.
 
-**The number that matters is the end-to-end one.** 7.2× on the clean phase
-moves the month's pipeline by 1.18×, because persistence dominates — which is
+**The number that matters is the end-to-end one.** 6.6× on the clean phase
+moves the month's pipeline by 1.08×, because persistence dominates — which is
 the finding, not a footnote. The 2026-08-13 re-run with the corrected stage
-timers replaced the ~ estimates with these measurements.
+timers replaced the ~ estimates with measurements; the 2026-08-16 sweep
+re-measured the kernel that actually ships.
 
 ---
 
@@ -1435,7 +1441,7 @@ a number.
 
 - [x] **Python analytics agents** — eight deterministic analysis tools, an LLM planner and narrator that cannot alter a number, and the `arol` CLI. See [Analytics CLI and Reports](#analytics-cli-and-reports).
 - [x] **CUDA cleaning pipeline and the three-way benchmark** — the transform is element-wise, proved by test, so it ports to the GPU; the portable driver measures Python, C++ and CUDA on one machine. See [CUDA cleaning benchmark](#cuda-cleaning-benchmark).
-- [x] **Run the CUDA sweep on real hardware** — done on an RTX 4070 Laptop (CUDA 13.3, Windows 11): first sweep 2026-08-10, re-measured 2026-08-13 with the corrected timers. `--verify` caught a real 1-ulp GPU parse defect on the first run. Clean phase measured 1.3× the 8-thread C++ and 7.2× the single-thread; 1.18× end to end because the store dominates — see [docs/bench/results.md](docs/bench/results.md).
+- [x] **Run the CUDA sweep on real hardware** — done on an RTX 4070 Laptop (CUDA 13.3, Windows 11): first sweep 2026-08-10, re-measured 2026-08-13 with the corrected timers and 2026-08-16 on the post-review kernel with the pool's real machine id in the store rows. `--verify` caught a real 1-ulp GPU parse defect on the first run. Clean phase measured 1.08× the 8-thread C++ and 6.6× the single-thread; 1.08× end to end because the store dominates — see [docs/bench/results.md](docs/bench/results.md).
 - [x] **Attack the merge bottleneck** — the benchmark's headline finding. `DuckDbEventStore::merge_all()` replaces the per-row `INSERT OR IGNORE` probes with one set-based dedup over the union: 65.9 s → 22.8 s in isolation (2.89×), ~2.1× across the M2 sweep, same rows; end to end on actively-cooled hardware the design lands at **3.83×** the sequential baseline (537.8 s → 140.4 s, MAS N=16, resweep 2026-08-13). Partitioned Parquet output or a concurrent-writer store remain the larger redesigns
 - [x] **Worker registration gate** — `--workers N` holds the initial dispatch until N workers say hello (Plan 5), fixing the PUSH slow-joiner capture; implemented over the existing heartbeat channel rather than a REQ/REP pair
 - [ ] **PUB/SUB fan-out (and REQ/REP as such)** — the two ZeroMQ socket patterns from the spec that the 3-endpoint PUSH/PULL fabric still does not use
