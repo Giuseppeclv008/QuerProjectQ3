@@ -219,7 +219,7 @@ organized by layer.
 │           ├── bench_cpu_main.cpp          # → bench_cpu       (store-free contender)
 │           └── cuda_clean_main.cpp         # → mas_cuda_clean  (GPU contender, --verify)
 │
-├── tests/                                  # Google Test unit tests (21 files, 184 tests)
+├── tests/                                  # Google Test unit tests (21 files, 187 tests)
 │   ├── test_cap_event.cpp
 │   ├── test_cap_event_extractor.cpp
 │   ├── test_cap_event_extractor_flat.cpp   # The GPU precondition, proved against the stateful one
@@ -976,7 +976,7 @@ python bench/run_bench_cuda.py --data telemetry_..._2026-02.zip
 `MAS_BENCH_ONLY=ON` builds only the cleaning core and the benchmark binaries —
 no DuckDB, no ZeroMQ, nothing downloaded — so it configures on any machine with
 CMake, a C++20 compiler, and Python. **It also builds no tests** (the suite is a
-googletest fetch): on the GPU box, build the 8-case GPU/CPU differential from a
+googletest fetch): on the GPU box, build the 11-case GPU/CPU differential from a
 second build directory before trusting the numbers —
 `cmake -B build-gpu-tests -DMAS_ENABLE_CUDA=ON -DMAS_ENABLE_ZMQ=OFF`, then
 `ctest --test-dir build-gpu-tests` (this one does download). See
@@ -1345,15 +1345,15 @@ it, `--pdf` logs how to install it and writes Markdown and HTML as normal.
 
 ## Testing
 
-The project has **184 C++ unit tests** across 21 Google Test files — 176 in the
-default build plus the 8-case GPU/CPU differential behind `-DMAS_ENABLE_CUDA=ON`
+The project has **187 C++ unit tests** across 21 Google Test files — 176 in the
+default build plus the 11-case GPU/CPU differential behind `-DMAS_ENABLE_CUDA=ON`
 — plus **282
 Python tests** for the analytics tier. Every test count in this
 README is asserted by `python/tests/test_readme_counts.py`, so adding a test and
 forgetting this paragraph fails the suite rather than quietly dating it.
 
 ```bash
-cd build && ctest --output-on-failure           # 176 C++ tests in the default build; the 8-case GPU/CPU differential is compiled only with -DMAS_ENABLE_CUDA=ON (and skips without a device)
+cd build && ctest --output-on-failure           # 176 C++ tests in the default build; the 11-case GPU/CPU differential is compiled only with -DMAS_ENABLE_CUDA=ON (and skips without a device)
 cd python && ../.venv/bin/python -m pytest -q   # 282 Python tests (see the two data gates below)
 ```
 

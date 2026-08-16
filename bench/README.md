@@ -36,17 +36,19 @@ back.
 `MAS_BENCH_ONLY=ON` builds **no tests** — its contract is "downloads nothing"
 and the test suite is a googletest fetch, so the recipe above never compiles
 `tests/test_cuda_cleaner.cpp`. Before pasting numbers back, build and run the
-8-case differential from a second build directory (this one downloads
+11-case differential from a second build directory (this one downloads
 googletest and the DuckDB asset; Windows has a pinned DuckDB branch):
 
 ```
 cmake -S . -B build-gpu-tests -DMAS_ENABLE_CUDA=ON -DMAS_ENABLE_ZMQ=OFF
 cmake --build build-gpu-tests --config Release
-ctest --test-dir build-gpu-tests --output-on-failure
+ctest --test-dir build-gpu-tests -C Release --output-on-failure
 ```
 
-The CUDA cases skip without a device; on the GPU box they must run, not skip —
-check for `CudaCleaner` in the test output.
+(`-C Release` is required with the multi-config MSVC generator; a
+single-config generator ignores it.) The CUDA cases skip without a device; on
+the GPU box they must run, not skip — check for `CudaDifferential` in the test
+output.
 
 ## Adding the `e2e` rows
 
