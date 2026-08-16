@@ -116,6 +116,15 @@ void DuckDbEventStore::write(std::span<const CapEvent> events) {
     // two auto-commit statements, and an error between them leaves staging
     // populated for the next write() to re-insert. That was idempotent by luck
     // (INSERT OR IGNORE), not by design; here it is by design.
+    //
+    // The Appender above is NOT inside this transaction — it runs in
+    // auto-commit, so by the time the INSERT below throws (the strict ts cast),
+    // the staged rows are already durable. The catch must therefore clear
+    // staging itself, or the poisoned row is re-selected by every later
+    // write() and one malformed cell fails the store for the process lifetime.
+    // Both statements are best-effort (con.Query, not exec_or_throw): a throw
+    // from cleanup inside the catch would replace the real error with a
+    // rollback error. Same form as merge_all's detach_all.
     exec_or_throw(impl_->con, "BEGIN TRANSACTION");
     try {
         exec_or_throw(impl_->con, R"sql(
@@ -125,7 +134,10 @@ void DuckDbEventStore::write(std::span<const CapEvent> events) {
             FROM staging_cap_events)sql");
         exec_or_throw(impl_->con, "DELETE FROM staging_cap_events");
     } catch (...) {
-        exec_or_throw(impl_->con, "ROLLBACK");
+        auto rb = impl_->con.Query("ROLLBACK");                       // best effort
+        (void)rb;
+        auto del = impl_->con.Query("DELETE FROM staging_cap_events"); // do not poison the next write
+        (void)del;
         throw;
     }
     exec_or_throw(impl_->con, "COMMIT");
@@ -147,8 +159,10 @@ void DuckDbEventStore::merge_from(const std::string& other_db_path) {
         // The alias must not survive a failed merge: mas_merge (Task 5) now
         // skips-and-continues past an unopenable source, so a left-attached
         // "src" from one corrupt-but-attachable store would poison every
-        // later ATTACH ... AS src in the same loop.
-        exec_or_throw(impl_->con, "DETACH src");
+        // later ATTACH ... AS src in the same loop. Best effort: a DETACH
+        // failure inside the catch must not mask the merge error itself.
+        auto res = impl_->con.Query("DETACH src");
+        (void)res;
         throw;
     }
     exec_or_throw(impl_->con, "DETACH src");

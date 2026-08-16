@@ -1,6 +1,7 @@
 #include "mas/store/DuckDbEventStore.hpp"
 #include "mas/store/ParquetExport.hpp"
 #include <duckdb.hpp>
+#include "fakes/TempPath.hpp"
 #include <gtest/gtest.h>
 #include <cstdio>
 #include <string>
@@ -37,7 +38,7 @@ std::string tsAtSecond(long long s) {
 }
 
 TEST(DuckDbEventStore, WritePersistsRowsWithTypedColumns) {
-    const std::string path = "t_store_basic.duckdb";
+    const std::string path = mas::test::temp_artifact("t_store_basic.duckdb");
     removeDb(path);
     {
         mas::DuckDbEventStore store(path, "MCC1");
@@ -65,7 +66,7 @@ TEST(DuckDbEventStore, WritePersistsRowsWithTypedColumns) {
 }
 
 TEST(DuckDbEventStore, RewritingSameBatchIsIdempotent) {
-    const std::string path = "t_store_idem.duckdb";
+    const std::string path = mas::test::temp_artifact("t_store_idem.duckdb");
     removeDb(path);
     mas::DuckDbEventStore store(path, "MCC1");
     std::vector<mas::CapEvent> batch = {
@@ -79,7 +80,7 @@ TEST(DuckDbEventStore, RewritingSameBatchIsIdempotent) {
 }
 
 TEST(DuckDbEventStore, DuplicateKeyWithinOneBatchIsIgnored) {
-    const std::string path = "t_store_dup.duckdb";
+    const std::string path = mas::test::temp_artifact("t_store_dup.duckdb");
     removeDb(path);
     mas::DuckDbEventStore store(path, "MCC1");
     std::vector<mas::CapEvent> batch = {
@@ -91,8 +92,46 @@ TEST(DuckDbEventStore, DuplicateKeyWithinOneBatchIsIgnored) {
     removeDb(path);
 }
 
+TEST(DuckDbEventStore, AMalformedTimestampDoesNotPoisonLaterWrites) {
+    // The reachable case (CsvRawReader copies the timestamp cell verbatim; the
+    // strict CAST in write() throws) — and the regression that made it fatal:
+    // the Appender runs in auto-commit, outside the INSERT's transaction, so
+    // the ROLLBACK undid nothing and the DELETE never ran. The poisoned row
+    // stayed in staging and every later write() re-selected it, so one bad
+    // cell in one day-file failed the store for the rest of the process —
+    // worker_main constructs exactly one store per process. The Parquet twin
+    // has this test (AFailedWriteWritesNoFileAtAll); the default backend
+    // did not.
+    const std::string path = mas::test::temp_artifact("t_store_poison.duckdb");
+    removeDb(path);
+    {
+        mas::DuckDbEventStore store(path, "MCC1");
+        store.write(std::vector<mas::CapEvent>{ev(1, "2026-02-01T00:00:01.000", 101)});
+        EXPECT_EQ(store.count(), 1);
+
+        EXPECT_THROW(
+            store.write(std::vector<mas::CapEvent>{ev(1, "GARBAGE-TS", 102)}),
+            std::exception);
+        EXPECT_EQ(store.count(), 1) << "the failed batch leaked rows into cap_events";
+
+        // The batches that used to be rejected with the *stale* error: staging
+        // must have been cleared in the catch, or these re-hit "GARBAGE-TS".
+        store.write(std::vector<mas::CapEvent>{ev(1, "2026-02-01T00:00:02.000", 103)});
+        store.write(std::vector<mas::CapEvent>{ev(1, "2026-02-01T00:00:03.000", 104)});
+        EXPECT_EQ(store.count(), 3);
+    }
+    // Staging must not retain the poisoned row across a reopen either.
+    duckdb::DuckDB db(path);
+    duckdb::Connection con(db);
+    auto res = con.Query("SELECT COUNT(*) FROM staging_cap_events");
+    ASSERT_FALSE(res->HasError()) << res->GetError();
+    EXPECT_EQ(res->GetValue(0, 0).GetValue<int64_t>(), 0)
+        << "staging still holds rows from the failed batch";
+    removeDb(path);
+}
+
 TEST(DuckDbEventStore, ReopenKeepsRowsAndUpsertsAcrossRuns) {
-    const std::string path = "t_store_reopen.duckdb";
+    const std::string path = mas::test::temp_artifact("t_store_reopen.duckdb");
     removeDb(path);
     {
         mas::DuckDbEventStore store(path, "MCC1");
@@ -112,8 +151,8 @@ TEST(DuckDbEventStore, ReopenKeepsRowsAndUpsertsAcrossRuns) {
 }
 
 TEST(DuckDbEventStore, ExportParquetRoundtrips) {
-    const std::string path = "t_store_parquet.duckdb";
-    const std::string pq = "t_store_events.parquet";
+    const std::string path = mas::test::temp_artifact("t_store_parquet.duckdb");
+    const std::string pq = mas::test::temp_artifact("t_store_events.parquet");
     removeDb(path);
     std::remove(pq.c_str());
 
@@ -144,9 +183,9 @@ TEST(DuckDbEventStore, ExportParquetRoundtrips) {
 }
 
 TEST(DuckDbEventStore, MergeFromUnionsStoresIdempotently) {
-    const std::string a = "t_merge_a.duckdb";
-    const std::string b = "t_merge_b.duckdb";
-    const std::string dst = "t_merge_dst.duckdb";
+    const std::string a = mas::test::temp_artifact("t_merge_a.duckdb");
+    const std::string b = mas::test::temp_artifact("t_merge_b.duckdb");
+    const std::string dst = mas::test::temp_artifact("t_merge_dst.duckdb");
     removeDb(a); removeDb(b); removeDb(dst);
     {
         mas::DuckDbEventStore sa(a, "MCC1");
@@ -196,7 +235,7 @@ TEST(DuckDbEventStore, WriteHandlesBatchLargerThanPipelineKBatchSize) {
     // exercises write() with kBatch+1 events in a single call (larger than
     // any existing test), confirming the Appender-based path has no hidden
     // row-count limitation of its own.
-    const std::string path = "t_store_large_batch.duckdb";
+    const std::string path = mas::test::temp_artifact("t_store_large_batch.duckdb");
     removeDb(path);
     mas::DuckDbEventStore store(path, "MCC1");
 
@@ -223,9 +262,9 @@ TEST(DuckDbEventStore, MergeFromDetachesSourceOnInsertFailureSoAliasIsNotPoisone
     // whose cap_events schema doesn't match the SELECT list). Before this
     // fix that left "src" attached, poisoning every later ATTACH ... AS src
     // in the same connection (mas_merge's skip-and-continue loop hits this).
-    const std::string good = "t_merge_detach_good.duckdb";
-    const std::string bad = "t_merge_detach_bad.duckdb";
-    const std::string dst = "t_merge_detach_dst.duckdb";
+    const std::string good = mas::test::temp_artifact("t_merge_detach_good.duckdb");
+    const std::string bad = mas::test::temp_artifact("t_merge_detach_bad.duckdb");
+    const std::string dst = mas::test::temp_artifact("t_merge_detach_dst.duckdb");
     removeDb(good); removeDb(bad); removeDb(dst);
     {
         // Healthy source via the normal ctor/schema.
@@ -265,7 +304,7 @@ TEST(DuckDbEventStore, CounterResetDoesNotEvictEarlierClosures) {
     // used weeks earlier. Measured on the real pool: head 1 has 23,851 day-17
     // closures whose cap_seq collides with days 1-15, and 18,721 of them carry a
     // different torque — distinct physical caps. Keyed on cap_seq they vanished.
-    const std::string path = "t_store_reset.duckdb";
+    const std::string path = mas::test::temp_artifact("t_store_reset.duckdb");
     removeDb(path);
     mas::DuckDbEventStore store(path, "MCC1");
 
@@ -296,7 +335,7 @@ TEST(DuckDbEventStore, OnePollPerHeadIsOneRowRegardlessOfCapSeq) {
     // Caps missed between polls arrive as a single event with delta > 1, so two
     // rows sharing (head, ts) are the same observation however their cap_seq
     // differs — a duplicated frame, not two closures.
-    const std::string path = "t_store_same_ts.duckdb";
+    const std::string path = mas::test::temp_artifact("t_store_same_ts.duckdb");
     removeDb(path);
     mas::DuckDbEventStore store(path, "MCC1");
     std::vector<mas::CapEvent> batch = {
@@ -312,7 +351,7 @@ TEST(DuckDbEventStore, OnePollPerHeadIsOneRowRegardlessOfCapSeq) {
 TEST(DuckDbEventStore, StorePredatingTheKeyChangeIsRefused) {
     // CREATE TABLE IF NOT EXISTS would happily reuse an old file's
     // UNIQUE(..., cap_seq) index and go on silently producing wrong numbers.
-    const std::string path = "t_store_legacy.duckdb";
+    const std::string path = mas::test::temp_artifact("t_store_legacy.duckdb");
     removeDb(path);
     {   // hand-build a store in the old shape, with a row in it
         duckdb::DuckDB db(path);
@@ -366,7 +405,7 @@ TEST(DuckDbEventStore, PathContainingASingleQuoteWorks) {
 // --- merge_all: one set-based pass instead of N index-probing passes ---
 
 TEST(DuckDbEventStore, MergeAllUnionsDisjointSources) {
-    const std::string a = "t_ma_a.duckdb", b = "t_ma_b.duckdb", dst = "t_ma_dst.duckdb";
+    const std::string a = mas::test::temp_artifact("t_ma_a.duckdb"), b = mas::test::temp_artifact("t_ma_b.duckdb"), dst = mas::test::temp_artifact("t_ma_dst.duckdb");
     removeDb(a); removeDb(b); removeDb(dst);
     {
         mas::DuckDbEventStore sa(a, "MCC1");
@@ -385,8 +424,8 @@ TEST(DuckDbEventStore, MergeAllUnionsDisjointSources) {
 TEST(DuckDbEventStore, MergeAllCollapsesARedispatchedFile) {
     // A worker declared dead while still working has its file re-dispatched, so
     // the same events land in two stores. They agree in every column.
-    const std::string a = "t_ma_dup_a.duckdb", b = "t_ma_dup_b.duckdb",
-                      dst = "t_ma_dup_dst.duckdb";
+    const std::string a = mas::test::temp_artifact("t_ma_dup_a.duckdb"), b = mas::test::temp_artifact("t_ma_dup_b.duckdb"),
+                      dst = mas::test::temp_artifact("t_ma_dup_dst.duckdb");
     removeDb(a); removeDb(b); removeDb(dst);
     std::vector<mas::CapEvent> same = {ev(1, tsAtSecond(1), 101), ev(1, tsAtSecond(2), 102)};
     {
@@ -402,9 +441,9 @@ TEST(DuckDbEventStore, MergeAllCollapsesARedispatchedFile) {
 TEST(DuckDbEventStore, MergeAllAgreesWithRepeatedMergeFrom) {
     // The differential that makes the optimisation safe to adopt: same sources,
     // same rows, whichever path ran.
-    const std::string a = "t_ma_eq_a.duckdb", b = "t_ma_eq_b.duckdb",
-                      c = "t_ma_eq_c.duckdb";
-    const std::string d1 = "t_ma_eq_d1.duckdb", d2 = "t_ma_eq_d2.duckdb";
+    const std::string a = mas::test::temp_artifact("t_ma_eq_a.duckdb"), b = mas::test::temp_artifact("t_ma_eq_b.duckdb"),
+                      c = mas::test::temp_artifact("t_ma_eq_c.duckdb");
+    const std::string d1 = mas::test::temp_artifact("t_ma_eq_d1.duckdb"), d2 = mas::test::temp_artifact("t_ma_eq_d2.duckdb");
     for (const auto& p : {a, b, c, d1, d2}) removeDb(p);
     {
         mas::DuckDbEventStore sa(a, "MCC1");
@@ -429,7 +468,7 @@ TEST(DuckDbEventStore, MergeAllAgreesWithRepeatedMergeFrom) {
 }
 
 TEST(DuckDbEventStore, MergeAllFallsBackWhenDestinationIsNotEmpty) {
-    const std::string a = "t_ma_fb_a.duckdb", dst = "t_ma_fb_dst.duckdb";
+    const std::string a = mas::test::temp_artifact("t_ma_fb_a.duckdb"), dst = mas::test::temp_artifact("t_ma_fb_dst.duckdb");
     removeDb(a); removeDb(dst);
     {
         mas::DuckDbEventStore sa(a, "MCC1");
@@ -445,8 +484,8 @@ TEST(DuckDbEventStore, MergeAllFallsBackWhenDestinationIsNotEmpty) {
 }
 
 TEST(DuckDbEventStore, MergeAllIsIdempotentOnRerun) {
-    const std::string a = "t_ma_idem_a.duckdb", b = "t_ma_idem_b.duckdb",
-                      dst = "t_ma_idem_dst.duckdb";
+    const std::string a = mas::test::temp_artifact("t_ma_idem_a.duckdb"), b = mas::test::temp_artifact("t_ma_idem_b.duckdb"),
+                      dst = mas::test::temp_artifact("t_ma_idem_dst.duckdb");
     removeDb(a); removeDb(b); removeDb(dst);
     {
         mas::DuckDbEventStore sa(a, "MCC1");
