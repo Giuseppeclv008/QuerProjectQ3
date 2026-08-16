@@ -71,8 +71,19 @@ __device__ __forceinline__ double pow10_(int e) {
 // where a Count neighbour of 5000 turns a 0 into a fabricated counter reset.
 // The row ends are pre-trimmed of '\r'/'\n' and fields end at ',', so nothing
 // legitimate stops the scan early.
+//
+// *foreign is the subset of *inexact that lies outside the plain-decimal
+// grammar altogether (a scan that stopped early, or no digit at all). The
+// distinction is what keeps the pool on the fast path: a plain decimal that
+// is merely too long for the integer mantissa -- the pool's 17-digit reprs,
+// present in about half of all rows -- is inexact but finite and far inside
+// float range by construction (at most ~19 significant digits get here), so
+// its row can never fail the shared row policy and only its emitting cells
+// need the host's strtod. A foreign cell ("nan", "1e300", "", " 1.5") can go
+// either way, so its whole row is validated on the host -- 72 strtod calls
+// that, applied to every inexact row instead, cost ~0.12 s per day-file.
 __device__ __forceinline__ double parse_num(const char* p, const char* e,
-                                            bool* inexact) {
+                                            bool* inexact, bool* foreign) {
     constexpr long long kExact = 1LL << 53;          // cast to double is exact
     constexpr long long kGuard = (0x7fffffffffffffffLL - 9) / 10;  // no overflow
     bool neg = false;
@@ -94,10 +105,14 @@ __device__ __forceinline__ double parse_num(const char* p, const char* e,
         mant = mant * 10 + (c - '0');
         if (frac) ++scale;
     }
-    if (p != e) *inexact = true;       // stopped on a character the format
-                                       // does not allow: whatever follows, the
-                                       // value below is not the cell's value
-    if (!any_digit) *inexact = true;   // empty cell, bare sign, or lone '.'
+    if (p != e) {                      // stopped on a character the format
+        *inexact = true;               // does not allow: whatever follows, the
+        *foreign = true;               // value below is not the cell's value
+    }
+    if (!any_digit) {                  // empty cell, bare sign, or lone '.'
+        *inexact = true;
+        *foreign = true;
+    }
     if (mant > kExact) *inexact = true;
     if (scale > 22) *inexact = true;   // pow10_ is exact only to 1e22; beyond
                                        // it the divisor itself is rounded and
@@ -136,8 +151,13 @@ __global__ void flag_newlines(const char* buf, size_t n, unsigned char* flags,
 // so it is not a row at all: the delta kernel treats it as absent, and the
 // host never sees an event from it. It used to fall into the column-count
 // refusal (0 columns) and a CSV ending "\n\n" cleaned on the CPU and was
-// refused on the GPU.
+// refused on the GPU. Bit 5 = a torque/status cell is *foreign* to the
+// device grammar (see parse_num): the shared row policy may fail the whole
+// row for it, so the host validates all 72 cells of that row before shipping
+// any of its events. Rows whose inexact cells are all plain decimals (the
+// pool's case) skip that validation: they cannot fail the policy.
 constexpr unsigned char ROW_BLANK = 16u;
+constexpr unsigned char ROW_FOREIGN_CELL = 32u;
 
 __global__ void parse_rows(const char* buf, const unsigned long long* nl,
                            unsigned int n_rows, double* count, double* torque,
@@ -196,9 +216,10 @@ __global__ void parse_rows(const char* buf, const unsigned long long* nl,
     for (int f = 0; f < 3 * NUM_HEADS; ++f) {
         q = p;
         while (q < e && *q != ',') ++q;
-        bool inexact = false;
-        const double v = parse_num(p, q, &inexact);
+        bool inexact = false, foreign = false;
+        const double v = parse_num(p, q, &inexact, &foreign);
         if (inexact) fl |= (f < NUM_HEADS) ? 2u : 1u;
+        if (foreign && f >= NUM_HEADS) fl |= ROW_FOREIGN_CELL;
         const int h = f % NUM_HEADS;
         const size_t idx = static_cast<size_t>(r) * NUM_HEADS + h;
         if (f < NUM_HEADS)            count[idx] = v;
@@ -568,7 +589,7 @@ bool cuda_clean_file(const std::string& path, std::vector<CapEvent>& out,
                     if (*p == ',') fld[f++] = p + 1;
                 for (; f < 1 + 3 * NUM_HEADS; ++f) fld[f] = end;  // short row
                 cached_row = d.row_index;
-                if (rf & 1u) {
+                if (rf & ROW_FOREIGN_CELL) {
                     // The shared row policy (RowParse) fails the WHOLE row --
                     // every head's events, not just the offending cell's --
                     // when any torque/status cell is not a number (stod
@@ -577,13 +598,17 @@ bool cuda_clean_file(const std::string& path, std::vector<CapEvent>& out,
                     // float range (BadReal). The CPU readers skip such a row
                     // before the extractor sees it; this pipeline is past the
                     // delta stage and cannot, so the only honest option is to
-                    // refuse the file. Checked once per flagged row over all
-                    // 72 cells: checking only the emitting heads' cells let a
-                    // row the CPU drops for a "nan" on head 6 ship head 1's
-                    // event. strtod mirrors stod otherwise -- leading
-                    // whitespace and trailing garbage are tolerated by both
-                    // (" 1.5", "1.2.3", "2.0\r"), and every cell here ends at
-                    // ',' or at the row's CR/LF, never mid-number.
+                    // refuse the file. Checked once per row that holds a
+                    // foreign cell, over all 72 cells: checking only the
+                    // emitting heads' cells let a row the CPU drops for a
+                    // "nan" on head 6 ship head 1's event. Rows whose inexact
+                    // cells are all plain decimals never come here (see
+                    // parse_num) -- on the pool that is every flagged row,
+                    // and the difference is ~0.12 s per day-file. strtod
+                    // mirrors stod otherwise -- leading whitespace and
+                    // trailing garbage are tolerated by both (" 1.5",
+                    // "1.2.3", "2.0\r"), and every cell here ends at ',' or
+                    // at the row's CR/LF, never mid-number.
                     for (int c = 1 + NUM_HEADS; c < 1 + 3 * NUM_HEADS; ++c) {
                         char* endp = nullptr;
                         errno = 0;
@@ -609,8 +634,10 @@ bool cuda_clean_file(const std::string& path, std::vector<CapEvent>& out,
                 e.ts = std::string(fld[0], fld[1] - 1);
             }
             if (rf & 1u) {
-                // Every cell of this row passed the check above, so these
-                // parse and are in range by construction.
+                // Exact re-parse of this event's own cells. They parse and
+                // are in range by construction: a plain-decimal inexact cell
+                // is finite and small, and a row with any foreign cell passed
+                // the 72-cell check above.
                 const int h0 = d.head_id - 1;
                 e.app_torque = std::strtod(fld[1 + NUM_HEADS + h0], nullptr);
                 e.status = std::strtod(fld[1 + 2 * NUM_HEADS + h0], nullptr);
