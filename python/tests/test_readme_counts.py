@@ -35,14 +35,48 @@ def _claimed(pattern):
     return found.pop()
 
 
-def test_readme_cpp_test_count_matches_the_sources():
-    actual = sum(
-        len(re.findall(r"^(?:TEST|TEST_F)\(", f.read_text(encoding="utf-8"), re.M))
+def _cpp_counts():
+    """(total, per-file) TEST/TEST_F counts from the sources."""
+    per_file = {
+        f.name: len(re.findall(r"^(?:TEST|TEST_F)\(", f.read_text(encoding="utf-8"), re.M))
         for f in sorted((_ROOT / "tests").glob("*.cpp"))
-    )
+    }
+    return sum(per_file.values()), per_file
+
+
+def test_readme_cpp_test_count_matches_the_sources():
+    actual, per_file = _cpp_counts()
     assert actual > 0, "found no TEST macros; has tests/ moved?"
     assert _claimed(r"\*\*([\d,]+) C\+\+ unit tests\*\*") == actual
-    assert _claimed(r"#\s*([\d,]+) C\+\+ tests") == actual
+    # The default build is every source except the CUDA differential
+    # (test_cuda_cleaner.cpp is gated on MAS_ENABLE_CUDA).
+    default_build = actual - per_file.get("test_cuda_cleaner.cpp", 0)
+    assert _claimed(r"#\s*([\d,]+) C\+\+ tests in the default build") == default_build
+    assert _claimed(r"\*\*([\d,]+) tests green\*\*") == default_build
+    assert _claimed(r"([\d,]+) in the\ndefault build") == default_build
+    # Google Test file count, stated next to the total.
+    assert _claimed(r"across ([\d,]+) Google Test files") == len(per_file)
+    # The project-structure tree states both again.
+    assert _claimed(r"\(([\d,]+) files, [\d,]+ tests\)") == len(per_file)
+    assert _claimed(r"\([\d,]+ files, ([\d,]+) tests\)") == actual
+
+
+def test_readme_gated_test_counts_match_the_gating():
+    # These paragraphs tell a grader that drift is impossible here; a false
+    # safety signal is worse than an unguarded number, so every gated count
+    # the README states is reconciled against the sources, not just the two
+    # headline totals (146 and 57 both sat stale fifty lines from the guard).
+    _, per_file = _cpp_counts()
+    zmq_gated = sum(per_file.get(n, 0) for n in
+                    ("test_zmq_smoke.cpp", "test_zmq_transport.cpp",
+                     "test_zmq_e2e.cpp"))
+    assert _claimed(r"and its ([\d,]+) transport tests") == zmq_gated
+    agent_layer = sum(per_file.get(n, 0) for n in
+                      ("test_message.cpp", "test_cleaning_worker.cpp",
+                       "test_coordinator.cpp"))
+    assert _claimed(r"agent layer's ([\d,]+) tests") == agent_layer
+    assert _claimed(r"([\d,]+)-case GPU/CPU differential") == \
+        per_file.get("test_cuda_cleaner.cpp", 0)
 
 
 def test_readme_python_test_count_matches_collection(request):
@@ -60,3 +94,38 @@ def test_readme_python_test_count_matches_collection(request):
     collected = len(request.session.items)
     assert _claimed(r"\*\*([\d,]+)\s*\nPython tests\*\*") == collected
     assert _claimed(r"#\s*([\d,]+) Python tests") == collected
+
+
+def test_every_readme_test_count_is_one_of_the_guarded_forms():
+    """No unguarded `N tests` claim may exist in the README.
+
+    The guard used to check two totals while four other count claims sat
+    stale beside them. Any number followed by "test(s)" must either match a
+    guarded pattern above or be listed here as a deliberate non-suite figure.
+    """
+    text = (_ROOT / "README.md").read_text(encoding="utf-8")
+    guarded = [
+        r"\*\*[\d,]+ C\+\+ unit tests\*\*",
+        r"#\s*[\d,]+ C\+\+ tests in the default build",
+        r"\*\*[\d,]+ tests green\*\*",
+        r"[\d,]+ in the\ndefault build",
+        r"\*\*[\d,]+\s*\nPython tests\*\*",
+        r"#\s*[\d,]+ Python tests",
+        r"and its [\d,]+ transport tests",
+        r"agent layer's [\d,]+ tests",
+        r"[\d,]+-case GPU/CPU differential",
+        r"\([\d,]+ files, [\d,]+ tests\)",
+        # Deliberate non-suite figures: subsets described in prose.
+        r"\d+ tests? (?:need|skip|fail)",
+        r"\*\*\d+ tests?\*\* need",
+        r"21 coordinator tests",     # the deterministic-liveness story
+        r"50 ZMQ tests",             # historical figure inside a dated entry
+    ]
+    stripped = text
+    for pat in guarded:
+        stripped = re.sub(pat, "", stripped)
+    leftovers = re.findall(r"[^\n]*\b[\d,]+ tests?\b[^\n]*", stripped)
+    assert not leftovers, (
+        "unguarded test-count claim(s) in README.md -- add a reconciliation "
+        f"to this file or reword them: {leftovers!r}"
+    )
