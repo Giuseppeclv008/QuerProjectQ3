@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <limits>
 #include "mas/domain/CapEvent.hpp"
 
 // Semantics measured at closure over 2026-02-01 (765,711 closures), spec §3.1:
@@ -41,4 +42,14 @@ TEST(CapEvent, RejectBitIsBitZeroNotStatus65) {
     for (double s : {0.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0}) {
         EXPECT_FALSE(mas::is_reject(s)) << "status " << s;
     }
+}
+
+TEST(CapEvent, UnrepresentableStatusReadsAsRejectNeverAsClean) {
+    // static_cast<long long> of nan/inf/1e300 is UB, and stod produces all
+    // three from a Status cell. A status that cannot be the PLC's bitmask is
+    // not evidence of a clean closure.
+    EXPECT_TRUE(mas::is_reject(std::numeric_limits<double>::quiet_NaN()));
+    EXPECT_TRUE(mas::is_reject(std::numeric_limits<double>::infinity()));
+    EXPECT_TRUE(mas::is_reject(-std::numeric_limits<double>::infinity()));
+    EXPECT_TRUE(mas::is_reject(1e300));
 }

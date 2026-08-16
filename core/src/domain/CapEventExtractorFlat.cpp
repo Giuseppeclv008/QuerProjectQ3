@@ -1,4 +1,5 @@
 #include "mas/domain/CapEventExtractorFlat.hpp"
+#include <climits>
 #include <cmath>
 #include <fstream>
 #include <sstream>
@@ -75,6 +76,16 @@ bool load_columns(const std::string& path, RawColumns& out, std::string& error) 
             out.status.resize(out.n_rows * NUM_HEADS);
             continue;
         }
+        bool counts_ok = true;
+        for (std::size_t k = out.n_rows * NUM_HEADS; k < out.count.size(); ++k)
+            if (!is_valid_count(out.count[k])) { counts_ok = false; break; }
+        if (!counts_ok) {                                 // same rollback: the row is unusable
+            out.ts.resize(out.n_rows);
+            out.count.resize(out.n_rows * NUM_HEADS);
+            out.torque.resize(out.n_rows * NUM_HEADS);
+            out.status.resize(out.n_rows * NUM_HEADS);
+            continue;
+        }
         ++out.n_rows;
     }
     return true;
@@ -97,7 +108,14 @@ void extract_flat(const std::vector<std::string>& ts,
             e.cap_seq = c_cur;
             e.app_torque = torque[cur + h];
             e.status = status[cur + h];
-            e.delta = (c_cur > c_prv) ? static_cast<int>(c_cur - c_prv) : 0;
+            // Counts are within ±2^53 (loader guarantee) so the subtraction
+            // is exact; the jump can still exceed int, and truncating it
+            // fabricated small deltas. Saturate instead: the magnitude is
+            // already "absurdly many caps", and aggregated stays true.
+            const long long jump = c_cur - c_prv;
+            e.delta = (jump > 0)
+                          ? static_cast<int>(jump > INT_MAX ? INT_MAX : jump)
+                          : 0;
             e.is_fault = is_reject(status[cur + h]);
             e.aggregated = e.delta > 1;
             e.reset = c_cur < c_prv;

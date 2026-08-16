@@ -124,4 +124,33 @@ TEST(CsvRawReader, AcceptsTheRealArolHeader) {
     std::remove(path.c_str());
 }
 
+TEST(CsvRawReader, RowsWithNonCounterCountsAreSkippedLikeAnyMalformedRow) {
+    // stod accepts "1e18", "inf" and "nan" for a Count cell, and llround on
+    // those is unspecified -- downstream they fabricated events (counts
+    // 100 -> 5e9 emitted delta=705032604). Such a row is as unusable as one
+    // with a non-numeric cell: skipped, and counted as skipped.
+    const auto countRow = [](const std::string& ts, const std::string& c0) {
+        std::string row = ts;
+        for (int i = 0; i < 36; ++i) row += (i == 0) ? ("," + c0) : ",0.0";
+        for (int i = 0; i < 36; ++i) row += ",2.0";
+        for (int i = 0; i < 36; ++i) row += ",0.0";
+        return row;
+    };
+    const std::string path = "t_csv_badcount.csv";
+    writeFile(path, realHeader() + "\n" +
+                        countRow("2026-02-01T10:00:00.000", "100") + "\n" +
+                        countRow("2026-02-01T10:00:01.000", "1e18") + "\n" +
+                        countRow("2026-02-01T10:00:02.000", "inf") + "\n" +
+                        countRow("2026-02-01T10:00:03.000", "nan") + "\n" +
+                        countRow("2026-02-01T10:00:04.000", "101") + "\n");
+    mas::CsvRawReader reader(path);
+    ASSERT_TRUE(reader.is_open());
+    mas::RawRow r;
+    int rows = 0;
+    while (reader.next(r)) ++rows;
+    EXPECT_EQ(rows, 2);
+    EXPECT_EQ(reader.skipped(), 3u);
+    std::remove(path.c_str());
+}
+
 } // namespace

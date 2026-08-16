@@ -1,4 +1,5 @@
 #include "mas/domain/CapEventExtractor.hpp"
+#include <climits>
 #include <cmath>
 
 namespace mas {
@@ -28,7 +29,13 @@ void CapEventExtractor::process(const RawRow& row, std::vector<CapEvent>& out) {
             continue;
         }
         if (c > *last) {                  // real cap applied
-            out.push_back(makeEvent(row, h, c, static_cast<int>(c - *last), false));
+            // Same saturation as the flat extractor: an over-int jump must
+            // not truncate into a small delta (and never into <= 1, which
+            // would also clear `aggregated`).
+            const long long jump = c - *last;
+            out.push_back(makeEvent(
+                row, h, c,
+                static_cast<int>(jump > INT_MAX ? INT_MAX : jump), false));
             last = c;
         }
         else if (c < *last) {             // counter reset / rollover

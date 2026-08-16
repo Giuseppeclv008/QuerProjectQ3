@@ -115,4 +115,24 @@ TEST(CapEventExtractor, DeltaSumEqualsFinalMinusInitialAcrossSpan) {
     EXPECT_EQ(sum, 1005 - 1000);   // 5 caps, independent of poll cadence
 }
 
+TEST(CapEventExtractor, OverIntCountJumpSaturatesDeltaAndStaysAggregated) {
+    // 0 -> 5e9 is within the loaders' ±2^53 count domain but past INT_MAX.
+    // The old cast truncated it (delta=705032604) and a truncation landing
+    // at <= 1 also cleared `aggregated` -- an event claiming no caps elapsed.
+    mas::CapEventExtractor ex;
+    std::vector<mas::CapEvent> out;
+    mas::RawRow r1;
+    r1.ts = "2026-02-01T00:00:00.000";
+    r1.count[0] = 100.0;
+    mas::RawRow r2 = r1;
+    r2.ts = "2026-02-01T00:00:01.000";
+    r2.count[0] = 5e9;
+    ex.process(r1, out);
+    ex.process(r2, out);
+    ASSERT_EQ(out.size(), 1u);
+    EXPECT_EQ(out[0].cap_seq, 5000000000LL);
+    EXPECT_EQ(out[0].delta, INT_MAX);
+    EXPECT_TRUE(out[0].aggregated);
+}
+
 } // namespace

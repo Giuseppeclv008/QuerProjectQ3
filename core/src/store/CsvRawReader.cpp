@@ -89,6 +89,13 @@ bool CsvRawReader::next(RawRow& out) {
             ++skipped_;               // malformed numeric cell
             continue;
         }
+        bool counts_ok = true;
+        for (int h = 0; h < NUM_HEADS; ++h)
+            if (!is_valid_count(out.count[h])) { counts_ok = false; break; }
+        if (!counts_ok) {
+            ++skipped_;               // count outside the counter's domain
+            continue;
+        }
         return true;
     }
     return false;
