@@ -1,4 +1,5 @@
 #include "mas/store/ParquetExport.hpp"
+#include "mas/store/AtomicPublish.hpp"
 #include "mas/store/DuckDbExec.hpp"
 #include "mas/store/SqlQuote.hpp"
 #include <duckdb.hpp>
@@ -90,21 +91,35 @@ ExportResult export_store_to_parquet(const std::string& db_path,
     // *destination* resolved, and an unresolvable destination compares equal to
     // nothing -- which would silently turn the guard off.
     //
-    // The fallback is reached, but it can never fire, and the difference
-    // matters enough to state precisely -- an earlier version of this comment
-    // claimed no input reached it at all, which is wrong: `db_path + ".wal"` is
-    // a path exists_or_throw never examines, so `wal_ec` can be set while both
-    // arguments stat cleanly. A symlink loop at the WAL's own name does it, as
-    // does a store filename long enough that + ".wal" exceeds NAME_MAX.
+    // The fallback is a real fallback: it is reached, it fires, and where it
+    // fires the guard is weaker. Two previous versions of this comment claimed
+    // otherwise -- first that no input reached it, then that it could never
+    // fire -- and both were wrong by construction, so this one states the
+    // behaviour instead of arguing for a bound.
     //
-    // What holds is the weaker claim. `wal_ec` is set only when <db>.wal itself
-    // is unresolvable, and in that state any out_path spelling that string-
-    // equals db_path + ".wal" is equally unstat-able and was already refused by
-    // name above. dest_ec alone cannot cause !resolved either, since whatever
-    // breaks weakly_canonical(out_path) breaks exists(out_path) first. So the
-    // comparison on this line is always false when it is evaluated -- kept
-    // because the alternative to a dead three-token branch is a guard that
-    // fails open if that ever stops being true.
+    // What makes weakly_canonical fail while exists() succeeds: exists() stats
+    // relative to the cwd, weakly_canonical goes through the absolute form. In
+    // a cwd longer than PATH_MAX both calls here set their error_code while
+    // both arguments stat cleanly, and the string comparison is what runs.
+    // Measured from a 1259-byte cwd on APFS:
+    //
+    //   mas_export s.duckdb s.duckdb.wal    -> refused, by string equality
+    //   mas_export s.duckdb ./s.duckdb.wal  -> EXPORTED ONTO THE WAL, rc=0
+    //
+    // That second line is the honest limit of this guard: the "./" spelling is
+    // precisely what weakly_canonical was added to catch, and in the state
+    // where canonicalization is unavailable there is nothing left to catch it
+    // with. The fallback still buys the exact spelling, which is the one a
+    // script produces; it does not buy spelling-independence, and no comparison
+    // here can while the paths cannot be resolved.
+    //
+    // Case is a second such limit, on this platform rather than in this code:
+    // weakly_canonical does not case-fold, so on a case-insensitive volume
+    // (APFS's default) S.DUCKDB.WAL names the same file and is not refused.
+    //
+    // A typo guard, then -- not a security boundary. Nothing downstream relies
+    // on it: DuckDB rejects a bogus WAL on open, which is what actually keeps
+    // the store safe.
     std::error_code wal_ec, dest_ec;
     const auto wal = std::filesystem::weakly_canonical(db_path + ".wal", wal_ec);
     const auto dest = std::filesystem::weakly_canonical(out_path, dest_ec);
@@ -143,23 +158,33 @@ ExportResult export_store_to_parquet(const std::string& db_path,
     const std::string where = where_clause(since, until);
     const long long expected = scalar_or_throw(con, "SELECT COUNT(*) FROM cap_events" + where);
 
-    // ORDER BY makes the file deterministic: same store, same bytes. Without
-    // it DuckDB is free to emit row groups in whatever order the scan produced,
-    // so two exports of one store would not compare equal.
-    exec_or_throw(con, "COPY (SELECT * FROM cap_events" + where +
-                     " ORDER BY head_id, ts) TO '" + sql_quote(out_path) +
-                     "' (FORMAT PARQUET)");
+    // Written to a private name and renamed into place, and verified before the
+    // rename rather than after. A COPY that runs out of space used to leave its
+    // truncated output at out_path -- unreadable, so any glob over that
+    // directory failed on its account, and the overwrite guard above then
+    // refused the retry that would have replaced it. Nothing partial is ever
+    // visible under the name the user chose now, and a failed export leaves the
+    // destination exactly as it found it.
+    publish_atomically(out_path, [&](const std::string& tmp) {
+        // ORDER BY makes the file deterministic: same store, same bytes.
+        // Without it DuckDB is free to emit row groups in whatever order the
+        // scan produced, so two exports of one store would not compare equal.
+        exec_or_throw(con, "COPY (SELECT * FROM cap_events" + where +
+                         " ORDER BY head_id, ts) TO '" + sql_quote(tmp) +
+                         "' (FORMAT PARQUET)");
 
-    // Verify against the file just written rather than trusting COPY. A
-    // truncated or unreadable Parquet must fail here, not three months later
-    // when somebody tries to read it.
-    const long long written =
-        scalar_or_throw(con, "SELECT COUNT(*) FROM read_parquet('" + sql_quote(out_path) + "')");
-    if (written != expected)
-        throw std::runtime_error("export verification failed for " + out_path +
-                                 ": store has " + std::to_string(expected) +
-                                 " rows in range, Parquet holds " +
-                                 std::to_string(written));
+        // Verify the bytes just written rather than trusting COPY. A truncated
+        // or unreadable Parquet must fail here, not three months later when
+        // somebody tries to read it -- and failing here means it never reaches
+        // out_path at all.
+        const long long written =
+            scalar_or_throw(con, "SELECT COUNT(*) FROM read_parquet('" + sql_quote(tmp) + "')");
+        if (written != expected)
+            throw std::runtime_error("export verification failed for " + out_path +
+                                     ": store has " + std::to_string(expected) +
+                                     " rows in range, Parquet holds " +
+                                     std::to_string(written));
+    });
 
     return ExportResult{expected, out_path};
 }

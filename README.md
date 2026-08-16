@@ -448,6 +448,7 @@ nothing is what lets the benchmark build on a machine with no DuckDB at all.
 | `BeatingStore` | [`BeatingStore.hpp`](core/include/mas/store/BeatingStore.hpp) | Decorator that fires a heartbeat callback around each `write()`, so a long clean does not look dead to the coordinator. Wraps either backend. |
 | `sql_quote` | [`SqlQuote.hpp`](core/include/mas/store/SqlQuote.hpp) | Header-only. Doubles embedded `'` — ATTACH, COPY and `read_parquet` take paths as SQL literals and DuckDB binds no parameters for them. |
 | `exec_or_throw` | [`DuckDbExec.hpp`](core/include/mas/store/DuckDbExec.hpp) | Header-only. DuckDB reports errors in the result rather than throwing; these three wrappers turn a missed `HasError()` from a silent wrong answer into an exception. |
+| `publish_atomically` | [`AtomicPublish.hpp`](core/include/mas/store/AtomicPublish.hpp) | Header-only. Write to a private sibling name, verify, rename into place, remove the temp on any throw. Shared by both Parquet writers, so a failed write cannot leave a partial file under a name readers glob. |
 
 ### Agent Layer
 
@@ -631,12 +632,12 @@ that gets handed over.
 ### `clean` — Single-File Batch Pipeline
 
 ```
-usage: clean [--format duckdb|parquet] <raw_in.csv> <events_out.csv|events_out.duckdb|out_dir> [machine_id]
+usage: clean [--format duckdb|parquet] <raw_in.csv> <events_out.csv|.duckdb|out_dir> [machine_id]
 ```
 
 Processes a single raw CSV day-file. Output selection:
 - `--format parquet` → the second argument is a *directory*; writes
-  `<dir>/<input basename>.parquet` via `ParquetEventStore`. Nothing is written
+  `<dir>/<input basename without extension>.parquet` via `ParquetEventStore`. Nothing is written
   at all if the clean fails, so a short file never reads as a whole day.
 - otherwise, by file extension: `.duckdb` → `DuckDbEventStore` (probes input
   first to avoid creating an empty DB); anything else → `CsvEventStore`
@@ -1048,7 +1049,7 @@ cmake --build build --parallel
 | `MAS_BUILD_TESTS` | `ON` | Build the GoogleTest suite. `OFF` drops the last dependency that needs network. |
 
 The default triple (`OFF, ON, OFF, ON`) is the build this project has always
-had: **140 tests green**. With `MAS_BENCH_ONLY=ON` the suite is the 51 tests that
+had: **146 tests green**. With `MAS_BENCH_ONLY=ON` the suite is the 57 tests that
 need neither DuckDB nor ZeroMQ; with `MAS_BUILD_TESTS=OFF` on top of that,
 `_deps/` is never created at all — nothing is downloaded:
 
@@ -1298,19 +1299,19 @@ it, `--pdf` logs how to install it and writes Markdown and HTML as normal.
 
 ## Testing
 
-The project has **140 C++ unit tests** across 18 Google Test files, plus **250
+The project has **146 C++ unit tests** across 19 Google Test files, plus **250
 Python tests** for the analytics tier. Both counts are asserted by
 `python/tests/test_readme_counts.py`, so adding a test and forgetting this
 paragraph fails the suite rather than quietly dating it.
 
 ```bash
-cd build && ctest --output-on-failure           # 140 C++ tests
+cd build && ctest --output-on-failure           # 146 C++ tests
 cd python && ../.venv/bin/python -m pytest -q   # 250 Python tests (5 need the rebuilt store or a real day-file and skip without them)
 ```
 
-Under `-DMAS_BENCH_ONLY=ON` the C++ suite is the 51 tests that need neither
+Under `-DMAS_BENCH_ONLY=ON` the C++ suite is the 57 tests that need neither
 DuckDB nor ZeroMQ — the rest are excluded by design, not skipped. (Two of the
-51 skip without the extracted pool beside the binary.)
+57 skip without the extracted pool beside the binary.)
 
 | Test File | What It Tests |
 |-----------|---------------|
@@ -1321,6 +1322,7 @@ DuckDB nor ZeroMQ — the rest are excluded by design, not skipped. (Two of the
 | `test_csv_raw_reader.cpp` | Happy path, truncated rows, malformed numerics, missing file |
 | `test_bench_cpu_parity.cpp` | `bench_cpu`'s streamed loop == `load_columns` + `extract_flat`, event for event, on real data |
 | `test_engine_select.cpp` | `--engine=cpu\|cuda` selection, and that the CUDA path is refused when it was not compiled in |
+| `test_atomic_publish.cpp` | `publish_atomically`: nothing is visible under the destination's name until the rename, a throw from the writer propagates unmasked with the temp removed, a writer that produced nothing or produced a directory is refused, two publishes to one path use different temps, and a temp cannot be mistaken for a `.parquet` |
 | `test_cli_args.cpp` | `unconsumed_flag`: a flag after the positionals is an error, `--format=x` says where the value goes, and `-`/`-1` stay positional |
 | `test_pipeline.cpp` | End-to-end CSV→events flow, batch boundary, error codes |
 | `test_duckdb_smoke.cpp` | DuckDB library linkage sanity |
