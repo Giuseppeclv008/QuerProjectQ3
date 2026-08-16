@@ -117,6 +117,12 @@ def period_clause(period):
         first, last = period.split("..", 1)
         start, _ = _month_bounds(first.strip())
         _, end = _month_bounds(last.strip())
+        # A reversed range matched nothing and read as a confident "no
+        # capping events" -- a typo producing a reassurance.
+        if start >= end:
+            raise ValueError(
+                f"reversed period {period!r}: {first.strip()} is not before "
+                f"{last.strip()}")
     else:
         start, end = _month_bounds(period.strip())
     return "ts >= ? AND ts < ?", [start, end]

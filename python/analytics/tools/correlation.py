@@ -15,6 +15,13 @@ from analytics.store import connect, discover_heads, scope_clause
 
 _BUCKETS = {"day": "DAY", "hour": "HOUR"}
 
+# Pearson over n=2 shared points is +/-1 by construction -- every pair "correlates
+# perfectly", the whole ranking ties, and the report claimed all heads track each
+# other closely at whatever sign the noise happened to give. Three is the floor at
+# which the coefficient can disagree with itself; it is still weak evidence, and
+# the assumption below says so.
+MIN_BUCKETS = 3
+
 
 def head_correlation(cfg, period=None, heads=None, by="day"):
     if by not in _BUCKETS:
@@ -54,14 +61,17 @@ def head_correlation(cfg, period=None, heads=None, by="day"):
 
     df = pd.DataFrame(rows, columns=["head_id", "bucket", "value"])
     wide = df.pivot(index="bucket", columns="head_id", values="value")
-    if len(wide) < 2:
+    if len(wide) < MIN_BUCKETS:
         return ToolResult.insufficient(
             "head_correlation",
-            f"need at least 2 {by} buckets to correlate, got {len(wide)}",
+            f"need at least {MIN_BUCKETS} {by} buckets to correlate, got {len(wide)}",
             period=period, rows_scanned=scanned,
         )
 
-    corr = wide.corr()
+    # min_periods guards the pairwise path: DataFrame.corr() uses
+    # pairwise-complete observations, so a head present in only 2 of many
+    # buckets got a +/-1 against every peer -- and topped the outlier ranking.
+    corr = wide.corr(min_periods=MIN_BUCKETS)
     matrix = {
         int(a): {int(b): (None if pd.isna(corr.loc[a, b]) else float(corr.loc[a, b]))
                  for b in corr.columns}
@@ -81,6 +91,9 @@ def head_correlation(cfg, period=None, heads=None, by="day"):
         filters=[f"heads={sorted(heads)}", f"by={by}"],
         assumptions=["heads correlate on their bucketed mean torque series; the head "
                      "with the lowest mean correlation to its peers is the one out of step",
-                     "a head with no defined correlation to any peer (e.g. constant torque, "
-                     "zero variance) is omitted from outliers and shown as None in the matrix"],
+                     "a head with no defined correlation to any peer (constant torque, "
+                     f"zero variance, or fewer than {MIN_BUCKETS} shared buckets) is "
+                     "omitted from outliers and shown as None in the matrix",
+                     f"{MIN_BUCKETS} buckets is a floor, not power: treat correlations "
+                     "over few buckets as suggestive only"],
     )

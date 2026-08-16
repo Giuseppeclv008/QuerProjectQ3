@@ -1,6 +1,6 @@
 # Capping KPI report for 2026-02.
 
-*Generated 2026-07-24T12:00:00Z — narrative source: template, plan source: router.*
+*Generated 2026-07-24T12:00:00Z — narrative source: template, plan source: router, model: none (deterministic template and router).*
 
 ## Goal
 
@@ -22,7 +22,7 @@ Capping KPI report for 2026-02.
 
 ## Findings
 
-- **Scope.** 6 capping operations across heads 1-3, from 2026-02-01 00:00:00 to 2026-02-01 00:00:40. 2 no-load cycles are excluded from every rate below.
+- **Scope.** 6 capping operations across 3 heads, from 2026-02-01 00:00:00 to 2026-02-01 00:00:40. 2 no-load cycles are excluded from every rate below.
 - **Success rate.** 66.6667% (4 successful, 2 rejected). Lowest head: 2.
 - **Weakest head.** 2 at 33.3333% over 3 capping operations.
 - **Throughput.** 6 pieces/hour, averaged over 1 active bucket.

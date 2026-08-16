@@ -34,7 +34,7 @@ So `status = 65` is `64 + 1` — Bad Closure **with** the reject signal — and
 only if it is **odd**:
 
 ```sql
-CAST(status AS BIGINT) % 2 = 1
+CAST(status AS BIGINT) % 2 <> 0   -- <> 0, not = 1: covers negative status
 ```
 
 This is the single definition of failure across the toolkit
@@ -190,6 +190,16 @@ inside their own band and hide themselves. The median and the median absolute
 deviation have a 50% breakdown point, so the band stays where the bulk of the
 data is regardless of how extreme the outliers are.
 
+**When MAD is zero.** That same 50% breakdown point means MAD is exactly 0 for a
+head whose readings are more than half identical — routine for a quantised
+sensor, and guaranteed for a head stuck at one value, which is precisely the
+failure this detector exists to catch. Such heads are *not* dropped. The band
+falls back to `median ± k · IQR/2` (the same σ-multiple as the MAD band under
+normality: MAD ≈ 0.6745σ and IQR ≈ 1.349σ), and when the IQR is 0 too, any
+reading off the median is a deviation. Heads on a fallback are listed in the
+result's `deviation_fallbacks`, so a "0 deviation hits" claim is checkable
+against which band produced it.
+
 The two detectors are independent on purpose: a head can drift entirely within
 the configured band (deviation hits, no threshold hits), and a correctly centred
 head can run a product whose band is wrong (threshold hits, no deviation hits).
@@ -214,8 +224,13 @@ moving" rather than "what is the slope", which is the right question for a
 maintenance trigger. A rolling mean (`window`, default 7 days) is returned
 alongside for plotting.
 
-**`|tau| ≥ 0.5` flags drift.** Measured over three months, no head exceeds the
-threshold on either signal.
+**`|tau| ≥ 0.5` AND `p < 0.05` flags drift.** Effect size alone is not evidence:
+with n=2 daily buckets tau is ±1 whenever the value moves at all, so a bare tau
+threshold flagged every head of a pure-noise store as drifting. The p-value is
+the tie-corrected normal approximation of the Mann-Kendall test; below 8 buckets
+that approximation is invalid, so heads with fewer get `insufficient` instead of
+a verdict — the report says "undetermined", never "no drift", for those.
+Measured over three months, no head exceeds the threshold on either signal.
 
 ---
 
@@ -231,6 +246,13 @@ whose torque is constant over the period has zero variance, so its correlation i
 undefined; reporting `0.0` would present it as the most anomalous head on the
 machine when in truth the statistic does not apply. It appears as `None` in the
 matrix and is left out of the ranking.
+
+**At least 3 buckets, per pair.** Pearson over two points is ±1 by construction,
+so the tool refuses periods with fewer than 3 buckets outright
+(`insufficient_data`), and `min_periods=3` applies the same floor pairwise: a
+head present in only 2 of many buckets gets `None` against every peer instead of
+a fabricated ±1 at the top of the outlier ranking. Three is a floor, not
+statistical power — correlations over few buckets are suggestive only.
 
 **The ranking is a ranking, not a diagnosis.** The tool returns every head sorted
 by mean correlation ascending — it does not filter. The report therefore names an

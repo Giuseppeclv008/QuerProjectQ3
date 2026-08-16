@@ -63,7 +63,7 @@ def summarise(execution):
         if result.tool == "overview":
             lines.append(
                 f"- **Scope.** {_fmt(v['capping_operations'])} capping operations "
-                f"across heads {v['heads'][0]}-{v['heads'][-1]}, from {v['ts_min']} "
+                f"across {len(v['heads'])} heads, from {v['ts_min']} "
                 f"to {v['ts_max']}. {_fmt(v['no_load_cycles'])} no-load cycles are "
                 f"excluded from every rate below."
             )
@@ -126,26 +126,45 @@ def summarise(execution):
             # trend steps produce two identical, indistinguishable findings.
             signal = args.get("signal", "torque")
             drifting = [d for d in v["drift"] if d["drifting"]]
+            undetermined = [d for d in v["drift"] if d.get("insufficient")]
             if drifting:
                 worst = drifting[0]
+                p_txt = (f", p = {worst['p_value']:.3g}"
+                         if worst.get("p_value") is not None else "")
                 lines.append(
                     f"- **Drift ({signal}).** {len(drifting)} head(s) drifting; the "
                     f"strongest is head {worst['head_id']} ({worst['direction']}, "
-                    f"tau = {worst['tau']:.2f})."
+                    f"tau = {worst['tau']:.2f}{p_txt})."
                 )
                 checks.append(f"Re-run {signal} drift on head {worst['head_id']} next "
                               f"month; a tau that keeps its sign is a maintenance "
                               f"trigger.")
+            elif undetermined and len(undetermined) == len(v["drift"]):
+                # Not "no drift": with too few time buckets the test cannot say
+                # either way, and reassurance from zero data is the old defect.
+                lines.append(f"- **Drift ({signal}).** Undetermined: the period has "
+                             f"too few time buckets for a Mann-Kendall verdict on "
+                             f"any head. Re-run over a longer period.")
             else:
+                suffix = (f" ({len(undetermined)} head(s) undetermined: too few "
+                          f"buckets)" if undetermined else "")
                 lines.append(f"- **Drift ({signal}).** No head exceeds the "
-                             f"Mann-Kendall drift threshold in this period.")
+                             f"Mann-Kendall drift threshold in this period{suffix}.")
         elif result.tool == "torque_stats" and isinstance(v, list) and v:
-            worst = v[0]     # already ordered by stddev DESC
-            lines.append(
-                f"- **Torque variability.** Head {worst['head_id']} is the most "
-                f"variable (sigma = {worst['stddev']:.4f} Nm about a median of "
-                f"{worst['median']:.3f} Nm)."
-            )
+            worst = v[0]     # already ordered by stddev DESC NULLS LAST
+            if worst["stddev"] is None:
+                # NULLS LAST puts any measurable head first, so a None here
+                # means no head has two closures to measure variability from.
+                lines.append(
+                    "- **Torque variability.** Undefined: no head has more than "
+                    "one closure in scope."
+                )
+            else:
+                lines.append(
+                    f"- **Torque variability.** Head {worst['head_id']} is the most "
+                    f"variable (sigma = {worst['stddev']:.4f} Nm about a median of "
+                    f"{worst['median']:.3f} Nm)."
+                )
         elif result.tool == "head_correlation":
             # `outliers` is every head ranked by mean correlation, not a filtered
             # set, so outliers[0] is only "odd" if it is actually out of step.
@@ -172,11 +191,21 @@ def summarise(execution):
                                   f"against a well-behaved head over the same period.")
         elif result.tool == "anomalies":
             c = v["counts"]
-            lines.append(
-                f"- **Anomalies.** {_fmt(c['faults'])} rejected closures, "
-                f"{_fmt(c['threshold_hits'])} outside the torque band, "
-                f"{_fmt(c['deviation_hits'])} beyond their head's robust band."
-            )
+            # Name only the detectors that ran: under method="threshold" the
+            # deviation count is "not computed", not a measured zero (and vice
+            # versa), and printing it as 0 was a positive claim from no work.
+            m = args.get("method", "both")
+            parts = [f"{_fmt(c['faults'])} rejected closures"]
+            if m in ("threshold", "both"):
+                parts.append(f"{_fmt(c['threshold_hits'])} outside the torque band")
+            if m in ("deviation", "both"):
+                parts.append(f"{_fmt(c['deviation_hits'])} beyond their head's "
+                             f"robust band")
+            lines.append(f"- **Anomalies.** {', '.join(parts)}.")
+            if v.get("deviation_fallbacks"):
+                fb = v["deviation_fallbacks"]
+                lines.append(f"  (Deviation band fell back from MAD for head(s) "
+                             f"{sorted(fb)}: readings mostly identical.)")
             if c["faults"]:
                 checks.append("Correlate the rejected closures against the cap "
                               "supplier lot running at those timestamps.")
@@ -243,7 +272,18 @@ def _limits(execution, narrative=None):
     return "\n".join(lines)
 
 
+def _model_line(cfg, execution, narrative):
+    """Who actually wrote the words. In a project whose thesis is that every
+    number carries its provenance, the model was the one contributor with
+    none -- and a mistyped --model quietly fell back to the keyword router
+    with nothing in the report saying so."""
+    if narrative.source == "llm" or execution.plan.source == "llm":
+        return f"{cfg.provider}:{cfg.model}"
+    return "none (deterministic template and router)"
+
+
 def render(execution, cfg, out_dir, narrative, generated_at):
+    model_line = _model_line(cfg, execution, narrative)
     """Write report.md, trace.json, and the figures. Returns the Markdown."""
     out_dir = str(out_dir)
     figures = _figures(execution, out_dir)
@@ -266,7 +306,7 @@ def render(execution, cfg, out_dir, narrative, generated_at):
 
     text = f"""# {execution.plan.goal}
 
-*Generated {generated_at} — narrative source: {narrative.source}, plan source: {execution.plan.source}.*
+*Generated {generated_at} — narrative source: {narrative.source}, plan source: {execution.plan.source}, model: {model_line}.*
 
 ## Goal
 

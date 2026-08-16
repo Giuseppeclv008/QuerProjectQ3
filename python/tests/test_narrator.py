@@ -186,3 +186,16 @@ def test_real_findings_with_numbers_are_kept(tiny_cfg):
     n = narrator.narrate(tiny_cfg, _execution(tiny_cfg), client=_Client(good))
     assert n.source == "llm"
     assert "Head 2" in n.findings
+
+
+def test_bounded_truncates_long_strings_not_only_long_lists():
+    # A 500 KB error message once reached the prompt whole; _bounded's cap
+    # must cover strings wherever they sit.
+    from analytics.agent.narrator import _MAX_STR_CHARS, _bounded
+    long = "x" * (_MAX_STR_CHARS + 500)
+    out = _bounded(long, 10)
+    assert len(out) < _MAX_STR_CHARS + 100
+    assert "truncated" in out
+    nested = _bounded({"message": long, "items": [long]}, 10)
+    assert "truncated" in nested["message"]
+    assert "truncated" in nested["items"][0]

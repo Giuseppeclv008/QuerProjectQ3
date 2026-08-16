@@ -49,6 +49,76 @@ def test_deviation_flags_the_outlier_against_its_own_heads_band(anomaly_store):
     assert r.values["threshold_hits"] == []      # method="deviation" must not compute threshold
 
 
+@pytest.fixture
+def stuck_head_store(tmp_path):
+    """Head 1 is stuck at exactly 2.00 Nm for 20 caps -- the failure the
+    deviation detector exists to catch -- plus three readings that escaped the
+    stick (9.0, 8.5, 0.2). MAD and IQR are both zero."""
+    path = tmp_path / "stuck.duckdb"
+    con = duckdb.connect(str(path))
+    con.execute("""
+        CREATE TABLE cap_events (
+            machine_id VARCHAR NOT NULL, head_id SMALLINT NOT NULL, ts TIMESTAMP,
+            cap_seq BIGINT NOT NULL, app_torque REAL, status REAL, delta INTEGER,
+            is_fault BOOLEAN, aggregated BOOLEAN, is_reset BOOLEAN,
+            UNIQUE (machine_id, head_id, ts))
+    """)
+    for i in range(20):
+        con.execute("INSERT INTO cap_events VALUES ('MCC',1,?,?,2.00,0.0,1,false,false,false)",
+                    [f"2026-02-01 00:00:{i:02d}", i + 1])
+    for j, tq in enumerate((9.0, 8.5, 0.2)):
+        con.execute("INSERT INTO cap_events VALUES ('MCC',1,?,?,?,0.0,1,false,false,false)",
+                    [f"2026-02-01 00:01:{j:02d}", 100 + j, tq])
+    con.close()
+    return str(path)
+
+
+def test_a_stuck_head_is_not_silently_dropped_from_deviation(stuck_head_store):
+    # MAD = 0 used to exclude the head from the deviation query entirely, and
+    # the report then made the positive claim "0 beyond their head's robust
+    # band" about the one head whose statistic was undefined.
+    cfg = Config(store_path=stuck_head_store, torque_min=0.0, torque_max=10.0, mad_k=3.0)
+    r = anomalies(cfg, period="2026-02", method="deviation")
+    hits = sorted(h["app_torque"] for h in r.values["deviation_hits"])
+    assert hits == pytest.approx([0.2, 8.5, 9.0])
+    assert r.values["counts"]["deviation_hits"] == 3
+    # The fallback is disclosed, not silent.
+    assert r.values["deviation_fallbacks"] == {1: "exact"}
+
+
+@pytest.fixture
+def quantized_head_store(tmp_path):
+    """A quantised sensor: more than half of head 1's readings are the exact
+    median 2.00 (so MAD = 0), a clustered low mode around 1.91 keeps the lower
+    quartile away from the median (so IQR > 0 and the half-IQR band covers the
+    cluster), and one reading at 5.0 sits far outside any band."""
+    path = tmp_path / "quant.duckdb"
+    con = duckdb.connect(str(path))
+    con.execute("""
+        CREATE TABLE cap_events (
+            machine_id VARCHAR NOT NULL, head_id SMALLINT NOT NULL, ts TIMESTAMP,
+            cap_seq BIGINT NOT NULL, app_torque REAL, status REAL, delta INTEGER,
+            is_fault BOOLEAN, aggregated BOOLEAN, is_reset BOOLEAN,
+            UNIQUE (machine_id, head_id, ts))
+    """)
+    torques = ([2.00] * 11
+               + [1.900, 1.905, 1.910, 1.915, 1.920, 1.925, 1.928, 1.930]
+               + [5.0])
+    for i, tq in enumerate(torques):
+        con.execute("INSERT INTO cap_events VALUES ('MCC',1,?,?,?,0.0,1,false,false,false)",
+                    [f"2026-02-01 00:00:{i:02d}", i + 1, tq])
+    con.close()
+    return str(path)
+
+
+def test_a_quantized_head_falls_back_to_iqr_and_flags_only_the_outlier(quantized_head_store):
+    cfg = Config(store_path=quantized_head_store, torque_min=0.0, torque_max=10.0, mad_k=3.0)
+    r = anomalies(cfg, period="2026-02", method="deviation")
+    hits = [h["app_torque"] for h in r.values["deviation_hits"]]
+    assert hits == pytest.approx([5.0])
+    assert r.values["deviation_fallbacks"] == {1: "iqr"}
+
+
 def test_faults_are_always_reported(anomaly_store):
     cfg = Config(store_path=anomaly_store)
     r = anomalies(cfg, period="2026-02", method="both")

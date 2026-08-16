@@ -59,7 +59,82 @@ def test_too_few_buckets_is_insufficient_not_a_crash(tiny_cfg):
     # The tiny store has a single day: correlation over one point is undefined.
     r = head_correlation(tiny_cfg, period="2026-02", by="day")
     assert r.status == "insufficient_data"
-    assert "at least 2" in r.message
+    assert "at least 3" in r.message
+
+
+@pytest.fixture
+def two_bucket_store(tmp_path):
+    """Four heads over exactly two days. Pearson over n=2 is +/-1 by
+    construction, so no verdict is possible."""
+    path = tmp_path / "twobucket.duckdb"
+    con = duckdb.connect(str(path))
+    con.execute("""
+        CREATE TABLE cap_events (
+            machine_id VARCHAR NOT NULL, head_id SMALLINT NOT NULL, ts TIMESTAMP,
+            cap_seq BIGINT NOT NULL, app_torque REAL, status REAL, delta INTEGER,
+            is_fault BOOLEAN, aggregated BOOLEAN, is_reset BOOLEAN,
+            UNIQUE (machine_id, head_id, ts))
+    """)
+    seq = 0
+    for day in (1, 2):
+        for head in (1, 2, 3, 4):
+            seq += 1
+            con.execute(
+                "INSERT INTO cap_events VALUES ('MCC',?,?,?,?,0.0,1,false,false,false)",
+                [head, f"2026-02-{day:02d} 12:00:00", seq, 2.0 + 0.01 * head * day],
+            )
+    con.close()
+    return str(path)
+
+
+def test_two_buckets_are_insufficient_not_a_perfect_correlation(two_bucket_store):
+    # The old gate admitted n=2, where every pair lands at exactly +/-1 and the
+    # whole ranking ties -- rendered as "all heads track each other closely" at
+    # whatever sign the coin toss gave.
+    cfg = Config(store_path=two_bucket_store)
+    r = head_correlation(cfg, period="2026-02")
+    assert r.status == "insufficient_data"
+    assert "at least 3" in r.message
+
+
+@pytest.fixture
+def thin_pair_store(tmp_path):
+    """Heads 1 and 2 present all five days; head 5 appears in only two buckets.
+    Pairwise-complete correlation would hand head 5 a +/-1 against every peer
+    from those two shared points and rank it "odd head out"."""
+    path = tmp_path / "thin.duckdb"
+    con = duckdb.connect(str(path))
+    con.execute("""
+        CREATE TABLE cap_events (
+            machine_id VARCHAR NOT NULL, head_id SMALLINT NOT NULL, ts TIMESTAMP,
+            cap_seq BIGINT NOT NULL, app_torque REAL, status REAL, delta INTEGER,
+            is_fault BOOLEAN, aggregated BOOLEAN, is_reset BOOLEAN,
+            UNIQUE (machine_id, head_id, ts))
+    """)
+    seq = 0
+    for day in range(1, 6):
+        heads = [(1, 1.90 + 0.02 * day), (2, 1.91 + 0.02 * day)]
+        if day <= 2:
+            heads.append((5, 2.30 - 0.05 * day))
+        for head, torque in heads:
+            seq += 1
+            con.execute(
+                "INSERT INTO cap_events VALUES ('MCC',?,?,?,?,0.0,1,false,false,false)",
+                [head, f"2026-02-{day:02d} 12:00:00", seq, torque],
+            )
+    con.close()
+    return str(path)
+
+
+def test_a_head_sharing_too_few_buckets_gets_no_correlation(thin_pair_store):
+    cfg = Config(store_path=thin_pair_store)
+    r = head_correlation(cfg, period="2026-02")
+    assert r.status == "ok"
+    # Head 5 shares only 2 buckets with its peers: below min_periods, so None,
+    # and it must not appear in (let alone top) the outlier ranking.
+    assert r.values["matrix"][1][5] is None
+    assert 5 not in [o["head_id"] for o in r.values["outliers"]]
+    assert set(o["head_id"] for o in r.values["outliers"]) == {1, 2}
 
 
 @pytest.fixture

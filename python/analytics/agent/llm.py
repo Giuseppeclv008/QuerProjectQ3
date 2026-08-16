@@ -46,6 +46,11 @@ def _anthropic_call(cfg, client, system, prompt, schema):
 
     if getattr(response, "stop_reason", None) == "refusal":
         return None, "the model refused the request"
+    if getattr(response, "stop_reason", None) == "max_tokens":
+        # Undetected, this surfaced downstream as "the reply was not valid
+        # JSON" -- blaming the model for a budget the config set.
+        return None, (f"the reply was cut off at max_tokens={cfg.max_tokens}; "
+                      "raise it in the config")
     text = next((b.text for b in response.content
                  if getattr(b, "type", "") == "text"), None)
     if text is None:

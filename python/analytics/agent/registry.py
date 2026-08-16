@@ -81,7 +81,7 @@ TOOLS = {
             "machine advances no counter, so it emits no events at all and cannot "
             "appear here. Answers 'how much no-load cycling', 'which head idles'.",
             {"period": _PERIOD,
-             "min_seconds": {"type": ["integer", "null"],
+             "min_seconds": {"type": ["integer", "null"], "minimum": 1,
                              "description": "minimum run length in seconds; null = config default"}},
         ),
         ToolSpec(
@@ -101,7 +101,7 @@ TOOLS = {
             {"period": _PERIOD,
              "signal": _enum(["torque", "success_rate"], "series to analyse; default 'torque'"),
              "by": _enum(["day", "hour"], "bucket size; default 'day'"),
-             "window": {"type": ["integer", "null"],
+             "window": {"type": ["integer", "null"], "minimum": 1,
                         "description": "rolling window in buckets; null = 7"}},
         ),
         ToolSpec(
@@ -110,7 +110,8 @@ TOOLS = {
             "of heads by mean correlation to their peers. Answers 'compare head 1 and "
             "head 5', 'which head behaves differently from the others'.",
             {"period": _PERIOD,
-             "heads": {"type": ["array", "null"], "items": {"type": "integer"},
+             "heads": {"type": ["array", "null"], "maxItems": 64,
+                       "items": {"type": "integer", "minimum": 1},
                        "description": "heads to compare; null = every head in the store"},
              "by": _enum(["day", "hour"], "bucket size; default 'day'")},
         ),
@@ -202,6 +203,7 @@ def _per_tool_plan_schema():
             "steps": {
                 "type": "array",
                 "description": "Tool calls to run, in order.",
+                "maxItems": 12,
                 "items": {"anyOf": branches},
             },
         },
@@ -243,6 +245,7 @@ def plan_json_schema(style="flat"):
             "steps": {
                 "type": "array",
                 "description": "Tool calls to run, in order.",
+                "maxItems": 12,
                 "items": {
                     "type": "object",
                     "properties": {
@@ -268,8 +271,35 @@ def plan_json_schema(style="flat"):
     }
 
 
+_JSON_TYPES = {"string": str, "integer": int, "number": (int, float),
+               "array": list, "boolean": bool, "object": dict}
+
+
+def _type_ok(value, schema):
+    """Does `value` satisfy the schema fragment's "type" (a name or a list)?"""
+    types = schema.get("type")
+    if types is None:
+        return True
+    if isinstance(types, str):
+        types = [types]
+    if value is None:
+        return "null" in types
+    if isinstance(value, bool):        # bool is an int subclass; keep it apart
+        return "boolean" in types
+    return any(isinstance(value, _JSON_TYPES[t])
+               for t in types if t in _JSON_TYPES)
+
+
 def validate_step(step):
-    """None if the step is callable as written, else why it is not."""
+    """None if the step is callable as written, else why it is not.
+
+    The strict half of "schema permissive, validation strict": the schema is
+    loose so a wobbly model reply still parses, and THIS gate is what keeps a
+    mistyped or out-of-range argument from reaching a tool. It checks types,
+    minimums, and array bounds against the same fragments the schema is built
+    from -- trend(window=-5) and head_correlation(heads=[0..99999]) used to
+    walk straight through.
+    """
     spec = TOOLS.get(step.tool)
     if spec is None:
         return f"unknown tool {step.tool!r}; known tools: {sorted(TOOLS)}"
@@ -277,8 +307,34 @@ def validate_step(step):
         if key not in spec.params:
             return (f"tool {step.tool!r} takes no argument {key!r}; "
                     f"it accepts {sorted(spec.params)}")
-        allowed = spec.params[key].get("enum")
+        sch = spec.params[key]
+        allowed = sch.get("enum")
         if allowed is not None and value not in allowed:
             return (f"{step.tool}.{key} must be one of "
                     f"{[a for a in allowed if a is not None]}, got {value!r}")
+        if not _type_ok(value, sch):
+            return (f"{step.tool}.{key} must have type {sch.get('type')}, "
+                    f"got {type(value).__name__} ({value!r})")
+        if value is None:
+            continue
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            minimum = sch.get("minimum")
+            if minimum is not None and value < minimum:
+                return f"{step.tool}.{key} must be >= {minimum}, got {value!r}"
+        if isinstance(value, list):
+            max_items = sch.get("maxItems")
+            if max_items is not None and len(value) > max_items:
+                return (f"{step.tool}.{key} takes at most {max_items} items, "
+                        f"got {len(value)}")
+            items = sch.get("items")
+            if items is not None:
+                for v in value:
+                    if not _type_ok(v, items):
+                        return (f"{step.tool}.{key} items must have type "
+                                f"{items.get('type')}, got {v!r}")
+                    imin = items.get("minimum")
+                    if (imin is not None and isinstance(v, (int, float))
+                            and not isinstance(v, bool) and v < imin):
+                        return (f"{step.tool}.{key} items must be >= {imin}, "
+                                f"got {v!r}")
     return None

@@ -10,6 +10,9 @@ it is non-parametric, makes no assumption that the walk is linear or the noise
 Gaussian, and is deterministic. tau = +1 means every day rose on the previous;
 -1 means every day fell.
 """
+import math
+from collections import Counter
+
 import numpy as np
 import pandas as pd
 
@@ -19,12 +22,14 @@ from analytics.store import connect, scope_clause
 
 _SIGNALS = ("torque", "success_rate")
 _BUCKETS = {"day": "DAY", "hour": "HOUR"}
-DRIFT_TAU = 0.5     # |tau| at or above this counts as drifting
+DRIFT_TAU = 0.5     # |tau| at or above this counts as drifting...
+DRIFT_P = 0.05      # ...but only when the trend is also significant at this level
+MIN_DRIFT_BUCKETS = 8   # below this the normal approximation for p is invalid
 _TAU_CHUNK = 512    # rows per block; bounds the temporary at ~chunk*n*8 bytes
 
 
-def mann_kendall_tau(values):
-    """Kendall's tau-a: (concordant - discordant) / (n*(n-1)/2). Range [-1, 1].
+def _mann_kendall_s(values):
+    """Kendall's S: sum over i<j of sign(v[j] - v[i]).
 
     This was a doubly-nested Python loop. With by="day" over a month n is ~28 and
     it never mattered, but by="hour" is exposed to the model in the tool registry
@@ -37,8 +42,6 @@ def mann_kendall_tau(values):
     of 37 MB and grows linearly in n rather than quadratically.
     """
     n = len(values)
-    if n < 2:
-        return 0.0
     v = np.asarray(values, dtype=np.float64)
     cols = np.arange(n)
     s = 0.0
@@ -46,7 +49,45 @@ def mann_kendall_tau(values):
         rows = np.arange(start, min(start + _TAU_CHUNK, n - 1))
         block = np.sign(v[None, :] - v[rows, None])          # (k, n)
         s += float(block[cols[None, :] > rows[:, None]].sum())
-    return s / (n * (n - 1) / 2)
+    return s
+
+
+def mann_kendall_tau(values):
+    """Kendall's tau-a: S / (n*(n-1)/2). Range [-1, 1]."""
+    n = len(values)
+    if n < 2:
+        return 0.0
+    return _mann_kendall_s(values) / (n * (n - 1) / 2)
+
+
+def mann_kendall_p(values):
+    """Two-sided p-value for the Mann-Kendall test, normal approximation with
+    tie correction and continuity correction.
+
+    Var(S) = [n(n-1)(2n+5) - sum_j t_j(t_j-1)(2t_j+5)] / 18 over tie groups of
+    size t_j. The approximation is conventionally trusted from n ~ 8-10 upward;
+    callers below MIN_DRIFT_BUCKETS should not ask (trend() does not).
+
+    tau alone is not evidence: with n=2 buckets tau is +/-1 whenever the value
+    moves at all, and a bare |tau| >= 0.5 rule flagged every head of a store of
+    pure noise as drifting, with a maintenance action recommended.
+    """
+    n = len(values)
+    if n < 2:
+        return 1.0
+    s = _mann_kendall_s(values)
+    ties = Counter(float(v) for v in values).values()
+    var_s = (n * (n - 1) * (2 * n + 5)
+             - sum(t * (t - 1) * (2 * t + 5) for t in ties)) / 18.0
+    if var_s <= 0:      # every value tied: no trend, no evidence
+        return 1.0
+    if s > 0:
+        z = (s - 1) / math.sqrt(var_s)
+    elif s < 0:
+        z = (s + 1) / math.sqrt(var_s)
+    else:
+        z = 0.0
+    return math.erfc(abs(z) / math.sqrt(2))
 
 
 def trend(cfg, period=None, signal="torque", by="day", window=7):
@@ -100,12 +141,28 @@ def trend(cfg, period=None, signal="torque", by="day", window=7):
     for head, grp in df.groupby("head_id"):
         # A verdictless success_rate bucket is NaN (None); drop it before ranking so
         # it neither concords nor discords. Torque values are never NaN.
-        tau = mann_kendall_tau([v for v in grp["value"] if pd.notna(v)])
+        vals = [v for v in grp["value"] if pd.notna(v)]
+        tau = mann_kendall_tau(vals)
+        # "drifting" is a claim about the machine, so it needs both effect size
+        # (|tau|) and evidence (p). Below MIN_DRIFT_BUCKETS the p approximation
+        # is invalid and the entry says "insufficient" instead of guessing --
+        # the canned by="day" plan lands here for any period under 8 active days.
+        if len(vals) < MIN_DRIFT_BUCKETS:
+            p = None
+            verdict = False
+            insufficient = True
+        else:
+            p = mann_kendall_p(vals)
+            verdict = bool(abs(tau) >= DRIFT_TAU and p < DRIFT_P)
+            insufficient = False
         drift.append({
             "head_id": int(head),
             "tau": tau,
+            "p_value": p,
+            "n_buckets": len(vals),
             "direction": "rising" if tau > 0 else "falling" if tau < 0 else "flat",
-            "drifting": bool(abs(tau) >= DRIFT_TAU),
+            "drifting": verdict,
+            "insufficient": insufficient,
         })
     drift.sort(key=lambda d: -abs(d["tau"]))
 
@@ -126,7 +183,11 @@ def trend(cfg, period=None, signal="torque", by="day", window=7):
         "trend", {"series": series, "drift": drift},
         period=period, rows_scanned=scanned,
         filters=[f"signal={signal}", f"by={by}", f"window={window}"],
-        assumptions=[f"drift is Mann-Kendall |tau| >= {DRIFT_TAU} over the per-head "
-                     f"{by} series (non-parametric: assumes neither linearity nor "
-                     "Gaussian noise)"],
+        assumptions=[f"drift is Mann-Kendall |tau| >= {DRIFT_TAU} AND p < {DRIFT_P} "
+                     f"(tie-corrected normal approximation) over the per-head {by} "
+                     "series (non-parametric: assumes neither linearity nor "
+                     "Gaussian noise)",
+                     f"heads with fewer than {MIN_DRIFT_BUCKETS} {by} buckets get no "
+                     "drift verdict (insufficient=true): the significance "
+                     "approximation is invalid there and tau alone is not evidence"],
     )

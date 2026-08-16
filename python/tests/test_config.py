@@ -80,3 +80,36 @@ def test_without_verbose_our_loggers_are_at_info():
 
     configure(verbose=False)
     assert logging.getLogger("analytics").getEffectiveLevel() == logging.INFO
+
+
+def test_nonpositive_mad_k_is_refused_at_startup():
+    # mad_k <= 0 collapses the deviation band: ABS(x - median) > k*MAD is true
+    # for every reading at k < 0 and for every non-median reading at k = 0.
+    # It was the one threshold with no validation.
+    from analytics.config import Config, ConfigError
+    with pytest.raises(ConfigError):
+        Config(mad_k=0.0)
+    with pytest.raises(ConfigError):
+        Config(mad_k=-3.0)
+
+
+def test_wrong_typed_config_values_are_config_errors_at_startup():
+    # {"torque_min": [1,2]} escaped as a raw TypeError and {"mad_k": "three"}
+    # died mid-analysis inside DuckDB -- the docstring's "raised at startup,
+    # never mid-analysis" contract, now enforced.
+    import json
+    from analytics.config import ConfigError, load_config
+    import pytest as _pytest
+    import tempfile, os
+    def _load(d):
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
+            json.dump(d, fh)
+            path = fh.name
+        try:
+            with _pytest.raises(ConfigError):
+                load_config(path)
+        finally:
+            os.unlink(path)
+    _load({"torque_min": [1, 2]})
+    _load({"mad_k": "three"})
+    _load({"idle_min_seconds": True})   # bool is not an int here

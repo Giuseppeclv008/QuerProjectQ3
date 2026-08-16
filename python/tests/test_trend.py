@@ -51,7 +51,60 @@ def test_flags_the_drifting_head_and_not_the_flat_one(drift_store):
     drift = {d["head_id"]: d for d in r.values["drift"]}
     assert drift[1]["drifting"] is True
     assert drift[1]["direction"] == "rising"
+    # A verdict is a claim of significance, so it carries its evidence: a
+    # 10-bucket monotonic rise is significant at any conventional level.
+    assert drift[1]["p_value"] < 0.05
     assert drift[2]["drifting"] is False
+
+
+def test_mann_kendall_p_is_small_for_a_long_monotonic_rise():
+    from analytics.tools.trend import mann_kendall_p
+    assert mann_kendall_p(list(range(10))) < 0.001
+
+
+def test_mann_kendall_p_is_one_for_a_constant_series():
+    from analytics.tools.trend import mann_kendall_p
+    assert mann_kendall_p([2.0] * 10) == 1.0
+
+
+@pytest.fixture
+def two_day_store(tmp_path):
+    """Two day-buckets of plain noise: 6 heads whose torque merely changes
+    between the days. With n=2 buckets, tau is +/-1 whenever the value moves at
+    all -- the shape that used to flag every head as drifting."""
+    path = tmp_path / "twoday.duckdb"
+    con = duckdb.connect(str(path))
+    con.execute("""
+        CREATE TABLE cap_events (
+            machine_id VARCHAR NOT NULL, head_id SMALLINT NOT NULL, ts TIMESTAMP,
+            cap_seq BIGINT NOT NULL, app_torque REAL, status REAL, delta INTEGER,
+            is_fault BOOLEAN, aggregated BOOLEAN, is_reset BOOLEAN,
+            UNIQUE (machine_id, head_id, ts))
+    """)
+    seq = 0
+    for day in (1, 2):
+        for head in range(1, 7):
+            seq += 1
+            torque = 2.00 + 0.01 * ((head + day) % 3)
+            con.execute(
+                "INSERT INTO cap_events VALUES ('MCC',?,?,?,?,0.0,1,false,false,false)",
+                [head, f"2026-02-{day:02d} 12:00:00", seq, torque],
+            )
+    con.close()
+    return str(path)
+
+
+def test_two_buckets_cannot_produce_a_drift_verdict(two_day_store):
+    # Under the old bare-|tau| rule every one of these heads was "drifting"
+    # with tau = +/-1.00 and a maintenance action recommended. Two points
+    # cannot carry a trend verdict; the entry must say so rather than guess.
+    cfg = Config(store_path=two_day_store)
+    r = trend(cfg, period="2026-02", by="day")
+    assert r.status == "ok"          # the series itself is real data
+    for d in r.values["drift"]:
+        assert d["drifting"] is False
+        assert d["insufficient"] is True
+        assert d["p_value"] is None
 
 
 def test_series_carries_rolling_statistics(drift_store):

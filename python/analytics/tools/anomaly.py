@@ -79,12 +79,21 @@ def anomalies(cfg, period=None, method="both"):
             for r in rows
         ]
 
-    deviation_hits, n_deviation = [], 0
+    deviation_hits, n_deviation, fallbacks = [], 0, {}
     if method in ("deviation", "both"):
-        # MEDIAN(|x - median|) per head, then flag |x - median| > k * MAD.
-        rows, n_deviation = _sample(
-                con,
-                f"""
+        # MEDIAN(|x - median|) per head, then flag |x - median| > k * scale.
+        #
+        # The scale is MAD when MAD > 0. A head whose readings are more than
+        # half identical has MAD = 0 -- routine for a quantised sensor and
+        # guaranteed for a head stuck at one value, which is the failure this
+        # detector exists to catch. `WHERE mad > 0` used to drop such heads
+        # from the query entirely, and the report then claimed an exact zero
+        # where the statistic was undefined. Fallbacks, in order:
+        #   iqr    scale = IQR/2 (same sigma-multiple as MAD under normality:
+        #          MAD ~ 0.6745*sigma and IQR ~ 1.349*sigma)
+        #   exact  IQR = 0 too (head hard-stuck at the median): any reading
+        #          that leaves the median is a deviation
+        scale_ctes = f"""
                 WITH caps AS (
                     SELECT head_id, ts, app_torque, cap_seq FROM cap_events
                     WHERE app_torque > 0 AND {where}
@@ -92,24 +101,52 @@ def anomalies(cfg, period=None, method="both"):
                 med AS (
                     SELECT head_id, MEDIAN(app_torque) AS m FROM caps GROUP BY head_id
                 ),
-                mad AS (
+                spread AS (
                     SELECT c.head_id, m.m,
-                           MEDIAN(ABS(c.app_torque - m.m)) AS mad
+                           MEDIAN(ABS(c.app_torque - m.m)) AS mad,
+                           (QUANTILE_CONT(c.app_torque, 0.75)
+                            - QUANTILE_CONT(c.app_torque, 0.25)) / 2.0 AS half_iqr
                     FROM caps c JOIN med m USING (head_id)
                     GROUP BY c.head_id, m.m
-                )
-                SELECT c.head_id, c.ts, c.app_torque, mad.m
-                FROM caps c JOIN mad USING (head_id)
-                WHERE mad.mad > 0
-                  AND ABS(c.app_torque - mad.m) > ? * mad.mad
+                ),
+                scale AS (
+                    SELECT head_id, m,
+                           CASE WHEN mad > 0 THEN mad ELSE half_iqr END AS s,
+                           CASE WHEN mad > 0 THEN 'mad'
+                                WHEN half_iqr > 0 THEN 'iqr'
+                                ELSE 'exact' END AS basis
+                    FROM spread
+                )"""
+        rows, n_deviation = _sample(
+                con,
+                scale_ctes + """
+                SELECT c.head_id, c.ts, c.app_torque, scale.m, scale.basis
+                FROM caps c JOIN scale USING (head_id)
+                WHERE ABS(c.app_torque - scale.m) > ? * scale.s
                 ORDER BY c.ts, c.cap_seq
                 """,
                 params + [cfg.mad_k], cap)
+        reasons = {
+            "mad": f"torque deviates > {cfg.mad_k}*MAD from head median {{m:.3f}}",
+            "iqr": f"torque deviates > {cfg.mad_k}*(IQR/2) from head median {{m:.3f}} "
+                   "(MAD = 0: quantised readings)",
+            "exact": "torque differs from head median {m:.3f} on a head otherwise "
+                     "stuck there (MAD and IQR both 0)",
+        }
         deviation_hits = [
             {"head_id": int(r[0]), "ts": r[1], "app_torque": r[2],
-             "reason": f"torque deviates > {cfg.mad_k}*MAD from head median {r[3]:.3f}"}
+             "reason": reasons[r[4]].format(m=r[3])}
             for r in rows
         ]
+        # Disclose which heads did not get the MAD band. An empty dict is the
+        # healthy case; a "0 deviations" claim over a fallback head is only
+        # honest if the report can see the band was not the usual one.
+        fallbacks = {
+            int(h): basis
+            for h, basis in con.execute(
+                scale_ctes + " SELECT head_id, basis FROM scale WHERE basis <> 'mad'",
+                params).fetchall()
+        }
 
     return ToolResult.ok(
         "anomalies",
@@ -117,6 +154,9 @@ def anomalies(cfg, period=None, method="both"):
             "faults": faults,
             "threshold_hits": threshold_hits,
             "deviation_hits": deviation_hits,
+            # Heads whose deviation band is not the usual k*MAD one, and what it
+            # is instead ("iqr" or "exact"). Empty when every head had MAD > 0.
+            "deviation_fallbacks": fallbacks,
             # Exact totals, independent of how many were itemised above.
             "counts": {
                 "faults": n_faults,
@@ -136,6 +176,9 @@ def anomalies(cfg, period=None, method="both"):
         assumptions=[
             "deviation uses median +/- k*MAD (robust); mean/sigma would let "
             "extreme outliers inflate the band and hide themselves",
+            "a head with MAD = 0 (readings mostly identical) falls back to a "
+            "half-IQR band, and to exact-median comparison when the IQR is 0 "
+            "too; affected heads are listed in `deviation_fallbacks`",
             f"counts are exact; the itemised lists are capped at "
             f"{cfg.max_anomaly_items} per category (see `listed`)",
         ],

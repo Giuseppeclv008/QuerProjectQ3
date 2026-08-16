@@ -2,7 +2,7 @@
 
 oracle.py is the honest naive baseline -- an interpreted loop over 86,399 rows x
 36 heads. Comparing that against C++ mostly measures the interpreter. This is the
-fair Python contender: pandas parses the CSV, numpy does the transform, and the
+vectorised Python contender (measured 15% slower than py-naive at 28 files -- 85.8 s vs 74.6 s -- the split/loop overhead beats pandas here): pandas parses the CSV, numpy does the transform, and the
 only Python-level loop is over the emitted events.
 
 Implements spec 2026-08-10 §3: the transform is element-wise on consecutive row

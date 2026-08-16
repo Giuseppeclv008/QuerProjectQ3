@@ -54,9 +54,12 @@ def torque_stats(cfg, period=None, outcome="successful", by=None):
             return ToolResult.insufficient(
                 "torque_stats", f"no {outcome} closures in period {period!r}", period=period
             )
+        # stddev stays None when SQL says NULL (a single observation): `or 0.0`
+        # fabricated an exact "sigma = 0.0000" for a head with no variability to
+        # measure, and made a genuine 0.0 indistinguishable from "not measurable".
         values = [
             {"head_id": int(r[0]), "n": r[1], "mean": r[2], "min": r[3],
-             "max": r[4], "stddev": r[5] or 0.0, "median": r[6]}
+             "max": r[4], "stddev": r[5], "median": r[6]}
             for r in rows
         ]
         scanned = sum(v["n"] for v in values)
@@ -67,7 +70,7 @@ def torque_stats(cfg, period=None, outcome="successful", by=None):
                 "torque_stats", f"no {outcome} closures in period {period!r}", period=period
             )
         values = {"n": r[0], "mean": r[1], "min": r[2], "max": r[3],
-                  "stddev": r[4] or 0.0, "median": r[5]}
+                  "stddev": r[4], "median": r[5]}
         scanned = r[0]
 
     return ToolResult.ok(

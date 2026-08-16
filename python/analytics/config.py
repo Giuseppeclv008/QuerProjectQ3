@@ -84,6 +84,12 @@ class Config:
             )
         if self.idle_min_seconds <= 0:
             raise ConfigError(f"idle_min_seconds must be > 0, got {self.idle_min_seconds}")
+        if self.mad_k <= 0:
+            raise ConfigError(
+                f"mad_k must be > 0, got {self.mad_k}; at k <= 0 the deviation band "
+                "collapses and every reading (k < 0) or every non-median reading "
+                "(k = 0) is flagged"
+            )
         if self.effort not in ("low", "medium", "high", "xhigh", "max"):
             raise ConfigError(
                 f"effort must be one of low/medium/high/xhigh/max, got {self.effort!r}"
@@ -127,9 +133,25 @@ def load_config(path):
     except json.JSONDecodeError as exc:
         raise ConfigError(f"config file is not valid JSON: {path}") from exc
 
-    known = {f.name for f in fields(Config)}
+    known = {f.name: f.type for f in fields(Config)}
     for key in raw:
         if key not in known:
             raise ConfigError(f"unknown config key {key!r}; known keys: {sorted(known)}")
+
+    # Types checked here, not discovered mid-analysis: {"torque_min": [1, 2]}
+    # used to escape as a raw TypeError and {"mad_k": "three"} died inside
+    # DuckDB three tools deep -- both defeating the documented "exit 2 before
+    # any work starts" contract this function exists to give.
+    coercible = {float: (int, float), int: (int,), str: (str,), bool: (bool,)}
+    for key, value in raw.items():
+        expected = coercible.get(known[key])
+        if expected is None:
+            continue
+        if (not isinstance(value, expected)
+                or (isinstance(value, bool) and known[key] is not bool)):
+            raise ConfigError(
+                f"{key} must be {known[key].__name__}, got "
+                f"{type(value).__name__} ({value!r})"
+            )
 
     return Config(**raw)

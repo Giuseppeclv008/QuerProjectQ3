@@ -26,8 +26,10 @@ from analytics.tools.anomaly import anomalies
 from analytics.tools.idle import idle_periods
 from analytics.tools.overview import overview
 from analytics.tools.speed import capping_speed
+from analytics.tools.correlation import head_correlation
 from analytics.tools.success import success_rates
 from analytics.tools.torque import torque_stats
+from analytics.tools.trend import trend
 
 
 def values_close(a, b, rel_tol=1e-6, abs_tol=1e-9):
@@ -54,9 +56,14 @@ def values_close(a, b, rel_tol=1e-6, abs_tol=1e-9):
         return len(a) == len(b) and all(
             values_close(x, y, rel_tol, abs_tol) for x, y in zip(a, b)
         )
-    if isinstance(a, float) or isinstance(b, float):
-        if a is None or b is None:
-            return a == b
+    # Type-strict scalars: an int on one backend and a float (or bool) on the
+    # other IS the divergence this suite hunts, and the old "either side is a
+    # float" branch let values_close(5, 5.0) and values_close(1, True) pass.
+    if isinstance(a, bool) != isinstance(b, bool):
+        return False
+    if isinstance(a, float) != isinstance(b, float):
+        return False
+    if isinstance(a, float):
         return math.isclose(a, b, rel_tol=rel_tol, abs_tol=abs_tol)
     return a == b
 
@@ -66,6 +73,8 @@ TOOLS = [
     ("success_overall", lambda c: success_rates(c, period="2026-02", by="overall")),
     ("success_head", lambda c: success_rates(c, period="2026-02", by="head")),
     ("torque", lambda c: torque_stats(c, period="2026-02")),
+    ("trend", lambda c: trend(c, period="2026-02", by="day")),
+    ("head_correlation", lambda c: head_correlation(c, period="2026-02")),
     ("speed", lambda c: capping_speed(c, period="2026-02", bucket="hour")),
     ("idle", lambda c: idle_periods(c, period="2026-02")),
     ("anomalies", lambda c: anomalies(c, period="2026-02")),

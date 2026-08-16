@@ -96,3 +96,19 @@ def test_strict_validation_still_rejects_a_value_the_union_allows():
     # The permissive schema is not the gate -- validate_step is.
     step = PlanStep(tool="success_rates", args={"by": "hour"}, rationale="")
     assert registry.validate_step(step) is not None
+
+
+def test_validate_step_rejects_types_and_bounds_not_just_names():
+    # "Schema permissive, validation strict" -- these four were the probes
+    # that walked through when the gate checked names and enums only.
+    from analytics.agent.plan import PlanStep as Step
+    from analytics.agent.registry import validate_step
+    assert validate_step(Step("trend", {"window": -5}, "")) is not None
+    assert validate_step(Step("trend", {"window": 0}, "")) is not None
+    assert validate_step(Step("idle_periods", {"min_seconds": "not-an-int"}, "")) is not None
+    assert validate_step(Step("head_correlation", {"heads": list(range(100000))}, "")) is not None
+    assert validate_step(Step("head_correlation", {"heads": [0]}, "")) is not None
+    # and the valid shapes still pass
+    assert validate_step(Step("trend", {"window": 7}, "")) is None
+    assert validate_step(Step("head_correlation", {"heads": [1, 5]}, "")) is None
+    assert validate_step(Step("trend", {"window": None}, "")) is None

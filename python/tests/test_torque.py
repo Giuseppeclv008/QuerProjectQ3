@@ -79,15 +79,15 @@ def test_empty_period_is_insufficient_by_head(tiny_cfg):
     assert r.values == {}
 
 
-def test_single_observation_head_stddev_is_never_none(tiny_cfg):
-    """STDDEV_SAMP is NULL (SQL) for a single-row group. Head 2 has exactly
-    one successful closure (2.00 Nm), so this pins that the tool surfaces a
-    real number (0.0), never None, for a head with no variability to measure."""
+def test_single_observation_head_stddev_is_undefined_not_zero(tiny_cfg):
+    """STDDEV_SAMP is NULL (SQL) for a single-row group: with one observation
+    there is no variability to measure. The old `or 0.0` coercion fabricated an
+    exact "sigma = 0.0000 Nm" for that head -- and made a genuine measured 0.0
+    indistinguishable from "not measurable". Undefined must surface as None."""
     r = torque_stats(tiny_cfg, period="2026-02", outcome="successful", by="head")
     by_head = {v["head_id"]: v for v in r.values}
     assert by_head[2]["n"] == 1
-    assert by_head[2]["stddev"] == 0.0
-    assert by_head[2]["stddev"] is not None
+    assert by_head[2]["stddev"] is None
 
 
 def test_failed_stats_exclude_rejects_that_carried_no_load(reject_without_load_store):
