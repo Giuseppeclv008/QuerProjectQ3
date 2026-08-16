@@ -1332,3 +1332,49 @@ None was found by reading the code that contained it. Each was found by an
 independent check of the claim — running `EXPLAIN`, breaking the test on
 purpose, changing a variable nobody had listed. That is the only method here
 with a record.
+
+---
+
+## 2026-08-16 — full-codebase review: corrections to entries above
+
+An independent five-slice review of the final tree (`reviews/` in the parent
+workspace) verified claims in this log against the code and the data. What
+follows corrects the entries it caught; the fixes themselves are in the same
+day's commits.
+
+- **"Per-file seeding loses nothing at day boundaries" (2026-07 entry, line
+  ~18) was measured on head 1 only, and is false in general.** Measured across
+  all 36 Count columns at the 2026-02-01→02 seam: heads 15-28 each advance by
+  1 between the last row of one file and the first row of the next — **244
+  caps lost across the 27 February seams, ~800 over the three-month pool
+  (~0.0015%)**. Each file's row 0 seeds the extractor, so a count that
+  advanced across the boundary emits no event. The aggregate is negligible;
+  the old claim is not. The parent spec's mitigation (pass prior-day final
+  counts in the work item) was never built — recorded here as **skipped, open**
+  — and the Python oracle seeds identically, so the C++↔Python `MATCH` gate
+  cannot detect this class. Incidental, same measurement: the day-files are
+  not calendar days — `2026-02-01.csv` starts at `2026-01-31T16:00:00.000`.
+- **"bench-only 45/45" (2026-08-10 entry, line ~1201) has been stale since
+  `bb5a971`.** `MAS_BENCH_ONLY=ON` now builds **zero** tests (the suite is a
+  googletest fetch and the bench contract is "downloads nothing"). The GPU
+  differential is built from a full configure instead:
+  `-DMAS_ENABLE_CUDA=ON -DMAS_ENABLE_ZMQ=OFF` (bench/README.md documents the
+  recipe).
+- **The ZMQ=OFF configuration (line ~1213) now runs the agent-layer tests.**
+  `test_message`, `test_cleaning_worker` and `test_coordinator` run on
+  `FakeTransport` and include no zmq.hpp; gating them on `MAS_ENABLE_ZMQ`
+  silently dropped 44+ tests — the coordinator's whole death-detection and
+  re-dispatch logic — from a supported configuration. They are gated on the
+  store now, and a ZMQ=OFF build was verified green (47 agent-layer tests).
+- **Spec §10 R4 (CUDA device-memory fallback) was never implemented** — no
+  `cudaMemGetInfo` call exists in `core/` — and the spec's 260 MB peak-footprint
+  estimate is wrong for the shipped struct: `CapEventDevice` is 40 bytes (not
+  32) and the estimate omitted `d_flags`, so the real peak is **~440 MB per
+  day-file**. On the 8 GB RTX 4070 Laptop this leaves headroom, which is why
+  the gap never surfaced; recorded as not implemented, open.
+- **The orphan-worker command recorded at line ~35 predates required
+  machine_id.** `mas_worker` (and `clean`) no longer default the machine id to
+  `"MCC"`: a silently-mislabelled store is a wrong answer announcing itself as
+  a success (CliArgs.hpp), and chaos_e2e.sh demonstrated the failure — workers
+  launched unlabelled, merged into a destination labelled with the real
+  35-char id. The command as recorded no longer runs; append the machine id.

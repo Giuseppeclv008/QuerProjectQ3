@@ -11,8 +11,10 @@ Two tiers, each usable on its own:
    into reconstructed cap closures in DuckDB. 55.1M events over three months.
 2. **Analytics and reporting (Python)** — eight deterministic analysis tools, an
    LLM that chooses which of them to run and writes the prose, and the `arol`
-   CLI. **The model never computes a number**; every figure comes from the same
-   parameterised SQL whether the model is involved or not.
+   CLI. **No figure, table, or plot is computed by the model**; all of them
+   come from the same parameterised SQL whether the model is involved or not
+   (the model's own prose is quoted as prose, and can be wrong -- the trace on
+   the same page is what to check it against).
 
 **Stack:** C++20 core · ZeroMQ PUSH/PULL with heartbeat-driven liveness ·
 DuckDB persistence · Python analytics toolkit · Claude (structured outputs,
@@ -88,7 +90,7 @@ Chaos E2E resilience testing · Benchmark sweep harness
 
 The AROL capping machine's PLC pipeline polls **36 capping heads** at **~1 Hz**
 and uploads wide CSV day-files — each containing roughly **86,400 rows × 109
-columns** per day (~1.6 GB/month zipped).
+columns** per day (~1.6 GB/month unzipped; the month zips are 26–42 MB).
 
 Most of this data is noise:
 
@@ -121,7 +123,7 @@ Shows the MAS system boundary, external actors, and data flows.
 
 ### C4 Container (Level 2)
 
-Shows the eight C++ executables, the ZeroMQ fabric (now with 3 endpoints),
+Shows the C4 containers — the diagram groups the eight executables into five containers — the ZeroMQ fabric (now with 3 endpoints),
 database stores, and the testing/validation scripts.
 
 ![C4 Container Diagram](docs/diagrams/C4_Container.png)
@@ -217,7 +219,7 @@ organized by layer.
 │           ├── bench_cpu_main.cpp          # → bench_cpu       (store-free contender)
 │           └── cuda_clean_main.cpp         # → mas_cuda_clean  (GPU contender, --verify)
 │
-├── tests/                                  # Google Test unit tests (20 files, 169 tests)
+├── tests/                                  # Google Test unit tests (21 files, 184 tests)
 │   ├── test_cap_event.cpp
 │   ├── test_cap_event_extractor.cpp
 │   ├── test_cap_event_extractor_flat.cpp   # The GPU precondition, proved against the stateful one
@@ -292,7 +294,7 @@ organized by layer.
 │   ├── run_bench_cuda.py                   # Portable driver: Python | C++ | CUDA, one command
 │   ├── README.md                           # Windows/Linux/macOS run instructions
 │   ├── requirements-bench.txt              # numpy, pandas, matplotlib
-│   ├── results_cuda.csv                    # CUDA-sweep data (RTX 4070 Laptop, 2026-08-10)
+│   ├── results_cuda.csv                    # CUDA-sweep data (RTX 4070 Laptop, 2026-08-13)
 │   ├── results_cuda_stages.csv             # Per-stage GPU timings from the same sweep
 │   └── fixtures/
 │       └── make_tiny_csvs.py               # Deterministic 2-row fixture generator
@@ -402,7 +404,7 @@ status 65, plus 24 at status 9 and 1 at status 65 with no torque, is exactly the
 1,096 the odd-status rule returns.
 
 A closure that is neither `status == 0` nor a reject carries **no pass/fail
-verdict** — 5,452 No-Load-with-torque rows over three months — and is excluded
+verdict** — 12,461 No-Load-with-torque rows over three months — and is excluded
 from the success-rate denominator rather than being guessed at. The reports say
 so explicitly. Full detail in
 [`docs/analytics-methods.md`](docs/analytics-methods.md).
@@ -425,7 +427,7 @@ nothing attached to it:
 | Target | Sources | Links |
 |--------|---------|-------|
 | `mas_clean_core` | `CapEventExtractor`, `CapEventExtractorFlat`, `CsvRawReader` | **nothing** — C++20 stdlib only (`psapi` on Windows) |
-| `mas_store` | `CsvEventStore`, `DuckDbEventStore`, `Pipeline` | `mas_clean_core` + DuckDB |
+| `mas_store` | `CsvEventStore`, `DuckDbEventStore`, `ParquetEventStore`, `ParquetExport`, `Pipeline` | `mas_clean_core` + DuckDB |
 | `mas_agent` | `Message`, `CleaningWorker`, `Coordinator` | `mas_store` |
 | `mas_transport` | `ZmqTransport` | cppzmq |
 | `mas_core` | *(INTERFACE alias)* | `mas_agent` — kept so no call site changed |
@@ -443,7 +445,7 @@ nothing is what lets the benchmark build on a machine with no DuckDB at all.
 | `CapEvent` / `RawRow` | [`CapEvent.hpp`](core/include/mas/domain/CapEvent.hpp) | Domain value types. `NUM_HEADS=36`; a failure is any status with the reject bit set (`is_reject`), not a single code — `FAULT_STATUS=65` was removed in Plan 7. |
 | `CapEventExtractor` | [`CapEventExtractor.hpp`](core/include/mas/domain/CapEventExtractor.hpp) · [`.cpp`](core/src/domain/CapEventExtractor.cpp) | Stateful per-head dedup. Maintains `last_count_[36]`. Not thread-safe. |
 | `extract_flat()` / `RawColumns` / `load_columns()` | [`CapEventExtractorFlat.hpp`](core/include/mas/domain/CapEventExtractorFlat.hpp) · [`.cpp`](core/src/domain/CapEventExtractorFlat.cpp) | Element-wise form of the same transform, plus a whole-file CSV→columns loader. Stdlib only, no state across rows. Tolerates CRLF; validates the 109-column header. |
-| `clean_file()` | [`Pipeline.hpp`](core/include/mas/domain/Pipeline.hpp) · [`.cpp`](core/src/domain/Pipeline.cpp) | Orchestrator: CsvRawReader → CapEventExtractor → IEventStore in 8192-event batches. |
+| `clean_file()` | [`Pipeline.hpp`](core/include/mas/domain/Pipeline.hpp) · [`.cpp`](core/src/domain/Pipeline.cpp) | Orchestrator: CsvRawReader → CapEventExtractor → IEventStore in ≥8192-event batches (8192 is a floor: the flush check runs per row, which appends up to 36 events). |
 
 ### Store Layer
 
@@ -454,10 +456,10 @@ nothing is what lets the benchmark build on a machine with no DuckDB at all.
 | `IEventStore` | [`EventStore.hpp`](core/include/mas/store/EventStore.hpp) | Abstract `write(span<CapEvent>)` interface (DIP seam). |
 | `CsvRawReader` | [`CsvRawReader.hpp`](core/include/mas/store/CsvRawReader.hpp) · [`.cpp`](core/src/store/CsvRawReader.cpp) | Streams raw 109-column CSVs. Skips malformed rows with counter. |
 | `CsvEventStore` | [`CsvEventStore.hpp`](core/include/mas/store/CsvEventStore.hpp) · [`.cpp`](core/src/store/CsvEventStore.cpp) | CSV file backend. Writes header on construction. |
-| `DuckDbEventStore` | [`DuckDbEventStore.hpp`](core/include/mas/store/DuckDbEventStore.hpp) · [`.cpp`](core/src/store/DuckDbEventStore.cpp) | DuckDB backend (PIMPL). Staging → merge. `merge_from()` with try/catch DETACH. `export_parquet()`. |
+| `DuckDbEventStore` | [`DuckDbEventStore.hpp`](core/include/mas/store/DuckDbEventStore.hpp) · [`.cpp`](core/src/store/DuckDbEventStore.cpp) | DuckDB backend (PIMPL). Staging → merge. `merge_from()` with best-effort DETACH, `merge_all()` (the bulk path mas_merge takes). `export_parquet()` was deliberately removed — the header explains why (COPY ... TO truncates; the guarded `export_store_to_parquet` is the one export path). |
 | `ParquetEventStore` | [`ParquetEventStore.hpp`](core/include/mas/store/ParquetEventStore.hpp) · [`.cpp`](core/src/store/ParquetEventStore.cpp) | Experimental Parquet backend: one file per input, no index, no WAL. Buffers in memory, writes on `close()` through a temp + atomic rename; `abandon()` for a clean that failed. |
 | `ParquetExport` | [`ParquetExport.hpp`](core/include/mas/store/ParquetExport.hpp) · [`.cpp`](core/src/store/ParquetExport.cpp) | `mas_export`'s engine. Opens the store READ_ONLY, refuses to overwrite the source, an existing file or the store's `.wal`, and verifies the row count it wrote. |
-| `BeatingStore` | [`BeatingStore.hpp`](core/include/mas/store/BeatingStore.hpp) | Decorator that fires a heartbeat callback around each `write()`, so a long clean does not look dead to the coordinator. Wraps either backend. |
+| `BeatingStore` | [`BeatingStore.hpp`](core/include/mas/store/BeatingStore.hpp) | Decorator that fires a heartbeat callback after the inner `write()`, and only once its `every_` interval has elapsed — so a long clean does not look dead to the coordinator without beating 2,670× per day-file. Wraps either backend. |
 | `sql_quote` | [`SqlQuote.hpp`](core/include/mas/store/SqlQuote.hpp) | Header-only. Doubles embedded `'` — ATTACH, COPY and `read_parquet` take paths as SQL literals and DuckDB binds no parameters for them. |
 | `exec_or_throw` | [`DuckDbExec.hpp`](core/include/mas/store/DuckDbExec.hpp) | Header-only. DuckDB reports errors in the result rather than throwing; these three wrappers turn a missed `HasError()` from a silent wrong answer into an exception. |
 | `publish_atomically` | [`AtomicPublish.hpp`](core/include/mas/store/AtomicPublish.hpp) | Header-only. Write to a private sibling name, verify, rename into place, remove the temp on any throw. Shared by both Parquet writers, so a failed write cannot leave a partial file under a name readers glob. |
@@ -488,7 +490,7 @@ nothing is what lets the benchmark build on a machine with no DuckDB at all.
 
 | Component | File(s) | Description |
 |-----------|---------|-------------|
-| `ProcMetrics` / `read_metrics()` / `metrics_line()` | [`platform_metrics.hpp`](core/include/mas/util/platform_metrics.hpp) | Self-reported wall, CPU (user+sys) and peak RSS. `GetProcessTimes`/`GetProcessMemoryInfo` on Windows, `getrusage` elsewhere (`ru_maxrss` is bytes on macOS, KB on Linux). One of three `#ifdef _WIN32` sites in the codebase (AtomicPublish.hpp holds the other two, for `_getpid`). Emits one machine-readable `metrics:` line that the benchmark driver parses. |
+| `ProcMetrics` / `read_metrics()` / `metrics_line()` | [`platform_metrics.hpp`](core/include/mas/util/platform_metrics.hpp) | Self-reported wall, CPU (user+sys) and peak RSS. `GetProcessTimes`/`GetProcessMemoryInfo` on Windows, `getrusage` elsewhere (`ru_maxrss` is bytes on macOS, KB on Linux). One of five `#ifdef _WIN32` sites in core (AtomicPublish.hpp holds the other three: `_getpid`, and the fsync pair). Emits one machine-readable `metrics:` line that the benchmark driver parses. |
 | `Engine` / `parse_engine()` / `resolve_engine()` | [`engine.hpp`](core/include/mas/util/engine.hpp) | The `--engine=cpu\|cuda` policy: parse the flag value, refuse an engine the binary was not built with (the error names `-DMAS_ENABLE_CUDA=ON` as the remedy), never fall back. Kept as pure functions so the refusal rules are unit-tested from builds that have no CUDA. |
 
 This replaces the old harness's `/usr/bin/time -l` wrapper, which is BSD-only —
@@ -758,7 +760,10 @@ exported 451898 rows to feb03.parquet
 
 451,898 is the 3rd's real count, not a truncated day: production varies widely
 across the month (the 1st is 961,147, the 4th is 353,498) against a mean near
-781k. `max(ts)` on that export is 23:56:05, so the bare date did cover the whole
+781k. (961,147 is the 1st as a *calendar day* — `mas_export`'s `--since/--until`
+cut. The 765,711 quoted for `2026-02-01.csv` elsewhere is the 1st as a
+*day-file*, which starts at 2026-01-31T16:00 — the pool's files are offset
+from midnight, so the two counts measure different windows.) `max(ts)` on that export is 23:56:05, so the bare date did cover the whole
 day.
 
 ### `bench_cpu` — Store-Free Cleaning Contender
@@ -784,7 +789,7 @@ usage: mas_cuda_clean [--verify] <day1.csv> [day2.csv ...]
 ```
 
 Built only with `-DMAS_ENABLE_CUDA=ON`. Prints a `stages:` line with the
-seven per-stage GPU timings, which is what says how much of any win is "the GPU
+eight per-stage GPU timings, which is what says how much of any win is "the GPU
 parses the CSV" versus "the GPU does the compare".
 
 **`--verify`** runs the bitwise differential against `extract_flat` inside the
@@ -840,7 +845,7 @@ overlap. `mas_merge` safely skips corrupt stores.
 │  PULL Heartbeats         │◄─ tcp://..:5593 (hb) ─────│  → w1.duckdb  │
 │  Sweep deaths (30s)      │                            │  worker_id=w1 │
 │  Re-dispatch dead items  │                            └───────────────┘
-│  PUSH STOP × live workers│                                   ...
+│ PUSH STOP × live+tombst. │                                   ...
 │                          │── tcp://..:5591 ──────►┌───────────────┐
 │                          │◄─ tcp://..:5592 ───────│  mas_worker N │
 │                          │◄─ tcp://..:5593 ───────│  → wN.duckdb  │
@@ -970,8 +975,12 @@ python bench/run_bench_cuda.py --data telemetry_..._2026-02.zip
 
 `MAS_BENCH_ONLY=ON` builds only the cleaning core and the benchmark binaries —
 no DuckDB, no ZeroMQ, nothing downloaded — so it configures on any machine with
-CMake, a C++20 compiler, and Python. See [`bench/README.md`](bench/README.md) for
-the Windows path and
+CMake, a C++20 compiler, and Python. **It also builds no tests** (the suite is a
+googletest fetch): on the GPU box, build the 8-case GPU/CPU differential from a
+second build directory before trusting the numbers —
+`cmake -B build-gpu-tests -DMAS_ENABLE_CUDA=ON -DMAS_ENABLE_ZMQ=OFF`, then
+`ctest --test-dir build-gpu-tests` (this one does download). See
+[`bench/README.md`](bench/README.md) for the Windows path and
 [`docs/superpowers/specs/2026-08-10-cuda-cleaning-bench-design.md`](docs/superpowers/specs/2026-08-10-cuda-cleaning-bench-design.md)
 for the design.
 
@@ -993,10 +1002,15 @@ flatten every architecture into the same number.
 
 Every arch at every volume × repeat emitted identical event counts (21,872,663
 for the month); the sweep aborts if any two disagree. With `materialize_s`
-timed, the CUDA row is directly comparable: **1.3× the 8-thread C++ and 7.2×
-the single-thread** — and **1.18× end to end**, because the DuckDB store is
-~82% of the wall clock. The full analysis, intervals included, is in
-[`docs/bench/results.md`](docs/bench/results.md).
+timed, the CUDA row reads **1.3× the 8-thread C++ and 7.2× the single-thread**
+on the stage-sum window — and **1.18× end to end**, because the DuckDB store is
+~82% of the wall clock. One qualification the ratio needs: CUDA's `clean_s` is
+the sum of its stage timers, while the C++ rows time their whole process —
+**wall to wall it is CUDA 8.43 s vs cpp-MT 8.21 s, i.e. not faster than the
+8-thread C++**. These numbers were measured at the kernel of commit `45d4831`
+(2026-08-13); the kernel now in the tree was revised after that and is not yet
+re-measured. The full analysis, intervals and the per-contender measurement
+windows included, is in [`docs/bench/results.md`](docs/bench/results.md).
 
 **The vectorized Python contender is slower than the naive loop** — the reverse
 of what was expected. The cost is not vectorization failing to pay, it is float
@@ -1039,8 +1053,8 @@ killed mid-run. Wall clock ~57 s (30 s death threshold dominates).
 ### Prerequisites
 
 - **CMake** ≥ 3.16
-- **C++20** compiler (clang 14+, gcc 12+) on macOS or Linux x86-64 — the DuckDB
-  prebuilt asset is fetched for those two platforms only (see `CMakeLists.txt`)
+- **C++20** compiler (clang 14+, gcc 12+, or MSVC 2022) — the DuckDB prebuilt
+  asset is pinned for macOS, Linux x86-64 **and** Windows (see `CMakeLists.txt`)
 - **Java** (for rendering PlantUML diagrams, optional)
 - **Python 3** (for validation oracle and benchmark, optional)
 - **CUDA Toolkit** (only for `-DMAS_ENABLE_CUDA=ON`; ships CUB, which the kernels use)
@@ -1065,14 +1079,14 @@ cmake --build build --parallel
 | Option | Default | Effect |
 |--------|---------|--------|
 | `MAS_BENCH_ONLY` | `OFF` | Build only the cleaning core and the benchmark binaries. Fetches no DuckDB asset and no libzmq source, and forces `MAS_ENABLE_ZMQ=OFF`. |
-| `MAS_ENABLE_ZMQ` | `ON` | Build the ZeroMQ agent runtime (`mas_transport`, `mas_worker`, `mas_coordinator`) and its 50 tests. |
+| `MAS_ENABLE_ZMQ` | `ON` | Build the ZeroMQ agent runtime (`mas_transport`, `mas_worker`, `mas_coordinator`) and its 8 transport tests. The agent layer's 49 tests run on `FakeTransport` in every store build, ZMQ or not. |
 | `MAS_ENABLE_CUDA` | `OFF` | Build `mas_cuda_clean`, and (in the full build) compile the GPU cleaner into `mas_monolith` so `--engine=cuda` works. Requires the CUDA Toolkit. |
 | `MAS_BUILD_TESTS` | `ON` | Build the GoogleTest suite. `OFF` drops the last dependency that needs network. |
 
 The default triple (`OFF, ON, OFF, ON`) is the build this project has always
-had: **146 tests green**. With `MAS_BENCH_ONLY=ON` the suite is the 57 tests that
-need neither DuckDB nor ZeroMQ; with `MAS_BUILD_TESTS=OFF` on top of that,
-`_deps/` is never created at all — nothing is downloaded:
+had: **176 tests green**. With `MAS_BENCH_ONLY=ON` **no tests are built at
+all** — the suite is a googletest fetch and the bench build's contract is
+"downloads nothing", so `_deps/` is never created:
 
 ```bash
 # Portable benchmark build: configures anywhere with CMake + a C++20 compiler
@@ -1094,10 +1108,10 @@ cd build && ctest --output-on-failure
 
 ```bash
 # Output as CSV
-./build/clean telemetry_*/2026-02-01.csv events.csv MCC
+./build/clean telemetry_*/*2026-02-01.csv events.csv MCC
 
 # Output as DuckDB
-./build/clean telemetry_*/2026-02-01.csv events.duckdb MCC
+./build/clean telemetry_*/*2026-02-01.csv events.duckdb MCC
 ```
 
 ### Monolith Multi-Threaded Processing
@@ -1121,7 +1135,7 @@ cd build && ctest --output-on-failure
 
 # Terminal 2 — start coordinator
 ./build/mas_coordinator tcp://127.0.0.1:5591 tcp://127.0.0.1:5592 tcp://127.0.0.1:5593 \
-    telemetry_*/2026-02-01.csv telemetry_*/2026-02-02.csv
+    telemetry_*/*2026-02-01.csv telemetry_*/*2026-02-02.csv
 
 # After completion — merge per-worker stores
 ./build/mas_merge unified.duckdb MCC w1.duckdb w2.duckdb
@@ -1131,16 +1145,16 @@ cd build && ctest --output-on-failure
 
 ```bash
 # Count-only check
-python3 python/oracle.py telemetry_*/2026-02-01.csv
+python3 python/oracle.py telemetry_*/*2026-02-01.csv
 
 # Cross-check C++ output
-python3 python/validate_real.py telemetry_*/2026-02-01.csv events.csv
+python3 python/validate_real.py telemetry_*/*2026-02-01.csv events.csv
 ```
 
 ### Chaos E2E Test
 
 ```bash
-scripts/chaos_e2e.sh telemetry_*/2026-02-01.csv telemetry_*/2026-02-02.csv telemetry_*/2026-02-03.csv
+scripts/chaos_e2e.sh telemetry_*/*2026-02-01.csv telemetry_*/*2026-02-02.csv telemetry_*/*2026-02-03.csv
 ```
 
 ### Performance Benchmark
@@ -1189,6 +1203,11 @@ python3 -m venv .venv
 ### Generate a report
 
 ```bash
+# First write a config naming your store (the repo ships no arol.json;
+# a missing --config file exits 2 with the message naming it):
+cat > arol.json <<'JSON'
+{ "store_path": "events_3mo.duckdb", "machine_id": "MCC" }
+JSON
 scripts/arol report kpi       --period 2026-02          --config arol.json
 scripts/arol report drift     --period 2026-02..2026-04 --config arol.json
 scripts/arol report anomalies --period 2026-02          --config arol.json
@@ -1211,10 +1230,16 @@ export ANTHROPIC_API_KEY=...
 scripts/arol ask "which head behaves differently, and why?" --period 2026-02
 ```
 
-Claude chooses which tools to run and writes the narrative. **It never computes a
-number**: every figure comes from the same deterministic SQL the `report` verbs
-use, and the figures, the tool-call trace and the limits section are rendered
-from the tool results regardless of what the model says.
+Claude chooses which tools to run and writes the narrative. **Every figure,
+plot, trace row and limits entry is rendered from the tool results**, computed
+by the same deterministic SQL the `report` verbs use, regardless of what the
+model says. The honest boundary: the model's prose itself (the Findings
+narrative, next-checks, and the plan's goal line) is quoted as written, and a
+number the model writes into a sentence is not machine-checked against the
+values -- a lying narrative would be contradicted by the trace on the same
+page, not silently corrected (see
+[`docs/agent-decision-flow.md`](docs/agent-decision-flow.md), "Where the
+model's words can appear").
 
 With no API key, no network, a refusal, or a malformed plan, `ask` falls back to
 a keyword router and the report's *Confidence and limits* section names the
@@ -1311,7 +1336,7 @@ scripts/demo.sh
 ```
 
 Loads the three-month store and generates all three report types into
-`docs/reports/` — 20.3 M rows, three reports, ~8 s.
+`docs/reports/` — 55.1 M rows, three reports.
 
 PDF export needs WeasyPrint (`pip install weasyprint`, plus Cairo/Pango); without
 it, `--pdf` logs how to install it and writes Markdown and HTML as normal.
@@ -1320,14 +1345,16 @@ it, `--pdf` logs how to install it and writes Markdown and HTML as normal.
 
 ## Testing
 
-The project has **169 C++ unit tests** across 20 Google Test files, plus **263
-Python tests** for the analytics tier. Both counts are asserted by
-`python/tests/test_readme_counts.py`, so adding a test and forgetting this
-paragraph fails the suite rather than quietly dating it.
+The project has **184 C++ unit tests** across 21 Google Test files — 176 in the
+default build plus the 8-case GPU/CPU differential behind `-DMAS_ENABLE_CUDA=ON`
+— plus **282
+Python tests** for the analytics tier. Every test count in this
+README is asserted by `python/tests/test_readme_counts.py`, so adding a test and
+forgetting this paragraph fails the suite rather than quietly dating it.
 
 ```bash
-cd build && ctest --output-on-failure           # 169 C++ tests (8 are the GPU/CPU differential: compiled only with -DMAS_ENABLE_CUDA=ON, and they skip without a device)
-cd python && ../.venv/bin/python -m pytest -q   # 263 Python tests (see the two data gates below)
+cd build && ctest --output-on-failure           # 176 C++ tests in the default build; the 8-case GPU/CPU differential is compiled only with -DMAS_ENABLE_CUDA=ON (and skips without a device)
+cd python && ../.venv/bin/python -m pytest -q   # 282 Python tests (see the two data gates below)
 ```
 
 Two separate data gates apply to the Python suite: **5 tests** need the rebuilt
@@ -1336,9 +1363,12 @@ without it, and **1 test** needs a real extracted day-file and skips without
 that — so a fresh clone shows 6 skips, and a machine with the pool extracted
 but no store shows 5.
 
-Under `-DMAS_BENCH_ONLY=ON` the C++ suite is the 57 tests that need neither
-DuckDB nor ZeroMQ — the rest are excluded by design, not skipped. (Two of the
-57 skip without the extracted pool beside the binary.)
+Under `-DMAS_BENCH_ONLY=ON` the C++ suite is not built at all — the bench
+contract is "downloads nothing" and googletest is a fetch, so the tests are
+excluded by design, not skipped. To test on a machine that only has the bench
+toolchain, configure without `MAS_BENCH_ONLY` (add `-DMAS_ENABLE_ZMQ=OFF` to
+skip the libzmq build; the agent-layer tests run on `FakeTransport` either
+way).
 
 | Test File | What It Tests |
 |-----------|---------------|
@@ -1353,7 +1383,7 @@ DuckDB nor ZeroMQ — the rest are excluded by design, not skipped. (Two of the
 | `test_cli_args.cpp` | `unconsumed_flag`: a flag after the positionals is an error, `--format=x` says where the value goes, and `-`/`-1` stay positional |
 | `test_pipeline.cpp` | End-to-end CSV→events flow, batch boundary, error codes |
 | `test_duckdb_smoke.cpp` | DuckDB library linkage sanity |
-| `test_duckdb_event_store.cpp` | Schema creation, write/count, idempotent upsert, merge_from, export_parquet |
+| `test_duckdb_event_store.cpp` | Schema creation, write/count, idempotent upsert, malformed-timestamp poison regression, merge_from, merge_all, export via `export_store_to_parquet` |
 | `test_parquet_event_store.cpp` | Every column round-trips, reprocessing replaces the file, an empty day still yields a readable one, quoted paths, `abandon()` writes nothing, a failed write writes nothing and leaves no temp, a throw *between* writes (a heartbeat that times out) publishes nothing either, writing after `close()` is an error, two writers on one path leave one whole file |
 | `test_parquet_export.cpp` | mas_export: all ten columns round-trip, exports from a chmod-444 store without writing to it, since/until bounds, bare-date upper bound covers the whole day, empty range still readable, quoted paths, refuses the store's WAL including through a `./` spelling, names a path it cannot stat |
 | `test_zmq_smoke.cpp` | ZeroMQ library linkage sanity |

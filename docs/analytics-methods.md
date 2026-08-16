@@ -61,7 +61,7 @@ have status 65 — the other 16 are status 9, No InTorque.
 what `CAST(status AS BIGINT) % 2 <> 0` returns. The bitmask reading is confirmed by
 the data, not merely consistent with it.
 
-**No Load with torque (5,452 rows) is not a contradiction.** No Load means the
+**No Load with torque (12,461 rows) is not a contradiction.** No Load means the
 *first* torque threshold was not reached, so a sub-threshold torque reading is
 expected. These closures are neither clean nor rejected: they carry no pass/fail
 verdict, and the tools say so rather than silently assigning one.
@@ -107,8 +107,8 @@ performed zero capping operations; reporting it at 0% would read as a
 catastrophically failing head when nothing was ever capped. It is omitted.
 
 **The denominator is not every capping operation.** A closure that is neither
-`status = 0` nor a reject carries no pass/fail verdict — the 5,452 No-Load-with-
-torque and 6 No-Closure rows above. They are excluded from the ratio, so
+`status = 0` nor a reject carries no pass/fail verdict — the 12,461 No-Load-with-
+torque and 12 No-Closure rows above. They are excluded from the ratio, so
 `successful + failed` can be less than the total. The report states the
 difference explicitly; on February that is 5,580 closures out of 14,824,304, and
 without saying so the printed counts visibly fail to add up.
@@ -272,7 +272,7 @@ Count, mean, median, standard deviation, min and max of applied torque per head
 (or per day, or overall), optionally filtered to successful closures only.
 
 Reported ordered by standard deviation descending, so the most variable head is
-first. Measured over three months: head 9, σ = 0.0612 Nm about a median of
+first. Measured over three months: head 9, σ = 0.0729 Nm about a median of
 1.997 Nm.
 
 ---
