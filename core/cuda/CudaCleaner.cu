@@ -51,7 +51,6 @@ __device__ __forceinline__ double pow10_(int e) {
 // Integer-mantissa parse: accumulate digits as an integer, divide once by an
 // exact power of ten. Correctly rounded while the mantissa stays <= 2^53 (both
 // operands of the division are then exact, and IEEE division rounds once).
-// Stops at any non-digit, which is how a trailing '\r' is absorbed for free.
 //
 // The design spec (§4) recorded the pool as "plain decimal, <= 3 dp". The real
 // pool violates that: ~2% of AppTorque cells carry the full 17-digit repr of a
@@ -60,6 +59,16 @@ __device__ __forceinline__ double pow10_(int e) {
 // one ulp under strtod on exactly the halfway cases (caught by --verify at
 // event 25194 of 2026-02-01). Those cells set *inexact; the host re-parses the
 // flagged rows' event cells with strtod, which is exact by construction.
+//
+// *inexact is also the honesty bit for anything this grammar cannot represent:
+// a scan that stops before the end of the cell (exponent form "1e5", "nan",
+// "inf", leading whitespace, a second '.', trailing garbage), a cell with no
+// digits at all (empty, bare sign, lone '.'). The first version broke out of
+// the loop silently and returned the accumulated prefix -- "1e5" parsed as 1,
+// "nan" and an empty cell as 0 -- values both CPU readers reject, invented
+// where a Count neighbour of 5000 turns a 0 into a fabricated counter reset.
+// The row ends are pre-trimmed of '\r'/'\n' and fields end at ',', so nothing
+// legitimate stops the scan early.
 __device__ __forceinline__ double parse_num(const char* p, const char* e,
                                             bool* inexact) {
     constexpr long long kExact = 1LL << 53;          // cast to double is exact
@@ -69,14 +78,24 @@ __device__ __forceinline__ double parse_num(const char* p, const char* e,
     long long mant = 0;
     int scale = 0;
     bool frac = false;
+    bool any_digit = false;
     for (; p < e; ++p) {
         const char c = *p;
-        if (c == '.') { frac = true; continue; }
+        if (c == '.') {
+            if (frac) break;   // a second '.' is not part of any number
+            frac = true;
+            continue;
+        }
         if (c < '0' || c > '9') break;
+        any_digit = true;
         if (mant > kGuard) { *inexact = true; break; }
         mant = mant * 10 + (c - '0');
         if (frac) ++scale;
     }
+    if (p != e) *inexact = true;       // stopped on a character the format
+                                       // does not allow: whatever follows, the
+                                       // value below is not the cell's value
+    if (!any_digit) *inexact = true;   // empty cell, bare sign, or lone '.'
     if (mant > kExact) *inexact = true;
     if (scale > 22) *inexact = true;   // pow10_ is exact only to 1e22; beyond
                                        // it the divisor itself is rounded and
@@ -107,7 +126,9 @@ __global__ void flag_newlines(const char* buf, size_t n, unsigned char* flags,
 // bit 2 = the row does not have the expected column count (fatal: the CPU
 // readers skip such a row, but a missing field here would read as 0.0 and
 // fabricate a reset plus an aggregated event against the neighbouring rows --
-// the one failure mode worse than losing the row).
+// the one failure mode worse than losing the row); bit 3 = the timestamp is
+// longer than the device slot (host restores it from the raw line -- the CPU
+// keeps the full string, so silent truncation would diverge).
 __global__ void parse_rows(const char* buf, const unsigned long long* nl,
                            unsigned int n_rows, double* count, double* torque,
                            double* status, char* ts_out, unsigned char* row_flags) {
@@ -115,16 +136,17 @@ __global__ void parse_rows(const char* buf, const unsigned long long* nl,
     if (r >= n_rows) return;
 
     // nl[k] is the offset of the k-th '\n'. nl[0] ends the header, so data row r
-    // spans (nl[r], nl[r + 1]). A final row with no trailing newline is not
-    // indexed and so is dropped; the pool's files all end with one, and
-    // --verify is what would catch a file that does not.
+    // spans (nl[r], nl[r + 1]). A final row with no trailing newline would not
+    // be indexed; the loader appends one to the host buffer before upload, so
+    // every data row is bounded by a real '\n' by the time it reaches here.
     const char* p = buf + nl[r] + 1;
     const char* e = buf + nl[r + 1];
     while (e > p && (e[-1] == '\r' || e[-1] == '\n')) --e;
 
-    // Column-count guard before any parsing: past the last comma, every
-    // remaining field would parse from an empty range, and parse_num returns
-    // 0.0 for an empty range without raising inexact.
+    // Column-count guard before any parsing. parse_num now flags an empty
+    // range as inexact, but a short row would still mis-align every field
+    // after the gap; refusing the row keeps GPU semantics identical to the
+    // CPU readers, which skip it.
     int cols = (p < e) ? 1 : 0;
     for (const char* s = p; s < e; ++s)
         if (*s == ',') ++cols;
@@ -139,14 +161,14 @@ __global__ void parse_rows(const char* buf, const unsigned long long* nl,
         return;
     }
 
+    unsigned char fl = 0;
     const char* q = p;
     while (q < e && *q != ',') ++q;
     const int tslen = static_cast<int>(q - p);
     for (int i = 0; i < TS_LEN; ++i)
         ts_out[static_cast<size_t>(r) * TS_LEN + i] = (i < tslen && i < TS_LEN - 1) ? p[i] : '\0';
+    if (tslen > TS_LEN - 1) fl |= 8u;   // truncated here; restored on the host
     p = (q < e) ? q + 1 : e;
-
-    unsigned char fl = 0;
     for (int f = 0; f < 3 * NUM_HEADS; ++f) {
         q = p;
         while (q < e && *q != ',') ++q;
@@ -266,14 +288,13 @@ bool cuda_clean_file(const std::string& path, std::vector<CapEvent>& out,
     }
 
     char* h_buf = nullptr;
-    // +1: NUL-terminated so the patch path below can strtod straight into the
-    // buffer -- it stops at ',' or '\r'/'\n', and the terminator bounds a file
-    // that ends mid-number.
-    CUDA_TRY(cudaHostAlloc(&h_buf, n_bytes + 1, cudaHostAllocDefault), "cudaHostAlloc");
+    // +2: room for a supplied final newline plus the NUL terminator. The NUL
+    // lets the patch path below strtod straight into the buffer -- it stops at
+    // ',' or '\r'/'\n', and the terminator bounds a file that ends mid-number.
+    CUDA_TRY(cudaHostAlloc(&h_buf, n_bytes + 2, cudaHostAllocDefault), "cudaHostAlloc");
     Timer t;
     t.start();
     in.read(h_buf, static_cast<std::streamsize>(n_bytes));
-    h_buf[n_bytes] = '\0';
     times.read_s = t.stop();
     if (!in || in.gcount() != static_cast<std::streamsize>(n_bytes)) {
         error = path + ": read " + std::to_string(in.gcount()) + " of " +
@@ -282,6 +303,13 @@ bool cuda_clean_file(const std::string& path, std::vector<CapEvent>& out,
         cudaFreeHost(h_buf);
         return false;
     }
+    // The row index is built from '\n' positions, so a final line without one
+    // would simply not exist to the kernels: up to 36 events silently gone,
+    // where both CPU readers (getline) return that line normally. Supplying
+    // the newline here makes the two pipelines see the same rows.
+    size_t n_upload = n_bytes;
+    if (n_upload > 0 && h_buf[n_upload - 1] != '\n') h_buf[n_upload++] = '\n';
+    h_buf[n_upload] = '\0';
 
     char* d_buf = nullptr;
     unsigned char* d_flags = nullptr;
@@ -294,11 +322,13 @@ bool cuda_clean_file(const std::string& path, std::vector<CapEvent>& out,
     unsigned char* d_evflags = nullptr;
     unsigned int* d_ev_count = nullptr;
     void* d_tmp = nullptr;
+    void* d_tmp2 = nullptr;
     auto cleanup = [&] {
         cudaFree(d_buf); cudaFree(d_flags); cudaFree(d_nl); cudaFree(d_nl_count);
         cudaFree(d_count); cudaFree(d_torque); cudaFree(d_status); cudaFree(d_ts);
         cudaFree(d_rowflags); cudaFree(d_slots); cudaFree(d_dense);
         cudaFree(d_evflags); cudaFree(d_ev_count); cudaFree(d_tmp);
+        cudaFree(d_tmp2);
         cudaFreeHost(h_buf);
     };
 #define FAIL_IF(expr, what)                                               \
@@ -308,13 +338,13 @@ bool cuda_clean_file(const std::string& path, std::vector<CapEvent>& out,
              cleanup(); return false; } } while (0)
 
     // ---- S1: upload ---------------------------------------------------------
-    FAIL_IF(cudaMalloc(&d_buf, n_bytes), "cudaMalloc raw");
+    FAIL_IF(cudaMalloc(&d_buf, n_upload), "cudaMalloc raw");
     t.start();
-    FAIL_IF(cudaMemcpy(d_buf, h_buf, n_bytes, cudaMemcpyHostToDevice), "H2D raw");
+    FAIL_IF(cudaMemcpy(d_buf, h_buf, n_upload, cudaMemcpyHostToDevice), "H2D raw");
     times.h2d_s = t.stop();
 
     // ---- S2: newline index --------------------------------------------------
-    FAIL_IF(cudaMalloc(&d_flags, n_bytes), "cudaMalloc flags");
+    FAIL_IF(cudaMalloc(&d_flags, n_upload), "cudaMalloc flags");
     FAIL_IF(cudaMalloc(&d_nl_count, sizeof(unsigned int)), "cudaMalloc nl_count");
     FAIL_IF(cudaMemset(d_nl_count, 0, sizeof(unsigned int)), "memset nl_count");
     // Stage windows time compute and transfers only; every allocation sits
@@ -326,8 +356,8 @@ bool cuda_clean_file(const std::string& path, std::vector<CapEvent>& out,
     t.start();
     {
         const int blk = 256;
-        const size_t grid = (n_bytes + blk - 1) / blk;
-        flag_newlines<<<static_cast<unsigned int>(grid), blk>>>(d_buf, n_bytes,
+        const size_t grid = (n_upload + blk - 1) / blk;
+        flag_newlines<<<static_cast<unsigned int>(grid), blk>>>(d_buf, n_upload,
                                                                 d_flags, d_nl_count);
     }
     times.index_s = t.stop();
@@ -339,12 +369,14 @@ bool cuda_clean_file(const std::string& path, std::vector<CapEvent>& out,
                 "cudaMalloc nl");
         thrust::counting_iterator<unsigned long long> idx(0);
         size_t tmp_bytes = 0;
-        cub::DeviceSelect::Flagged(nullptr, tmp_bytes, idx, d_flags, d_nl,
-                                   d_nl_count, static_cast<int>(n_bytes));
+        FAIL_IF(cub::DeviceSelect::Flagged(nullptr, tmp_bytes, idx, d_flags, d_nl,
+                                           d_nl_count, static_cast<int>(n_upload)),
+                "cub size nl");
         FAIL_IF(cudaMalloc(&d_tmp, tmp_bytes), "cudaMalloc cub tmp");
         t.start();
-        cub::DeviceSelect::Flagged(d_tmp, tmp_bytes, idx, d_flags, d_nl,
-                                   d_nl_count, static_cast<int>(n_bytes));
+        FAIL_IF(cub::DeviceSelect::Flagged(d_tmp, tmp_bytes, idx, d_flags, d_nl,
+                                           d_nl_count, static_cast<int>(n_upload)),
+                "cub select nl");
         times.index_s += t.stop();
     }
     FAIL_IF(cudaGetLastError(), "S2 index");
@@ -394,17 +426,24 @@ bool cuda_clean_file(const std::string& path, std::vector<CapEvent>& out,
     // ---- S5: compact --------------------------------------------------------
     FAIL_IF(cudaMalloc(&d_dense, slots * sizeof(CapEventDevice)), "cudaMalloc dense");
     FAIL_IF(cudaMalloc(&d_ev_count, sizeof(unsigned int)), "cudaMalloc ev_count");
+    // Zeroed like its sibling d_nl_count: n_events is read out of this word
+    // and then sizes a host vector and a D2H copy, so it must never be able
+    // to hold uninitialized device memory -- and every CUB call that writes
+    // it has its return code checked for the same reason.
+    FAIL_IF(cudaMemset(d_ev_count, 0, sizeof(unsigned int)), "memset ev_count");
     {
-        void* tmp2 = nullptr;
         size_t tmp2_bytes = 0;
-        cub::DeviceSelect::Flagged(nullptr, tmp2_bytes, d_slots, d_evflags, d_dense,
-                                   d_ev_count, static_cast<int>(slots));
-        FAIL_IF(cudaMalloc(&tmp2, tmp2_bytes), "cudaMalloc cub tmp2");
+        FAIL_IF(cub::DeviceSelect::Flagged(nullptr, tmp2_bytes, d_slots, d_evflags,
+                                           d_dense, d_ev_count,
+                                           static_cast<int>(slots)),
+                "cub size compact");
+        FAIL_IF(cudaMalloc(&d_tmp2, tmp2_bytes), "cudaMalloc cub tmp2");
         t.start();
-        cub::DeviceSelect::Flagged(tmp2, tmp2_bytes, d_slots, d_evflags, d_dense,
-                                   d_ev_count, static_cast<int>(slots));
+        FAIL_IF(cub::DeviceSelect::Flagged(d_tmp2, tmp2_bytes, d_slots, d_evflags,
+                                           d_dense, d_ev_count,
+                                           static_cast<int>(slots)),
+                "cub select compact");
         times.compact_s = t.stop();
-        cudaFree(tmp2);
     }
     FAIL_IF(cudaGetLastError(), "S5 compact");
 
@@ -413,6 +452,12 @@ bool cuda_clean_file(const std::string& path, std::vector<CapEvent>& out,
                        cudaMemcpyDeviceToHost), "D2H ev_count");
 
     // ---- S6: download -------------------------------------------------------
+    // From here on, std::vector/std::string allocations and push_back can
+    // throw; without this frame a bad_alloc (n_events is read out of device
+    // memory) unwound past the manual cleanup and leaked all 14 device
+    // allocations plus the pinned buffer -- and cuda_clean_main has no try,
+    // so it reached std::terminate.
+    try {
     std::vector<CapEventDevice> host_ev(n_events);
     std::vector<char> host_ts(static_cast<size_t>(n_rows) * TS_LEN);
     std::vector<unsigned char> host_flags(n_rows);
@@ -432,10 +477,10 @@ bool cuda_clean_file(const std::string& path, std::vector<CapEvent>& out,
     for (unsigned int r = 0; r < n_rows; ++r) {
         if (host_flags[r] & 2u) {
             error = path + ": data row " + std::to_string(r + 1) +
-                    " has a Count cell with a mantissa beyond 2^53; cap_seq and "
-                    "event existence derive from counts, which the GPU parse "
-                    "cannot round correctly and the host cannot repair after "
-                    "the fact";
+                    " has a Count cell the GPU parser cannot take at face "
+                    "value (empty, non-numeric, exponent form, or a mantissa "
+                    "beyond 2^53); cap_seq and event existence derive from "
+                    "counts, which the host cannot repair after the fact";
             cleanup();
             return false;
         }
@@ -472,7 +517,8 @@ bool cuda_clean_file(const std::string& path, std::vector<CapEvent>& out,
         e.is_fault = is_reject(d.status);
         e.aggregated = d.delta > 1;
         e.reset = d.reset != 0;
-        if (host_flags[d.row_index] & 1u) {
+        const unsigned char rf = host_flags[d.row_index];
+        if (rf & (1u | 8u)) {
             if (cached_row != d.row_index) {
                 const char* p = h_buf + host_nl[d.row_index] + 1;
                 const char* end = h_buf + host_nl[d.row_index + 1];
@@ -483,16 +529,57 @@ bool cuda_clean_file(const std::string& path, std::vector<CapEvent>& out,
                 for (; f < 1 + 3 * NUM_HEADS; ++f) fld[f] = end;  // short row
                 cached_row = d.row_index;
             }
-            const int h0 = d.head_id - 1;
-            e.app_torque = std::strtod(fld[1 + NUM_HEADS + h0], nullptr);
-            e.status = std::strtod(fld[1 + 2 * NUM_HEADS + h0], nullptr);
-            e.is_fault = is_reject(e.status);
+            if (rf & 8u) {
+                // Device slot too small for this timestamp: the CPU readers
+                // keep the full string, so take it from the raw line rather
+                // than shipping a silently shortened one.
+                e.ts = std::string(fld[0], fld[1] - 1);
+            }
+            if (rf & 1u) {
+                // strtod mirrors the CPU readers' stod: leading whitespace and
+                // trailing garbage are tolerated (both parse " 1.5" and
+                // "2.0\r" alike). What it cannot do is conjure a value from a
+                // cell with no number at all -- the CPU reader skips such a
+                // row before the extractor sees it, and this pipeline is past
+                // the delta stage, so the only honest option left is to
+                // refuse the file rather than ship a 0.0 nobody measured.
+                const int h0 = d.head_id - 1;
+                char* endp = nullptr;
+                const char* tq = fld[1 + NUM_HEADS + h0];
+                e.app_torque = std::strtod(tq, &endp);
+                if (endp == tq) {
+                    error = path + ": data row " +
+                            std::to_string(d.row_index + 1) +
+                            " has an AppTorque cell with no parseable number; "
+                            "the CPU readers skip such a row, and past the "
+                            "delta stage this pipeline cannot";
+                    cleanup();
+                    return false;
+                }
+                const char* st = fld[1 + 2 * NUM_HEADS + h0];
+                e.status = std::strtod(st, &endp);
+                if (endp == st) {
+                    error = path + ": data row " +
+                            std::to_string(d.row_index + 1) +
+                            " has a Status cell with no parseable number; "
+                            "the CPU readers skip such a row, and past the "
+                            "delta stage this pipeline cannot";
+                    cleanup();
+                    return false;
+                }
+                e.is_fault = is_reject(e.status);
+            }
         }
         out.push_back(e);
     }
     times.materialize_s =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - tm0)
             .count();
+    } catch (const std::exception& ex) {
+        error = path + ": host-side failure after download: " + ex.what();
+        cleanup();
+        return false;
+    }
     if (!t.ok()) {
         error = path + ": stage timing failed: " +
                 cudaGetErrorString(t.err) +
