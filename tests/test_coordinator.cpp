@@ -679,3 +679,126 @@ TEST(Coordinator, GateProceedsDegradedAfterTimeout) {
 }
 
 } // namespace
+
+TEST(Coordinator, ZombieClaimRedispatchesTheItemUncharged) {
+    using namespace std::chrono_literals;
+    // The tombstoned-but-alive absorption case: w2 is tombstoned for silence,
+    // but its pipe is still attached, so the anonymous PUSH re-dispatch can
+    // land back in its queue. It cleans the file and sends CLAIM + RESULT;
+    // both used to be dropped at the touch() gate, no further death occurred,
+    // nothing re-dispatched again -- survivors ran dry, idled out, and the
+    // run aborted reporting a file failed that was cleaned correctly. A CLAIM
+    // from a tombstoned worker is proof it is alive: re-dispatch (uncharged)
+    // at the drop site.
+    const std::vector<mas::WorkItem> items = {{"d1.csv"}, {"d2.csv"}};
+    sc::time_point t{};
+    mas::test::FakeSink work;
+    TimedSource results;
+    results.t = &t;
+    // pass 1: w1 reports d1 (implicit join); drain registers w1, w2.
+    // pass 2: empty tick jumps to t=31 s; only w1 beats -> w2 tombstoned,
+    //         open d2 unclaimed -> re-dispatched (uncharged, death sweep).
+    // pass 3: the re-dispatch round-robins into ZOMBIE w2's pipe: its CLAIM
+    //         arrives -> the new drop-site re-dispatch (uncharged).
+    // pass 4: this copy reaches w1, which claims it...
+    // pass 5: ...and completes it. (w2's own RESULT for d2 would be dropped
+    //         at the tombstone gate; LateResultFromTombstonedWorkerIsDropped
+    //         already pins that.)
+    results.script.push_back({mas::encode(mas::WorkResult{"d1.csv", 10, 0.1, "w1"}), 0ms});
+    results.script.push_back({std::nullopt, 31000ms});
+    results.script.push_back({claim("d2.csv", "w2"), 0ms});
+    results.script.push_back({claim("d2.csv", "w1"), 0ms});
+    results.script.push_back({mas::encode(mas::WorkResult{"d2.csv", 20, 0.1, "w1"}), 0ms});
+    mas::test::FakeTickSource hbs;
+    hbs.script.push_back(hb("w1", 0));
+    hbs.script.push_back(hb("w2", 0));
+    hbs.script.push_back(std::nullopt);   // end pass-1 drain
+    hbs.script.push_back(hb("w1", 1));    // pass 2: w1 alive at t=31 s
+
+    const auto s = mas::run_coordinator(items, work, results, hbs,
+                                        mas::CoordinatorConfig{},
+                                        [&] { return t; });
+
+    EXPECT_EQ(s.files_ok, 2);
+    EXPECT_EQ(s.files_failed, 0) << "the zombie-claimed file must not fail";
+    EXPECT_EQ(s.total_events, 30);
+    EXPECT_EQ(s.workers_died, 1);
+    // 2 WORK + death-sweep re-dispatch + zombie-claim re-dispatch + 2 STOP.
+    ASSERT_EQ(work.sent.size(), 6u);
+    const auto d = mas::decode_work(work.sent[3]);
+    ASSERT_TRUE(d.has_value()) << "zombie claim must re-emit the item";
+    EXPECT_EQ(d->in_path, "d2.csv");
+    EXPECT_TRUE(mas::is_stop(work.sent[4]));
+    EXPECT_TRUE(mas::is_stop(work.sent[5]));
+}
+
+TEST(Coordinator, ZombieClaimForAnItemHeldByALiveWorkerIsNotRedispatched) {
+    using namespace std::chrono_literals;
+    // The guard on the drop-site re-dispatch: if a live worker already holds
+    // the item, the zombie's claim is a stale copy from before its death --
+    // re-emitting would duplicate in-flight work for no benefit.
+    const std::vector<mas::WorkItem> items = {{"d1.csv"}};
+    sc::time_point t{};
+    mas::test::FakeSink work;
+    TimedSource results;
+    results.t = &t;
+    // pass 1: w2 claims d1 (implicit join); drain registers w1, w2.
+    // pass 2: 31 s of silence from w2 -> tombstoned; d1's holder died ->
+    //         charged re-dispatch, holder erased.
+    // pass 3: w1 claims the re-dispatched d1 (live holder).
+    // pass 4: zombie w2's claim for d1 arrives -> guard: held by live w1,
+    //         no re-dispatch.
+    // pass 5: w1 completes d1.
+    results.script.push_back({claim("d1.csv", "w2"), 0ms});
+    results.script.push_back({std::nullopt, 31000ms});
+    results.script.push_back({claim("d1.csv", "w1"), 0ms});
+    results.script.push_back({claim("d1.csv", "w2"), 0ms});
+    results.script.push_back({mas::encode(mas::WorkResult{"d1.csv", 10, 0.1, "w1"}), 0ms});
+    mas::test::FakeTickSource hbs;
+    hbs.script.push_back(hb("w1", 0));
+    hbs.script.push_back(hb("w2", 0));
+    hbs.script.push_back(std::nullopt);
+    hbs.script.push_back(hb("w1", 1));
+
+    const auto s = mas::run_coordinator(items, work, results, hbs,
+                                        mas::CoordinatorConfig{},
+                                        [&] { return t; });
+
+    EXPECT_EQ(s.files_ok, 1);
+    EXPECT_EQ(s.workers_died, 1);
+    // 1 WORK + holder-death re-dispatch + 2 STOP; NO zombie-claim re-emit.
+    ASSERT_EQ(work.sent.size(), 4u);
+    EXPECT_TRUE(mas::is_stop(work.sent[2]));
+    EXPECT_TRUE(mas::is_stop(work.sent[3]));
+}
+
+TEST(Coordinator, GoodbyeWithAClaimStillOutstandingRedispatchesIt) {
+    // The protocol slip mark_departed defends against (a worker BYEs between
+    // CLAIM and RESULT): lines that had never executed under the suite --
+    // the departed worker's holder entry is erased and the open item is
+    // re-dispatched to the survivors, uncharged.
+    const std::vector<mas::WorkItem> items = {{"d1.csv"}, {"d2.csv"}};
+    mas::test::FakeSink work;
+    mas::test::FakeSource results;
+    results.queue.push_back(claim("d1.csv", "w2"));
+    results.queue.push_back(bye("w2"));                    // BYE with d1 open
+    results.queue.push_back(claim("d1.csv", "w1"));
+    results.queue.push_back(result("d1.csv", 10, "w1"));
+    results.queue.push_back(result("d2.csv", 20, "w1"));
+    mas::test::FakeSource hbs;
+    hbs.queue.push_back(hb("w1", 0));
+    hbs.queue.push_back(hb("w2", 0));
+
+    const auto s = mas::run_coordinator(items, work, results, hbs,
+                                        mas::CoordinatorConfig{}, fixed_clock());
+
+    EXPECT_EQ(s.files_ok, 2);
+    EXPECT_EQ(s.files_failed, 0);
+    EXPECT_EQ(s.workers_died, 0) << "a goodbye is a departure, not a death";
+    EXPECT_EQ(s.total_events, 30);
+    // 2 WORK + the holder-departed re-dispatch + STOP x (1 live + 1 departed).
+    ASSERT_EQ(work.sent.size(), 5u);
+    const auto re = mas::decode_work(work.sent[2]);
+    ASSERT_TRUE(re.has_value());
+    EXPECT_EQ(re->in_path, "d1.csv");
+}

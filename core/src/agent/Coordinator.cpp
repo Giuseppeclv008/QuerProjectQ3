@@ -182,9 +182,35 @@ DispatchSummary run_coordinator(const std::vector<WorkItem>& items,
                     const auto st = state.find(c->in_path);
                     if (st != state.end() && !st->second.done)
                         holder[c->in_path] = c->worker_id;
+                } else {
+                    // A claim from a tombstoned worker is proof of two things:
+                    // the worker is alive (tombstoned for silence, not dead),
+                    // and the item landed in a written-off pipe -- the zombie's
+                    // RESULT will be dropped at this same gate, so without
+                    // action the item never settles: survivors run dry, idle
+                    // out, and the run aborts on a file that was cleaned
+                    // correctly into a store nobody will merge. Re-dispatch
+                    // uncharged (the zombie vouched for nothing) unless a live
+                    // worker already holds it. Consuming one claim emits at
+                    // most one frame, so the queue cannot grow -- and the
+                    // re-send can round-robin into the zombie again, which
+                    // just repeats this exchange until a live pipe wins.
+                    const auto st = state.find(c->in_path);
+                    const auto h = holder.find(c->in_path);
+                    const bool held_by_live =
+                        h != holder.end() &&
+                        [&] {
+                            const auto w = registry.find(h->second);
+                            return w != registry.end() && w->second.alive;
+                        }();
+                    if (st != state.end() && !st->second.done && !held_by_live &&
+                        count_live() > 0) {
+                        std::cerr << "coordinator: re-dispatch " << c->in_path
+                                  << " (claimed by tombstoned " << c->worker_id
+                                  << "; uncharged)\n";
+                        work.send(encode(WorkItem{c->in_path}));
+                    }
                 }
-                // A claim from a tombstoned worker needs nothing: its result
-                // will be dropped at the same gate.
             } else if (const auto g = decode_goodbye(*msg)) {
                 mark_departed(g->worker_id);
             } else {

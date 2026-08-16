@@ -225,4 +225,40 @@ TEST(CleaningWorker, AThrowingCleanFnFailsTheItemNotTheWorker) {
     EXPECT_EQ(good->events, 5);
 }
 
+TEST(CleaningWorker, AFailingHeartbeatSinkDoesNotFailTheFile) {
+    // A transport failure is not "this input file is bad". The catch around
+    // clean_fn_ used to swallow beat() transport exceptions along with store
+    // exceptions; both became events = -1, which the coordinator explicitly
+    // does not re-dispatch -- a transient socket error on a good day-file
+    // permanently failed it, and stderr blamed the CSV. beat() is
+    // fire-and-forget now: the send failure is logged and the file completes.
+    struct ThrowingSink : mas::IMessageSink {
+        int calls = 0;
+        void send(const mas::Message&) override {
+            ++calls;
+            throw std::runtime_error("Operation cannot be accomplished in current state");
+        }
+    };
+    mas::test::FakeSource work;
+    work.queue.push_back(mas::encode(mas::WorkItem{"day1.csv"}));
+    work.queue.push_back(mas::make_stop());
+    mas::test::FakeSink results;
+    ThrowingSink hb;
+    FakeStore store;
+    mas::CleaningWorker w(work, results, hb, store, "w1",
+        [](const std::string&, mas::IEventStore&,
+           const std::function<void()>& beat) -> long long {
+            beat();   // mid-file heartbeat, as BeatingStore would fire it
+            return 7;
+        });
+
+    EXPECT_EQ(w.run(), 1);
+    EXPECT_GT(hb.calls, 0) << "the heartbeat path must have been exercised";
+    ASSERT_EQ(results.sent.size(), 2u);   // CLAIM + RESULT, both delivered
+    const auto r = mas::decode_result(results.sent[1]);
+    ASSERT_TRUE(r.has_value());
+    EXPECT_EQ(r->in_path, "day1.csv");
+    EXPECT_EQ(r->events, 7) << "a lost beat must not become events=-1";
+}
+
 } // namespace

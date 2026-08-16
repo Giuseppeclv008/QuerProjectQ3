@@ -135,3 +135,30 @@ TEST(FakeTransport, SinkRecordsSends) {
 }
 
 } // namespace
+
+TEST(Message, DecodeResultRejectsOutOfRangeNumerics) {
+    // The coordinator adds `events` straight into total_events: two frames
+    // carrying LLONG_MAX are signed-overflow UB, one is a garbage headline.
+    // "inf"/"nan" stod-parse with full consumption, so seconds needs an
+    // explicit range check too. The codec already rejects trailing garbage
+    // and caps frame size for this threat model; these were the last open
+    // numeric paths.
+    auto reject = [](const std::string& events, const std::string& seconds) {
+        const mas::Message m{"RESULT\nd1.csv\n" + events + "\n" + seconds + "\nw1"};
+        EXPECT_FALSE(mas::decode_result(m).has_value())
+            << "events=" << events << " seconds=" << seconds;
+    };
+    reject("9223372036854775807", "0.1");   // LLONG_MAX
+    reject("1000000000001", "0.1");         // just past the cap
+    reject("-2", "0.1");                    // below the -1 failure channel
+    reject("5", "inf");
+    reject("5", "nan");
+    reject("5", "-0.5");
+    reject("5", "1e12");
+
+    // The boundary values survive.
+    EXPECT_TRUE(mas::decode_result(
+        mas::Message{"RESULT\nd1.csv\n-1\n0\nw1"}).has_value());
+    EXPECT_TRUE(mas::decode_result(
+        mas::Message{"RESULT\nd1.csv\n1000000000000\n0.5\nw1"}).has_value());
+}

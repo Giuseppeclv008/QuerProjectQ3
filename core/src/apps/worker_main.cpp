@@ -31,7 +31,7 @@ int main(int argc, char** argv) {
     if (argc < 2) {
         std::cerr << "usage: mas_worker [--format duckdb|parquet] <work_endpoint> "
                      "<result_endpoint> <hb_endpoint> <out.duckdb|out_dir> "
-                     "<worker_id> [machine_id]\n";
+                     "<worker_id> <machine_id>\n";
         return 2;
     }
     int argi = 1;
@@ -47,10 +47,15 @@ int main(int argc, char** argv) {
         std::cerr << "error: " << *bad << "\n";
         return 2;
     }
-    if (argc - argi < 5 || argc - argi > 6) {
+    if (argc - argi != 6) {
+        // machine_id is required, not defaulted: CliArgs.hpp states the
+        // governing principle -- a wrong answer that announces itself as a
+        // success -- and a store silently labelled "MCC" is exactly that. A
+        // merge into a destination labelled with the real id then holds rows
+        // no machine-scoped analytics query will ever find.
         std::cerr << "usage: mas_worker [--format duckdb|parquet] <work_endpoint> "
                      "<result_endpoint> <hb_endpoint> <out.duckdb|out_dir> "
-                     "<worker_id> [machine_id]\n";
+                     "<worker_id> <machine_id>\n";
         return 2;
     }
     const std::string work_ep = argv[argi], result_ep = argv[argi + 1],
@@ -61,7 +66,7 @@ int main(int argc, char** argv) {
                      "newline-delimited wire format cannot carry\n";
         return 2;
     }
-    const std::string machine = (argc > argi + 5) ? argv[argi + 5] : "MCC";
+    const std::string machine = argv[argi + 5];
     try {
         zmq::context_t ctx(1);
         // Liveness (resilience spec §7): the 1 s work recv timeout is the
@@ -70,15 +75,22 @@ int main(int argc, char** argv) {
         // forever-blocked PUSH.
         mas::ZmqPullSource work(ctx, work_ep, /*bind=*/false,
                                 /*timeout_ms=*/1000);
-        // linger_ms=0 on both sinks so process exit is prompt when the
-        // coordinator is gone (chaos E2E: the coupled 60 s linger held the
-        // orphan worker to 121 s vs the ~65 s budget). Protocol-safe:
-        // results — the coordinator STOPs only after every item is settled,
-        // so a result still queued at exit means the coordinator is dead and
-        // the item gets re-dispatched from a survivor anyway; heartbeats —
-        // fire-and-forget liveness, worthless once this process ends.
+        // Heartbeats keep linger_ms=0: fire-and-forget liveness, worthless
+        // once this process ends, and a zero linger is what keeps an orphan
+        // worker's exit prompt when the coordinator is gone (chaos E2E: the
+        // coupled 60 s linger held the orphan to 121 s vs the ~65 s budget).
+        //
+        // The results sink gets a short REAL linger. The zero-linger rationale
+        // ("a result still queued at exit means the coordinator is dead")
+        // predates the Goodbye frame, which is sent precisely when the
+        // coordinator is ALIVE -- at idle exit, immediately before the socket
+        // closes. With linger 0 that BYE can be silently dropped, and losing
+        // it reverts the departure to death semantics: completions reopened,
+        // items re-dispatched, workers_died inflated. 300 ms is enough for a
+        // localhost flush and bounds the orphan case at well under the chaos
+        // budget.
         mas::ZmqPushSink results(ctx, result_ep, /*bind=*/false,
-                                 /*send_timeout_ms=*/60000, /*linger_ms=*/0);
+                                 /*send_timeout_ms=*/60000, /*linger_ms=*/300);
         mas::ZmqPushSink heartbeats(ctx, hb_ep, /*bind=*/false,
                                     /*send_timeout_ms=*/60000, /*linger_ms=*/0);
         std::optional<mas::DuckDbEventStore> duck;
@@ -90,12 +102,31 @@ int main(int argc, char** argv) {
         mas::CleaningWorker worker(work, results, heartbeats, store, worker_id,
             [&](const std::string& path, mas::IEventStore& s,
                 const std::function<void()>& beat) {
-                if (!parquet) return mas::clean_file(path, s);
+                // skipped-row counts go to stderr per file: a malformed row is
+                // data loss the RESULT frame does not carry, and only the
+                // worker's log can say it happened.
+                mas::CleanFileStats stats;
+                const auto warn = [&] {
+                    if (stats.skipped_rows)
+                        std::cerr << "worker " << worker_id << ": " << path
+                                  << ": skipped " << stats.skipped_rows
+                                  << " malformed rows\n";
+                    if (stats.out_of_order_rows)
+                        std::cerr << "worker " << worker_id << ": " << path
+                                  << ": " << stats.out_of_order_rows
+                                  << " out-of-order timestamps\n";
+                };
+                if (!parquet) {
+                    const long long n = mas::clean_file(path, s, &stats);
+                    warn();
+                    return n;
+                }
                 mas::ParquetEventStore pq(mas::parquet_path_for(out, path), machine);
                 // Same decorator the worker applies to its injected store, so
                 // the parquet path is not silent for the length of a file.
                 mas::BeatingStore beating(pq, beat, mas::CleaningWorker::kBeatEvery);
-                const long long n = mas::clean_file(path, beating);
+                const long long n = mas::clean_file(path, beating, &stats);
+                warn();
                 if (n < 0) {
                     pq.abandon();   // no file for a work item that failed
                     return n;

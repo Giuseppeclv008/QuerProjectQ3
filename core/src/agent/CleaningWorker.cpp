@@ -15,7 +15,18 @@ CleaningWorker::CleaningWorker(IMessageSource& work, IMessageSink& results,
       worker_id_(std::move(worker_id)), clean_fn_(std::move(clean_fn)) {}
 
 void CleaningWorker::beat() {
-    heartbeats_.send(encode(Heartbeat{worker_id_, hb_seq_++}));
+    // Fire-and-forget liveness: a heartbeat that cannot be sent is a beat
+    // lost, not a file lost. This used to throw through clean_fn_'s catch,
+    // where a transient socket error became events = -1 -- "this input file
+    // is bad, do not re-dispatch" -- and stderr blamed the CSV. The result
+    // socket keeps its throwing send: losing a RESULT is fatal and should
+    // unwind run().
+    try {
+        heartbeats_.send(encode(Heartbeat{worker_id_, hb_seq_++}));
+    } catch (const std::exception& e) {
+        std::cerr << "worker " << worker_id_
+                  << ": heartbeat send failed (continuing): " << e.what() << "\n";
+    }
 }
 
 int CleaningWorker::run() {
@@ -48,7 +59,10 @@ int CleaningWorker::run() {
         // sent NO result: the coordinator burned the full death threshold,
         // tombstoned the worker, wrote its store off, and re-dispatched
         // everything it held. events == -1 is the failure channel built for
-        // exactly this; route into it and keep serving.
+        // exactly this; route into it and keep serving. beat() no longer
+        // throws (see above), so what lands here is the store or the parse --
+        // per-file and deterministic, which is what -1 ("do not re-dispatch")
+        // asserts.
         long long events = -1;
         try {
             events = clean_fn_(item->in_path, beating, [this] { beat(); });

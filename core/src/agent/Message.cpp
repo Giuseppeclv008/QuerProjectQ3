@@ -57,9 +57,20 @@ std::optional<WorkResult> decode_result(const Message& m) {
         if (events_end != f[2].size() || seconds_end != f[3].size()) {
             return std::nullopt;
         }
+        // Range-check the numerics like every other untrusted field: the
+        // coordinator adds `events` straight into total_events, so two frames
+        // carrying LLONG_MAX are signed-overflow UB and one is a garbage
+        // headline. A real day-file yields under a million events; 10^12 is
+        // beyond any input this system can see while keeping the sum safe by
+        // seven orders of magnitude. -1 is the failure channel; anything
+        // below it is malformed. `seconds` has the same gap ("inf" and "nan"
+        // stod-parse with full consumption): require finite, non-negative,
+        // and under 10^9 (~31 years).
+        if (events < -1 || events > 1000000000000LL) return std::nullopt;
+        if (!(seconds >= 0.0 && seconds < 1e9)) return std::nullopt;
         return WorkResult{f[1], events, seconds, f[4]};
     } catch (const std::exception&) {
-        return std::nullopt;   // non-numeric events/seconds
+        return std::nullopt;   // non-numeric events/seconds, or out of range
     }
 }
 
