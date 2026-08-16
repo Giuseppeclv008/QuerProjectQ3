@@ -1,5 +1,17 @@
 # Benchmark & Monolith Baseline — Implementation Plan (Plan 5)
 
+> **[SUPERSEDED 2026-08-11 — event identity.]** This document teaches
+> `UNIQUE(machine_id, head_id, cap_seq)` as the store's identity. That key was
+> discarded on 2026-08-11: the PLC's Count register resets mid-month, a closure
+> recorded later can carry an already-used `cap_seq`, and keying on it dropped
+> distinct physical caps onto older rows — February persisted 21,872,663 events
+> as 14,372,237 rows, with 18,721 of head 1's colliding day-17 closures carrying
+> a different torque. The store now keys on `UNIQUE(machine_id, head_id, ts)`
+> and refuses a cap_seq-keyed store on open (`DuckDbEventStore.cpp`). See
+> README § Database Design and docs/validation-log.md ("Event identity").
+> The text below is preserved as written; read every `cap_seq` key claim
+> through this notice.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** A monolithic baseline binary sharing the MAS hot path, a sweep harness measuring mono(T) vs MAS(N) across data volumes with per-run correctness assertions, and the four spec-§9 plot families — Goal 5's scalability proof.

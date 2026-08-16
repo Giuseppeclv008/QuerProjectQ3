@@ -121,7 +121,7 @@ Shows the MAS system boundary, external actors, and data flows.
 
 ### C4 Container (Level 2)
 
-Shows the five C++ executables, the ZeroMQ fabric (now with 3 endpoints),
+Shows the eight C++ executables, the ZeroMQ fabric (now with 3 endpoints),
 database stores, and the testing/validation scripts.
 
 ![C4 Container Diagram](docs/diagrams/C4_Container.png)
@@ -135,6 +135,8 @@ database stores, and the testing/validation scripts.
 | `mas_worker` | C++ CLI | Cleaning agent with heartbeat emission and idle-exit |
 | `mas_merge` | C++ CLI | Merges per-worker/thread DuckDB stores (skips corrupt ones) |
 | `mas_export` | C++ CLI | Exports a store to Parquet, read-only, row count verified |
+| `bench_cpu` | C++ CLI | Store-free cleaning contender for the benchmark sweep |
+| `mas_cuda_clean` | C++ CLI | GPU cleaning contender (`--verify` differentials against the CPU) |
 | ZeroMQ Fabric | libzmq 4.3.5 | 3-endpoint PUSH/PULL: work, results, heartbeats |
 | DuckDB Store | DuckDB | Persistent `cap_events` table with idempotent upserts |
 | `chaos_e2e.sh` | Bash | Resilience test: SIGKILL a worker, verify full recovery |
@@ -184,7 +186,7 @@ organized by layer.
 │   │   │   ├── Transport.hpp               # IMessageSource / IMessageSink interfaces
 │   │   │   └── ZmqTransport.hpp            # ZMQ PUSH/PULL adapters (linger_ms control)
 │   │   └── util/
-│   │       └── platform_metrics.hpp        # Self-reported wall/CPU/peak-RSS; only #ifdef _WIN32
+│   │       └── platform_metrics.hpp        # Self-reported wall/CPU/peak-RSS (one of three #ifdef _WIN32 sites)
 │   ├── cuda/                               # CUDA cleaning pipeline (built only with MAS_ENABLE_CUDA)
 │   │   ├── CudaCleaner.hpp                 # Host-callable interface; leaks no CUDA types
 │   │   └── CudaCleaner.cu                  # Kernels S2-S5 + host orchestration (CUB)
@@ -215,26 +217,32 @@ organized by layer.
 │           ├── bench_cpu_main.cpp          # → bench_cpu       (store-free contender)
 │           └── cuda_clean_main.cpp         # → mas_cuda_clean  (GPU contender, --verify)
 │
-├── tests/                                  # Google Test unit tests (17 files, 127 tests)
+├── tests/                                  # Google Test unit tests (20 files, 169 tests)
 │   ├── test_cap_event.cpp
 │   ├── test_cap_event_extractor.cpp
 │   ├── test_cap_event_extractor_flat.cpp   # The GPU precondition, proved against the stateful one
 │   ├── test_platform_metrics.cpp
 │   ├── test_csv_raw_reader.cpp
 │   ├── test_bench_cpu_parity.cpp           # bench_cpu's loop == load_columns + extract_flat
+│   ├── test_cli_args.cpp
+│   ├── test_engine_select.cpp
+│   ├── test_atomic_publish.cpp
 │   ├── test_pipeline.cpp
 │   ├── test_duckdb_smoke.cpp
 │   ├── test_duckdb_event_store.cpp
+│   ├── test_parquet_event_store.cpp
+│   ├── test_parquet_export.cpp
 │   ├── test_zmq_smoke.cpp
 │   ├── test_zmq_transport.cpp
 │   ├── test_message.cpp
 │   ├── test_cleaning_worker.cpp
 │   ├── test_coordinator.cpp
+│   ├── test_cuda_cleaner.cpp               # GPU/CPU differential (needs MAS_ENABLE_CUDA + a device)
 │   └── fakes/
 │       └── FakeTransport.hpp               # FakeSource, FakeSink, FakeTickSource
 │
 ├── python/                                 # Analytics tier (WP2-WP5) + validation oracles
-│   ├── requirements.txt                    # duckdb, matplotlib, anthropic, markdown-it-py
+│   ├── requirements.txt                    # duckdb, pandas, numpy, matplotlib, anthropic, markdown-it-py, pytest
 │   ├── oracle.py                           # Reference dedup implementation
 │   ├── clean_vectorized.py                 # Vectorized (numpy/pandas) contender; same tuples
 │   ├── test_oracle.py                      # Pytest unit tests for the oracle
@@ -269,12 +277,14 @@ organized by layer.
 │           ├── render.py                   # The six mandated sections + tool-call trace
 │           ├── plots.py                    # Five matplotlib figures, driven only by ToolResults
 │           └── export.py                   # Self-contained HTML; best-effort PDF
-│   └── tests/                              # 240 tests incl. golden report + mocked-LLM agent
+│   └── tests/                              # golden report + mocked-LLM agent tests (count guarded by test_readme_counts.py)
 │
 ├── scripts/
 │   ├── arol                                # WP4 entry point: arol report kpi --period 2026-02
 │   ├── demo.sh                             # One command: three report types on the real store
-│   └── chaos_e2e.sh                        # Resilience E2E: kill worker mid-run, verify recovery
+│   ├── chaos_e2e.sh                        # Resilience E2E: kill worker mid-run, verify recovery
+│   ├── build_store.sh                      # Rebuild ../events_3mo.duckdb from the three month zips
+│   └── setup_windows_toolchain.ps1         # Windows bench box: VS Build Tools + CMake + CUDA checks
 │
 ├── bench/                                  # Performance benchmarking
 │   ├── run_bench.sh                        # Sweep: mono {1,2,4,8}T + MAS {1..16}W × {1,7,28}d
@@ -313,7 +323,9 @@ organized by layer.
 │       └── C4_Component.png                # Rendered component diagram
 │
 ├── telemetry_*/                            # Raw data (git-ignored, ~1.6 GB/month)
-├── build/                                  # CMake build directory (git-ignored)
+├── build/                                  # Primary CMake build directory (git-ignored)
+├── build-full/                             # Full-option build: ZMQ + DuckDB + tests (git-ignored)
+├── build-bench/                            # MAS_BENCH_ONLY build (git-ignored)
 └── build-plan/                             # Scratch configure dir for option matrices (git-ignored)
 ```
 
@@ -371,7 +383,7 @@ So `65` is `64 + 1` (Bad Closure **with** reject) and `9` is `8 + 1` (No
 InTorque with reject). **A closure is a rejection iff its status is odd:**
 
 ```sql
-CAST(status AS BIGINT) % 2 = 1
+CAST(status AS BIGINT) % 2 <> 0   -- <> 0, not = 1: covers negative status
 ```
 
 Single-sourced in [`analytics/status.py`](python/analytics/status.py)
@@ -428,7 +440,7 @@ nothing is what lets the benchmark build on a machine with no DuckDB at all.
 
 | Component | File(s) | Description |
 |-----------|---------|-------------|
-| `CapEvent` / `RawRow` | [`CapEvent.hpp`](core/include/mas/domain/CapEvent.hpp) | Domain value types. `NUM_HEADS=36`, `FAULT_STATUS=65`. |
+| `CapEvent` / `RawRow` | [`CapEvent.hpp`](core/include/mas/domain/CapEvent.hpp) | Domain value types. `NUM_HEADS=36`; a failure is any status with the reject bit set (`is_reject`), not a single code — `FAULT_STATUS=65` was removed in Plan 7. |
 | `CapEventExtractor` | [`CapEventExtractor.hpp`](core/include/mas/domain/CapEventExtractor.hpp) · [`.cpp`](core/src/domain/CapEventExtractor.cpp) | Stateful per-head dedup. Maintains `last_count_[36]`. Not thread-safe. |
 | `extract_flat()` / `RawColumns` / `load_columns()` | [`CapEventExtractorFlat.hpp`](core/include/mas/domain/CapEventExtractorFlat.hpp) · [`.cpp`](core/src/domain/CapEventExtractorFlat.cpp) | Element-wise form of the same transform, plus a whole-file CSV→columns loader. Stdlib only, no state across rows. Tolerates CRLF; validates the 109-column header. |
 | `clean_file()` | [`Pipeline.hpp`](core/include/mas/domain/Pipeline.hpp) · [`.cpp`](core/src/domain/Pipeline.cpp) | Orchestrator: CsvRawReader → CapEventExtractor → IEventStore in 8192-event batches. |
@@ -456,9 +468,9 @@ nothing is what lets the benchmark build on a machine with no DuckDB at all.
 
 | Component | File(s) | Description |
 |-----------|---------|-------------|
-| `Message` / `WorkItem` / `WorkResult` / `Heartbeat` | [`Message.hpp`](core/include/mas/agent/Message.hpp) · [`.cpp`](core/src/agent/Message.cpp) | Wire protocol with tags `WORK`, `RESULT`, `HB`, `STOP`. `WorkResult` carries `worker_id` for attribution. `Heartbeat` carries `worker_id` + monotonic `seq`. |
-| `CleaningWorker` | [`CleaningWorker.hpp`](core/include/mas/agent/CleaningWorker.hpp) · [`.cpp`](core/src/agent/CleaningWorker.cpp) | Agent loop with heartbeats: hello-beat on entry → PULL work → clean → PUSH result + beat. Idle-exit after `kIdleExitTicks=60` consecutive empty ticks (~60 s at 1 s recv timeout). |
-| `run_coordinator()` | [`Coordinator.hpp`](core/include/mas/agent/Coordinator.hpp) · [`.cpp`](core/src/agent/Coordinator.cpp) | Ventilator + Sink + Liveness monitor. 4-phase loop: (1) result tick, (2) heartbeat drain, (3) death sweep + re-dispatch, (4) abort check. Injectable `ClockFn` for deterministic tests. `CoordinatorConfig`: `death_threshold=30s`, `redispatch_cap=2`. |
+| `Message` / `WorkItem` / `WorkResult` / `Heartbeat` | [`Message.hpp`](core/include/mas/agent/Message.hpp) · [`.cpp`](core/src/agent/Message.cpp) | Wire protocol with tags `WORK`, `RESULT`, `HB`, `CLAIM`, `BYE`, `STOP`. `WorkResult` carries `worker_id` for attribution. `WorkClaim` names the worker holding an item (sent on the results socket, so claim-before-result is FIFO-guaranteed); `Goodbye` announces a voluntary idle-exit, which is departure, not death. `Heartbeat` carries `worker_id` + monotonic `seq`. |
+| `CleaningWorker` | [`CleaningWorker.hpp`](core/include/mas/agent/CleaningWorker.hpp) · [`.cpp`](core/src/agent/CleaningWorker.cpp) | Agent loop with heartbeats: hello-beat on entry → PULL work → PUSH claim → clean → PUSH result + beat. A throwing clean fails the item (`events=-1` result), never the worker. Idle-exit after `kIdleExitTicks=60` consecutive empty ticks (~60 s at 1 s recv timeout) announces itself with a `BYE` frame. |
+| `run_coordinator()` | [`Coordinator.hpp`](core/include/mas/agent/Coordinator.hpp) · [`.cpp`](core/src/agent/Coordinator.cpp) | Ventilator + Sink + Liveness monitor. Registration gate first (with `expected_workers > 0`, the initial dispatch waits for that many hellos, up to `registration_timeout`), then the 4-phase loop: (1) lifecycle tick (result, claim, or goodbye), (2) heartbeat drain, (3) death sweep + holder-based re-dispatch, (4) abort check. A death re-dispatches the dead worker's claimed items (charging their cap) and unclaimed items (uncharged); items held by live workers are untouched, and an announced `BYE` reopens nothing. Injectable `ClockFn` for deterministic tests. `CoordinatorConfig`: `death_threshold=30s`, `redispatch_cap=2`, `expected_workers=0`, `registration_timeout=10s`. |
 
 ### Transport Layer
 
@@ -476,7 +488,7 @@ nothing is what lets the benchmark build on a machine with no DuckDB at all.
 
 | Component | File(s) | Description |
 |-----------|---------|-------------|
-| `ProcMetrics` / `read_metrics()` / `metrics_line()` | [`platform_metrics.hpp`](core/include/mas/util/platform_metrics.hpp) | Self-reported wall, CPU (user+sys) and peak RSS. `GetProcessTimes`/`GetProcessMemoryInfo` on Windows, `getrusage` elsewhere (`ru_maxrss` is bytes on macOS, KB on Linux). **The only `#ifdef _WIN32` in the codebase.** Emits one machine-readable `metrics:` line that the benchmark driver parses. |
+| `ProcMetrics` / `read_metrics()` / `metrics_line()` | [`platform_metrics.hpp`](core/include/mas/util/platform_metrics.hpp) | Self-reported wall, CPU (user+sys) and peak RSS. `GetProcessTimes`/`GetProcessMemoryInfo` on Windows, `getrusage` elsewhere (`ru_maxrss` is bytes on macOS, KB on Linux). One of three `#ifdef _WIN32` sites in the codebase (AtomicPublish.hpp holds the other two, for `_getpid`). Emits one machine-readable `metrics:` line that the benchmark driver parses. |
 | `Engine` / `parse_engine()` / `resolve_engine()` | [`engine.hpp`](core/include/mas/util/engine.hpp) | The `--engine=cpu\|cuda` policy: parse the flag value, refuse an engine the binary was not built with (the error names `-DMAS_ENABLE_CUDA=ON` as the remedy), never fall back. Kept as pure functions so the refusal rules are unit-tested from builds that have no CUDA. |
 
 This replaces the old harness's `/usr/bin/time -l` wrapper, which is BSD-only —
@@ -489,7 +501,7 @@ report its own numbers also excludes process spawn from the measurement.
 
 | Component | File(s) | Description |
 |-----------|---------|-------------|
-| `cuda_clean_file()` / `CudaStageTimes` | [`CudaCleaner.hpp`](core/cuda/CudaCleaner.hpp) · [`.cu`](core/cuda/CudaCleaner.cu) | Seven stages: read into pinned memory → one H2D upload of the raw bytes → CUB newline index → thread-per-row parse → thread-per-`(row,head)` delta → CUB stream compaction → one D2H download. Emits events in `(row asc, head asc)` order, identical to `CapEventExtractor`. |
+| `cuda_clean_file()` / `CudaStageTimes` | [`CudaCleaner.hpp`](core/cuda/CudaCleaner.hpp) · [`.cu`](core/cuda/CudaCleaner.cu) | Eight stages: read into pinned memory → one H2D upload of the raw bytes → CUB newline index → thread-per-row parse → thread-per-`(row,head)` delta → CUB stream compaction → one D2H download. Emits events in `(row asc, head asc)` order, identical to `CapEventExtractor`. |
 
 Design notes:
 
@@ -679,15 +691,24 @@ Every run also emits a `metrics:` line on stderr with wall, CPU and peak RSS.
 ### `mas_coordinator` — Ventilator + Sink + Liveness Monitor
 
 ```
-usage: mas_coordinator <work_endpoint> <result_endpoint> <hb_endpoint> <day1.csv> [day2.csv ...]
+usage: mas_coordinator <work_endpoint> <result_endpoint> <hb_endpoint> [--workers N] <day1.csv> [day2.csv ...]
 ```
 
 Binds three PUSH/PULL sockets:
 - **Work** (PUSH, bind): sends `WorkItem` and `STOP` messages to workers
-- **Results** (PULL, bind, 200 ms timeout): receives `WorkResult` messages — paces the loop
+- **Results** (PULL, bind, 200 ms timeout): receives `WorkResult`, `WorkClaim` and `Goodbye` messages — paces the loop
 - **Heartbeats** (PULL, bind, 0 ms timeout): drained without blocking each tick
 
-Death detection: workers silent > 30 s are tombstoned, their completed items re-opened, and all open items re-dispatched (up to 2 re-sends per item).
+`--workers N` gates the initial dispatch on N workers registering (hello
+heartbeat or result), so PUSH round-robins over all their pipes instead of
+queueing the whole batch into the first one; after `registration_timeout` it
+proceeds degraded with whoever showed up, or aborts if nobody did.
+
+Death detection: workers silent > 30 s are tombstoned, their completed items
+re-opened, their claimed items re-dispatched (up to 2 charged re-sends per
+item), and unclaimed items re-sent free of charge — an item a live worker has
+claimed is left alone, and a worker that announced its idle-exit with `BYE` is
+departed, not dead: nothing of its is reopened.
 
 ### `mas_worker` — Cleaning Agent
 
@@ -794,10 +815,10 @@ The MAS implements a heartbeat-driven liveness protocol:
 3. One heartbeat after each `WorkResult`
 4. The only silent window is during `clean_file()` execution
 
-**Coordinator 4-phase loop (per tick):**
-1. **Result tick** — take one result (200 ms timeout paces the loop)
+**Coordinator loop (per tick), after the registration gate:**
+1. **Lifecycle tick** — take one frame: a result, a claim (who holds which item), or a goodbye (200 ms timeout paces the loop)
 2. **Heartbeat drain** — drain all pending heartbeats without blocking
-3. **Death sweep** — tombstone workers silent > `death_threshold` (30 s), reopen their completed items, re-dispatch all open items (capped at `redispatch_cap=2` per item)
+3. **Death sweep** — tombstone workers silent > `death_threshold` (30 s), reopen their completed items, re-dispatch the dead worker's claimed items (each charged against its `redispatch_cap=2`) plus any unclaimed items (uncharged); leave items claimed by live workers alone
 4. **Abort check** — if no live workers remain and items are open, abort
 
 **Dead-worker store write-off:** A dead worker's store is written off entirely
@@ -1044,7 +1065,7 @@ cmake --build build --parallel
 | Option | Default | Effect |
 |--------|---------|--------|
 | `MAS_BENCH_ONLY` | `OFF` | Build only the cleaning core and the benchmark binaries. Fetches no DuckDB asset and no libzmq source, and forces `MAS_ENABLE_ZMQ=OFF`. |
-| `MAS_ENABLE_ZMQ` | `ON` | Build the ZeroMQ agent runtime (`mas_transport`, `mas_worker`, `mas_coordinator`) and its 40 tests. |
+| `MAS_ENABLE_ZMQ` | `ON` | Build the ZeroMQ agent runtime (`mas_transport`, `mas_worker`, `mas_coordinator`) and its 50 tests. |
 | `MAS_ENABLE_CUDA` | `OFF` | Build `mas_cuda_clean`, and (in the full build) compile the GPU cleaner into `mas_monolith` so `--engine=cuda` works. Requires the CUDA Toolkit. |
 | `MAS_BUILD_TESTS` | `ON` | Build the GoogleTest suite. `OFF` drops the last dependency that needs network. |
 
@@ -1299,15 +1320,21 @@ it, `--pdf` logs how to install it and writes Markdown and HTML as normal.
 
 ## Testing
 
-The project has **146 C++ unit tests** across 19 Google Test files, plus **250
+The project has **169 C++ unit tests** across 20 Google Test files, plus **263
 Python tests** for the analytics tier. Both counts are asserted by
 `python/tests/test_readme_counts.py`, so adding a test and forgetting this
 paragraph fails the suite rather than quietly dating it.
 
 ```bash
-cd build && ctest --output-on-failure           # 146 C++ tests
-cd python && ../.venv/bin/python -m pytest -q   # 250 Python tests (5 need the rebuilt store or a real day-file and skip without them)
+cd build && ctest --output-on-failure           # 169 C++ tests (8 are the GPU/CPU differential: compiled only with -DMAS_ENABLE_CUDA=ON, and they skip without a device)
+cd python && ../.venv/bin/python -m pytest -q   # 263 Python tests (see the two data gates below)
 ```
+
+Two separate data gates apply to the Python suite: **5 tests** need the rebuilt
+3-month store (`../events_3mo.duckdb`, from `scripts/build_store.sh`) and skip
+without it, and **1 test** needs a real extracted day-file and skips without
+that — so a fresh clone shows 6 skips, and a machine with the pool extracted
+but no store shows 5.
 
 Under `-DMAS_BENCH_ONLY=ON` the C++ suite is the 57 tests that need neither
 DuckDB nor ZeroMQ — the rest are excluded by design, not skipped. (Two of the
@@ -1380,7 +1407,8 @@ a number.
 - [x] **CUDA cleaning pipeline and the three-way benchmark** — the transform is element-wise, proved by test, so it ports to the GPU; the portable driver measures Python, C++ and CUDA on one machine. See [CUDA cleaning benchmark](#cuda-cleaning-benchmark).
 - [x] **Run the CUDA sweep on real hardware** — done on an RTX 4070 Laptop (CUDA 13.3, Windows 11): first sweep 2026-08-10, re-measured 2026-08-13 with the corrected timers. `--verify` caught a real 1-ulp GPU parse defect on the first run. Clean phase measured 1.3× the 8-thread C++ and 7.2× the single-thread; 1.18× end to end because the store dominates — see [docs/bench/results.md](docs/bench/results.md).
 - [x] **Attack the merge bottleneck** — the benchmark's headline finding. `DuckDbEventStore::merge_all()` replaces the per-row `INSERT OR IGNORE` probes with one set-based dedup over the union: 65.9 s → 22.8 s in isolation (2.89×), ~2.1× across the M2 sweep, same rows; end to end on actively-cooled hardware the design lands at **3.83×** the sequential baseline (537.8 s → 140.4 s, MAS N=16, resweep 2026-08-13). Partitioned Parquet output or a concurrent-writer store remain the larger redesigns
-- [ ] **PUB/SUB fan-out and REQ/REP registration** — the two ZeroMQ patterns from the spec that the current 3-endpoint PUSH/PULL fabric does not yet use
+- [x] **Worker registration gate** — `--workers N` holds the initial dispatch until N workers say hello (Plan 5), fixing the PUSH slow-joiner capture; implemented over the existing heartbeat channel rather than a REQ/REP pair
+- [ ] **PUB/SUB fan-out (and REQ/REP as such)** — the two ZeroMQ socket patterns from the spec that the 3-endpoint PUSH/PULL fabric still does not use
 - [ ] **TRY_CAST + quarantine** — gracefully handle malformed timestamps (currently strict-CAST aborts the day-file)
 - [ ] **Monitoring dashboard** — live view of processing progress and per-head statistics
 - [ ] **Containerized deployment** — Docker Compose for coordinator + N workers

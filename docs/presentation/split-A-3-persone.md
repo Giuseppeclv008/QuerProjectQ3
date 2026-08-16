@@ -22,8 +22,8 @@ Da sapere a memoria, indipendentemente dal ruolo. Chiunque deve poter rispondere
 | Input: 89 CSV giornalieri, ~86.400 righe × 109 colonne/giorno, ~1,6 GB/mese zippati, 36 teste @1 Hz | `README.md` § Problem Statement |
 | Il PLC riporta **stato, non eventi**; ~24,5% righe sono duplicati consecutivi esatti | idem |
 | Una chiusura si **ricostruisce dal delta del contatore per testa** | `README.md` § Core Domain |
-| `status` è **bitmask**, non enum: reject ⇔ status dispari (`status % 2 = 1`) | `README.md` § Status Semantics |
-| Store unico `cap_events` in DuckDB, chiave `UNIQUE(machine_id, head_id, cap_seq)` | `README.md` § Database Design |
+| `status` è **bitmask**, non enum: reject ⇔ bit 0 impostato (`status % 2 != 0` — la forma `!= 0` copre anche status negativi) | `README.md` § Status Semantics |
+| Store unico `cap_events` in DuckDB, chiave `UNIQUE(machine_id, head_id, ts)` — **non** `cap_seq`: il contatore PLC rigioca valori dopo il reset, e la vecchia chiave scartava chiusure reali | `README.md` § Database Design |
 | 55.132.433 eventi su 3 mesi · 1.096 reject · head 29 = 117 reject | outline slide 6, 10 |
 | Invariante finale: **il modello sceglie le analisi, l'SQL produce ogni numero** | `docs/agent-decision-flow.md` |
 
@@ -63,7 +63,7 @@ Slide 1–3 e 13: script condiviso, chiunque le può dire.
 | Domanda | Risposta breve |
 |---|---|
 | Perché non usate una colonna "cap applicato"? | Non esiste. Il PLC pubblica stato; l'evento è ricostruito dal delta contatore. |
-| Cosa succede se il contatore si azzera? | Ramo reset: un evento `reset=true, delta=0`. Nel mese reale il reset a metà giorno 16 fa rigiocare cap_seq già visti — la UNIQUE li dedupa (21.872.663 processati → 14.372.237 righe distinte su 28 giorni). |
+| Cosa succede se il contatore si azzera? | Ramo reset: un evento `reset=true, delta=0`. Nel mese reale il reset a metà giorno 16 fa rigiocare cap_seq già visti — sono **chiusure fisiche distinte** (18.721 delle collisioni di testa 1 portano torque diversa). La vecchia chiave su `cap_seq` le scartava (21.872.663 eventi → 14.372.237 righe, 34% di febbraio perso); per questo l'identità oggi è `ts` — una testa chiude al più una volta per poll — e lo store rifiuta all'apertura uno store con la chiave vecchia. |
 | Come sapete che il bitmask è giusto? | Confermato dai dati: 1.071 + 24 + 1 = 1.096 reject, esattamente ciò che ritorna la regola "dispari". |
 | Come provate che la GPU non sbaglia? | `mas_cuda_clean --verify` fa il differenziale bitwise contro `extract_flat`, esce non-zero e stampa i primi 10 eventi divergenti con tutti e 9 i campi. |
 
@@ -116,7 +116,7 @@ Slide 1–3 e 13: script condiviso, chiunque le può dire.
 |---|---|
 | Perché aggiungere worker non aiuta? | Il merge è seriale e cresce col numero di store. Legge di Amdahl sulla porzione di unificazione. Fix noto (Parquet partizionato o store multi-writer) = roadmap, non fatto. |
 | Come rilevate un worker morto senza falsi positivi? | Silenzio > 30 s con HB su canale dedicato non bloccante; il worker batte anche a vuoto, quindi il silenzio significa davvero morto o bloccato in `clean_file()`. |
-| Un re-dispatch può duplicare righe? | No: upsert idempotente su `UNIQUE(machine_id, head_id, cap_seq)`. |
+| Un re-dispatch può duplicare righe? | No: upsert idempotente su `UNIQUE(machine_id, head_id, ts)`. |
 | Come testate la morte senza aspettare 30 s reali? | `ClockFn` iniettabile: i test avanzano il clock. Il chaos E2E invece è reale (SIGKILL a un worker, e coordinator morto con worker orfano). |
 
 ---

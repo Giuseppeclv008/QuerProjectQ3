@@ -12,7 +12,9 @@ Container_Boundary(domain, "mas_core / domain layer") {
 
     Component(pipeline, "clean_file()", "Free function", "Orchestrator: CsvRawReader →\nCapEventExtractor → IEventStore.\n8192-event batch writes.\nReturns event count or error code.")
 
-    Component(cap_event, "CapEvent / RawRow", "C++ structs", "Domain value types.\nNUM_HEADS=36, FAULT_STATUS=65.")
+    Component(cap_event, "CapEvent / RawRow", "C++ structs", "Domain value types. NUM_HEADS=36.\nA failure is any status with the\nreject bit set (is_reject); no\nsingle fault code.")
+
+    Component(extractor_flat, "extract_flat() /\nload_columns() / RawColumns", "Free functions", "Element-wise form of the same\ntransform + whole-file CSV loader.\nNo state across rows: the proved\nGPU precondition.")
 }
 
 Container_Boundary(store, "mas_core / store layer") {
@@ -21,16 +23,40 @@ Container_Boundary(store, "mas_core / store layer") {
 
     Component(csv_store, "CsvEventStore", "C++ class : IEventStore", "Appends CapEvents to a CSV file.\nWrites header on construction.")
 
-    Component(duckdb_store, "DuckDbEventStore", "C++ class : IEventStore", "DuckDB-backed persistence.\nStaging table + INSERT OR IGNORE.\nmerge_from() with ATTACH READ_ONLY\n(try/catch detach on failure).\nexport_parquet(). PIMPL pattern.")
+    Component(duckdb_store, "DuckDbEventStore", "C++ class : IEventStore", "DuckDB-backed persistence keyed\nUNIQUE(machine_id, head_id, ts).\nStaging table + INSERT OR IGNORE.\nmerge_from()/merge_all() with ATTACH\nREAD_ONLY. Refuses cap_seq-keyed\nstores on open. PIMPL pattern.")
+
+    Component(parquet_store, "ParquetEventStore", "C++ class : IEventStore", "Buffers to a DuckDB temp, close()\npublishes one whole Parquet per\nday-file atomically. A failed write\npublishes nothing.")
+
+    Component(parquet_export, "export_store_to_parquet()", "Free function", "Store → Parquet, READ_ONLY open,\nself/WAL-overwrite guards, count\nverified against the temp before\nthe rename.")
+
+    Component(atomic_publish, "publish_atomically() /\ntemp_sibling_of()", "Free functions", "Write-to-temp-then-rename shared by\nboth Parquet writers. Fixed private\ntemp name (.mas-publish.<pid>.<n>.tmp):\nno inherited glob chars, no NAME_MAX\noverflow. Refuses non-files.")
+
+    Component(beating_store, "BeatingStore", "C++ class : IEventStore", "Decorator: forwards write() and\nthrottles a heartbeat callback\n(1 s default).")
+
+    Component(sql_util, "sql_quote() / DuckDbExec", "Free functions", "SQL string-literal escaping and\nexec-or-throw helpers shared by\nevery DuckDB caller.")
 }
 
 Container_Boundary(agent, "mas_core / agent layer") {
 
-    Component(message, "Message / WorkItem /\nWorkResult / Heartbeat", "C++ structs + codec", "Wire protocol. Tags: WORK, RESULT,\nHB, STOP. WorkResult carries\nworker_id for attribution.\nFull-consumption numeric validation.")
+    Component(message, "Message / WorkItem / WorkResult /\nWorkClaim / Goodbye / Heartbeat", "C++ structs + codec", "Wire protocol. Tags: WORK, RESULT,\nHB, CLAIM, BYE, STOP. Results socket\ncarries result+claim+goodbye so\nclaim-before-result is FIFO.\nFull-consumption numeric validation.")
 
-    Component(worker, "CleaningWorker", "C++ class", "Agent loop: PULL WorkItem → run\nCleanFn → PUSH WorkResult + HB.\nHello heartbeat on entry.\nIdle-exit after 60 empty ticks.\nInjected CleanFn for testability.")
+    Component(worker, "CleaningWorker", "C++ class", "Agent loop: PULL WorkItem → CLAIM →\nrun CleanFn → PUSH WorkResult + HB.\nA throwing CleanFn fails the item\n(events=-1), not the worker.\nIdle-exit after 60 empty ticks,\nannounced with BYE.")
 
-    Component(coordinator, "run_coordinator()", "Free function", "Ventilator + Sink + Liveness.\n4-phase loop: (1) result tick,\n(2) heartbeat drain, (3) death sweep\n+ re-dispatch, (4) abort check.\nInjectable ClockFn for deterministic\ntests. CoordinatorConfig: death\nthreshold 30 s, redispatch cap 2.")
+    Component(coordinator, "run_coordinator()", "Free function", "Ventilator + Sink + Liveness.\nRegistration gate (expected_workers,\nregistration_timeout), then per tick:\n(1) lifecycle tick (result/claim/bye),\n(2) heartbeat drain, (3) death sweep\n+ holder-based re-dispatch (cap\ncharged only when the item's own\nholder died), (4) abort check.\nInjectable ClockFn.")
+}
+
+Container_Boundary(util, "mas_core / util layer (header-only)") {
+
+    Component(metrics, "ProcMetrics / read_metrics()", "Free functions", "Self-reported wall / CPU / peak RSS\n(GetProcessTimes on Windows,\ngetrusage elsewhere). One parseable\nmetrics: line per run.")
+
+    Component(engine_sel, "parse_engine() / resolve_engine()", "Free functions", "--engine=cpu|cuda policy: refuse an\nengine the binary lacks, never fall\nback silently.")
+
+    Component(cli_args, "unconsumed_flag()", "Free function", "Rejects flag-looking argv left after\nthe flag block: no flag silently\nbecomes a positional.")
+}
+
+Container_Boundary(cuda_lib, "mas_cuda_cleaner (MAS_ENABLE_CUDA)") {
+
+    Component(cuda_clean, "cuda_clean_file() /\nCudaStageTimes", "CUDA host + kernels", "Eight stages: pinned read → H2D →\nCUB newline index → per-row parse →\nper-(row,head) delta → CUB compact →\nD2H → host materialize. Un-parseable\ncells flag inexact: repaired via\nstrtod or refused, never invented.")
 }
 
 Container_Boundary(transport_lib, "mas_transport library") {
@@ -57,5 +83,11 @@ Rel(coordinator, message, "Encodes/decodes messages")
 Rel(worker, message, "Encodes/decodes messages")
 Rel(zmq_push, transport_if, "Implements IMessageSink")
 Rel(zmq_pull, transport_if, "Implements IMessageSource")
+Rel(parquet_store, event_store_if, "Implements")
+Rel(parquet_store, atomic_publish, "Publishes through")
+Rel(parquet_export, atomic_publish, "Publishes through")
+Rel(beating_store, event_store_if, "Decorates")
+Rel(duckdb_store, sql_util, "Escapes/executes via")
+Rel(cuda_clean, extractor_flat, "Differential-tested against")
 
 @enduml

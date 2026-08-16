@@ -2,7 +2,8 @@
 // Self-reported process metrics. Replaces the external timing wrapper:
 // bench/run_bench.sh used `/usr/bin/time -l`, which is BSD-only -- the flag
 // does not exist in GNU coreutils and has no Windows equivalent at all.
-// This is the only #ifdef _WIN32 in the codebase (spec §10 R3).
+// (One of three #ifdef _WIN32 sites in the codebase; AtomicPublish.hpp has
+// the other two, for _getpid.)
 #include <chrono>
 #include <cstdio>
 #include <string>

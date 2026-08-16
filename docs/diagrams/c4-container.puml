@@ -13,13 +13,13 @@ System_Boundary(mas, "IIoT Data Refinement MAS") {
 
     Container(monolith, "mas_monolith", "C++ CLI", "Multi-threaded in-process pipeline.\nmono-1T: sequential single-store.\nmono-MT: thread pool with atomic\ncounter work-stealing, per-thread\nstores, post-join merge.")
 
-    Container(coordinator, "mas_coordinator", "C++ CLI", "Ventilator + Sink + Liveness monitor.\nPUSHes WorkItems, PULLs WorkResults,\ndrains Heartbeats, sweeps death\nthresholds (30 s), re-dispatches\ndead workers' items, sends STOP.")
+    Container(coordinator, "mas_coordinator", "C++ CLI", "Ventilator + Sink + Liveness monitor.\nGates dispatch on --workers N hellos,\nPUSHes WorkItems, PULLs Results/\nClaims/Goodbyes, drains Heartbeats,\nsweeps death thresholds (30 s),\nre-dispatches only the dead worker's\nclaimed items, sends STOP.")
 
-    Container(worker, "mas_worker", "C++ CLI", "Cleaning agent (1..N instances).\nPULLs WorkItems, cleans into\nper-worker DuckDB store, PUSHes\nWorkResults and Heartbeats.\nIdle-exit after 60 empty ticks.")
+    Container(worker, "mas_worker", "C++ CLI", "Cleaning agent (1..N instances).\nPULLs WorkItems, CLAIMs each before\ncleaning into a per-worker DuckDB\nstore, PUSHes WorkResults and\nHeartbeats. Announces idle-exit\n(60 empty ticks) with BYE.")
 
     Container(merge, "mas_merge", "C++ CLI", "Merge utility: ATTACHes per-worker/\nper-thread DuckDB stores (READ_ONLY)\nand INSERT OR IGNOREs into unified\ndestination. Skips corrupt stores.")
 
-    ContainerDb(duckdb, "DuckDB Store", "DuckDB .duckdb file", "cap_events table with\nUNIQUE(machine_id, head_id, cap_seq).\nIdempotent INSERT OR IGNORE.\nOptional Parquet export.")
+    ContainerDb(duckdb, "DuckDB Store", "DuckDB .duckdb file", "cap_events table with\nUNIQUE(machine_id, head_id, ts).\n(cap_seq is NOT identity: PLC counters\nreplay ranges; the old key collapsed\n34% of February.) Idempotent\nINSERT OR IGNORE. Parquet export.")
 
     ContainerDb(csv_out, "CSV Event Output", "CSV file", "Flat event file with header:\nmachine_id,head_id,ts,cap_seq,\napp_torque,status,delta,\nis_fault,aggregated,reset")
 

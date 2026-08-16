@@ -101,7 +101,7 @@ class ParquetEventStore : public IEventStore {
 public:
     // out_path is the .parquet to write; machine_id labels every row.
     ParquetEventStore(const std::string& out_path, const std::string& machine_id);
-    ~ParquetEventStore() override;          // flushes; see close()
+    ~ParquetEventStore() override;          // does NOT flush; see the note below
 
     void write(std::span<const CapEvent> events) override;   // buffers
     void close();                            // flush + report errors loudly
@@ -118,9 +118,14 @@ then one `COPY (SELECT ...) TO '<path>' (FORMAT PARQUET)` on close. Reuses the
 DuckDB dependency already present rather than adding Arrow, and the in-memory
 table carries no index.
 
-`close()` exists because a destructor cannot report failure. `~ParquetEventStore`
-calls it and swallows what it throws, after logging; callers that care use
-`close()` explicitly, as `CsvEventStore` already does.
+`close()` exists because a destructor cannot report failure.
+
+> **[SUPERSEDED by the implementation.]** This spec had the destructor call
+> `close()` and swallow what it throws. The shipped code does the opposite
+> (`ParquetEventStore.cpp`): the destructor **abandons** an unclosed store and
+> writes nothing, so an interrupted clean leaves no file rather than a partial
+> day presented as a whole one. Publication happens only through an explicit,
+> throwing `close()` — every caller does the close/abandon discipline itself.
 
 Paths are spliced into SQL, so they go through the same `sql_quote` helper
 `DuckDbEventStore` uses. A path with a quote in it must not truncate the
@@ -156,7 +161,8 @@ one of them, not a difference in how they were queried.
 - Destination directory missing under `--format parquet`: created, or a clear
   error if that fails. Never a partial write to the wrong place.
 - `COPY` failure on close: `close()` throws with the DuckDB message; the
-  destructor logs it and does not throw.
+  destructor never publishes (see the superseded note above — it abandons
+  rather than closing).
 - Empty input (zero events): writes a valid empty Parquet with the right
   schema, so `read_parquet('*.parquet')` never fails on a glob that includes it.
 - A Parquet store directory containing no files: `connect()` fails with a
