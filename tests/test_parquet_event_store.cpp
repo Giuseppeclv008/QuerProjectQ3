@@ -1,6 +1,7 @@
 #include "mas/store/ParquetEventStore.hpp"
 #include "mas/store/BeatingStore.hpp"
 #include <duckdb.hpp>
+#include "fakes/TempPath.hpp"
 #include <gtest/gtest.h>
 #include <exception>
 #include <chrono>
@@ -43,7 +44,7 @@ long long rowsIn(const std::string& glob) {
 // legitimately produced no events -- and the apps call abandon() for exactly
 // this case.
 TEST(ParquetEventStore, AbandonWritesNoFileAtAll) {
-    const std::string path = "t_pq_abandoned.parquet";
+    const std::string path = mas::test::temp_artifact("t_pq_abandoned.parquet");
     std::remove(path.c_str());
     {
         mas::ParquetEventStore store(path, "MCC");
@@ -57,7 +58,7 @@ TEST(ParquetEventStore, AbandonWritesNoFileAtAll) {
 }
 
 TEST(ParquetEventStore, RoundTripsEveryColumn) {
-    const std::string p = "t_pq_roundtrip.parquet";
+    const std::string p = mas::test::temp_artifact("t_pq_roundtrip.parquet");
     std::remove(p.c_str());
     {
         mas::ParquetEventStore s(p, "MCC1");
@@ -93,7 +94,7 @@ TEST(ParquetEventStore, RoundTripsEveryColumn) {
 TEST(ParquetEventStore, ReprocessingOverwritesTheSameFile) {
     // Idempotency here is a property of the filename, not of a constraint:
     // the same input produces the same path, and the second run replaces it.
-    const std::string p = "t_pq_idem.parquet";
+    const std::string p = mas::test::temp_artifact("t_pq_idem.parquet");
     std::remove(p.c_str());
     std::vector<mas::CapEvent> b = {ev(1, "2026-02-01T00:00:01.000", 101),
                                     ev(1, "2026-02-01T00:00:02.000", 102)};
@@ -113,7 +114,7 @@ TEST(ParquetEventStore, CloseLeavesNoTemporaryBehind) {
     // A directory of this test's own: the temp's name is deliberately
     // unrelated to the destination's, so only an otherwise-empty directory can
     // show that none survived.
-    const std::filesystem::path d = "t_pq_tmp.d";
+    const std::filesystem::path d = mas::test::temp_artifact("t_pq_tmp.d");
     std::filesystem::remove_all(d);
     std::filesystem::create_directories(d);
     const std::string p = (d / "day.parquet").string();
@@ -137,7 +138,7 @@ TEST(ParquetEventStore, TwoWritersOnOnePathLeaveOneWholeFile) {
     // would look identical. (It did: with the per-store token removed this test
     // still passed when the closes were sequential.) Overlapping them is what
     // makes the token load-bearing.
-    const std::filesystem::path d = "t_pq_race.d";
+    const std::filesystem::path d = mas::test::temp_artifact("t_pq_race.d");
     std::filesystem::remove_all(d);
     std::filesystem::create_directories(d);
     const std::string p = (d / "day.parquet").string();
@@ -189,7 +190,7 @@ TEST(ParquetEventStore, AFailedWriteWritesNoFileAtAll) {
     // already been flushed, leaving a partial day that reads as a whole one --
     // and buffering one Appender for the store's life widened that window from
     // a batch to 204,800 rows.
-    const std::filesystem::path d = "t_pq_failed.d";
+    const std::filesystem::path d = mas::test::temp_artifact("t_pq_failed.d");
     std::filesystem::remove_all(d);
     std::filesystem::create_directories(d);
     const std::string path = (d / "day.parquet").string();
@@ -230,7 +231,7 @@ TEST(ParquetEventStore, AThrowBetweenWritesWritesNoFileEither) {
     // clear and the count check finds `n` and buf in perfect agreement: both
     // describe the same truncated set. Only "the destructor never publishes"
     // covers this.
-    const std::string path = "t_pq_beat_throw.parquet";
+    const std::string path = mas::test::temp_artifact("t_pq_beat_throw.parquet");
     std::remove(path.c_str());
     {
         mas::ParquetEventStore store(path, "MCC");
@@ -250,7 +251,7 @@ TEST(ParquetEventStore, AThrowBetweenWritesWritesNoFileEither) {
 TEST(ParquetEventStore, WritingAfterCloseIsAnError) {
     // Otherwise the store accepts rows it will never write and count() reports
     // them: silent loss, with the accessor confirming the loss did not happen.
-    const std::string path = "t_pq_after_close.parquet";
+    const std::string path = mas::test::temp_artifact("t_pq_after_close.parquet");
     std::remove(path.c_str());
     {
         mas::ParquetEventStore store(path, "MCC");
@@ -267,7 +268,7 @@ TEST(ParquetEventStore, WritingAfterCloseIsAnError) {
 TEST(ParquetEventStore, EmptyInputWritesAReadableFile) {
     // A day-file that yields no events must still leave something a glob can
     // read, or every later read_parquet('*.parquet') fails on its account.
-    const std::string p = "t_pq_empty.parquet";
+    const std::string p = mas::test::temp_artifact("t_pq_empty.parquet");
     std::remove(p.c_str());
     {
         mas::ParquetEventStore s(p, "MCC1");
@@ -291,7 +292,7 @@ TEST(ParquetEventStore, PathContainingASingleQuoteWorks) {
 }
 
 TEST(ParquetEventStore, CountReportsEventsAccepted) {
-    const std::string p = "t_pq_count.parquet";
+    const std::string p = mas::test::temp_artifact("t_pq_count.parquet");
     std::remove(p.c_str());
     mas::ParquetEventStore s(p, "MCC1");
     std::vector<mas::CapEvent> b = {ev(1, "2026-02-01T00:00:01.000", 101),

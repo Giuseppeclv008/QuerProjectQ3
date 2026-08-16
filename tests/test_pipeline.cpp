@@ -2,6 +2,7 @@
 #include "mas/store/EventStore.hpp"
 #include "mas/store/DuckDbEventStore.hpp"
 #include "mas/store/CsvRawReader.hpp"
+#include "fakes/TempPath.hpp"
 #include <gtest/gtest.h>
 #include <cstdio>
 #include <fstream>
@@ -51,7 +52,7 @@ size_t countDataLines(const std::string& path) {
 }
 
 TEST(Pipeline, CleanFileEmitsOneEventPerIncrement) {
-    const std::string in = "pipe_in.csv", out = "pipe_out.csv";
+    const std::string in = mas::test::temp_artifact("pipe_in.csv"), out = mas::test::temp_artifact("pipe_out.csv");
     std::string header = realHeader();
 
     std::ostringstream body;
@@ -71,13 +72,13 @@ TEST(Pipeline, CleanFileEmitsOneEventPerIncrement) {
 }
 
 TEST(Pipeline, CleanFileReturnsMinusOneOnMissingInput) {
-    const long long n = mas::clean_file("no_such_input_file.csv", "pipe_unused_out.csv", "MCC");
+    const long long n = mas::clean_file(mas::test::temp_artifact("no_such_input_file.csv"), mas::test::temp_artifact("pipe_unused_out.csv"), "MCC");
     EXPECT_EQ(n, -1);
-    std::remove("pipe_unused_out.csv");
+    std::remove(mas::test::temp_artifact("pipe_unused_out.csv").c_str());
 }
 
 TEST(Pipeline, CleanFileReturnsMinusTwoOnUnwritableOutput) {
-    const std::string in = "pipe_in_unwritable.csv";
+    const std::string in = mas::test::temp_artifact("pipe_in_unwritable.csv");
     std::string header = realHeader();
     std::ostringstream body;
     body << header << "\n" << rawLine("t0", 100) << "\n" << rawLine("t1", 101) << "\n";
@@ -95,7 +96,7 @@ struct FakeEventStore : mas::IEventStore {
 };
 
 TEST(Pipeline, CleanFileWritesEventsToInjectedStore) {
-    const std::string in = "pipe_in_seam.csv";
+    const std::string in = mas::test::temp_artifact("pipe_in_seam.csv");
     std::string header = realHeader();
     std::ostringstream body;
     body << header << "\n";
@@ -116,12 +117,12 @@ TEST(Pipeline, CleanFileWritesEventsToInjectedStore) {
 
 TEST(Pipeline, CleanFileWithStoreReturnsMinusOneOnMissingInput) {
     FakeEventStore fake;
-    EXPECT_EQ(mas::clean_file("no_such_input_file.csv", fake), -1);
+    EXPECT_EQ(mas::clean_file(mas::test::temp_artifact("no_such_input_file.csv"), fake), -1);
     EXPECT_TRUE(fake.got.empty());
 }
 
 TEST(Pipeline, CleanFileIntoDuckDbTwiceIsIdempotent) {
-    const std::string in = "pipe_in_ddb.csv", db = "pipe_out_ddb.duckdb";
+    const std::string in = mas::test::temp_artifact("pipe_in_ddb.csv"), db = mas::test::temp_artifact("pipe_out_ddb.duckdb");
     std::remove(db.c_str());
     std::remove((db + ".wal").c_str());
 
