@@ -1576,3 +1576,70 @@ dumped the bare step list, so the fingerprint reached `report.md` and never
 `test_render` now reads it back from disk (steps and fingerprint, 8 rows on
 the tiny fixture); the reports were regenerated once more so the committed
 `trace.json` files carry it. 282 Python tests still green.
+
+## 2026-08-16 — Live agentic path exercised on a local model, on the real store
+
+The entry of 2026-07-26 records that the live `plan (llm)` path had never been
+exercised against a real model on this project's data, and the 2026-08-16
+review then found the flat plan schema shipping keywords the Anthropic
+structured-output API rejects (I16) — a defect that would have failed every
+`ask` into the keyword router silently. The fix is unit-guarded; this run is
+the end-to-end evidence that the loop works, on the model the project had
+already measured, with no key and no network.
+
+**Setup.** Same box, same evening, after Parts A and B: Ollama 0.32.12 native
+on Windows (service on `127.0.0.1:11434`, the config default), `qwen2.5:7b`
+(Q4, 4.7 GB; resident at 5.0 GB, 100% GPU, `num_ctx` 8192 on the RTX 4070
+Laptop's 8 GB). Config = the `arol.json` of Part B unchanged (store, `MCC`,
+1.5–2.5 Nm, `mad_k` 3, idle 300 s), provider and model as CLI overrides,
+planning tier `plan` (the default — the model composes the whole plan,
+arguments included), question `"which head behaves differently from the
+others, and why?"`, `--period 2026-02`.
+
+**Cold call: router.** The first invocation timed out — `planning failed:
+the call failed: timed out` — and fell back to the keyword router (plan
+source `router`, 4 canned steps, 4/4 ok, report written). The 120 s
+`api_timeout_s` default absorbed the model's cold load into VRAM plus a
+~2.6k-token prompt; nothing was rejected. Recorded, not papered over: a local
+model's first call after a load can exceed the default timeout, and the
+report says so in its limits section. (`ollama ps` afterwards: 100% GPU,
+keep-alive 5 min.)
+
+**Warm call: `plan source: llm`.** Second invocation, 22 s wall end to end:
+the model planned **2 steps, both registry-validated and executed** —
+`head_correlation(by='day', period='2026-02')` ("Determine the pairwise
+correlation between heads to identify any that behave differently") and
+`trend(by='day', period='2026-02', signal='torque', window=7)` ("Analyze
+torque trends to see if any head shows a different pattern over time") —
+under the goal it wrote, "Identify an unusual head and provide a rationale."
+Sensible tools for the question (the two the planner's own system prompt
+points at for "which head is unusual"), no invented name, no invalid
+argument, `period` set on every step. Results: all 36 heads correlate at
+0.9994–0.9999 on February's daily mean torque, none out of step; no head
+crosses the Mann-Kendall gate. 14,824,304 rows scanned per step; store
+fingerprint in `Data used` and `trace.json`.
+
+**Narration: fell back, as measured before.** Both calls' narrations were
+rejected by the detector — "the model's findings carried no bullet; it
+announced findings rather than stating them" — and replaced by the
+deterministic summary, with the reason printed in *Confidence and limits*.
+This is the 2026-07-26 finding again (3 of 3 then, 2 of 2 now): the 7B
+composes a valid plan and cannot write the findings. So the prose in the
+committed sample is the template's, rendered from the tool results, and
+there is no narrator figure to check against the trace.
+
+**Committed:** `docs/reports/ask-live-sample/` = the warm run's directory
+(`report.md`, `report.html`, `trace.json`, two PNGs), read before committing:
+it holds a store basename, a machine id and tool results — no key was ever in
+play.
+
+**What this proves, and what it does not.** Live agentic path exercised on
+qwen2.5:7b under Ollama, planning tier **`plan`**: plan source `llm`, **2
+steps, all registry-validated**, executor → renderer end to end on the real
+three-month store; the router fallback observed once, on a cold-load timeout,
+with its reason disclosed. **Anthropic flat-schema acceptance remains
+unverified — no key was used.** `planner._schema_style()` returns `flat` only
+for `provider == "anthropic"` and `per_tool` for everything else, and the
+Ollama request is a different shape entirely (a `format` grammar, not
+`output_config`); review I16 was specifically about keywords the *Anthropic*
+API rejects. That gap stays open and named.

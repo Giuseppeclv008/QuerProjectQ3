@@ -1293,6 +1293,17 @@ correctness one.
 A local model is slower: expect ~2 s to classify but ~3 min for a full `ask` on
 the three-month store, most of it narration.
 
+A committed run of the whole loop on this model is in
+[`docs/reports/ask-live-sample/`](docs/reports/ask-live-sample/) (RTX 4070
+Laptop, 2026-08-16): planning tier `plan`, `plan source: llm`, two
+registry-validated steps against the real three-month store, 22 s warm —
+and the narration replaced by the deterministic summary, reason disclosed,
+exactly as measured above. The first, cold call timed out at the 120 s
+default and fell back to the router; the report says so. What that run does
+*not* prove is that the Anthropic flat schema is accepted: Ollama takes a
+`format` grammar, not `output_config`, and no key was used — see the
+validation log, entry 2026-08-16.
+
 ### Configuration (WP5)
 
 No path, band, or threshold is hard-coded. `arol.json`:
