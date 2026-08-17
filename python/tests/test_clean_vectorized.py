@@ -123,6 +123,25 @@ def test_agrees_with_oracle_on_a_malformed_cell(tmp_path):
     assert clean_vectorized.extract(p) == oracle.extract(p)
 
 
+def test_agrees_with_oracle_on_a_row_wider_than_the_header(tmp_path):
+    """A row with one extra field must not silently shift every column left.
+
+    _check_header validates the header's width; nothing validated the data
+    rows. With names=EXPECTED_HEADER, pandas takes the surplus as an index and
+    every column slides by one -- torque read as counts, status as torque. No
+    NaN is produced, so the guard below the parse never fires, and extract()
+    returned [] against an oracle that returned a real event. The one job of
+    this module is to disagree loudly with the reference; failing silently is
+    the worst thing it can do.
+    """
+    p = tmp_path / "wide.csv"
+    _write_csv(p, [_row("2026-02-01T00:00:01.000", 101)])
+    ts, c, t, s = _row("2026-02-01T00:00:02.000", 102)
+    with open(p, "a", newline="") as f:
+        f.write(",".join([ts] + [str(x) for x in c + t + s] + ["999"]) + "\n")
+    assert clean_vectorized.extract(p) == oracle.extract(p)
+
+
 @pytest.mark.skipif(not REAL, reason="pool not extracted")
 def test_agrees_with_oracle_on_a_real_day_file():
     got = clean_vectorized.extract(REAL[0])
