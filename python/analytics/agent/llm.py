@@ -117,9 +117,18 @@ _CALLS = {"anthropic": _anthropic_call, "ollama": _ollama_call}
 
 def _parse(text):
     try:
-        return json.loads(text), None
+        payload = json.loads(text)
     except Exception as exc:                       # noqa: BLE001
         return None, f"the reply was not valid JSON ({exc})"
+    # Both callers index the payload as an object, and two of the planner's
+    # three tiers did it without asking -- so `[]`, `42` or a bare string left
+    # this function as a valid payload and arrived as an AttributeError. `null`
+    # was worse: it parsed, and (None, None) read downstream as a failure with
+    # no reason, printing "planning failed: None". One check, one honest reason.
+    if not isinstance(payload, dict):
+        kind = "null" if payload is None else type(payload).__name__
+        return None, f"the reply was JSON but not an object ({kind})"
+    return payload, None
 
 
 def client(cfg):

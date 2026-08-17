@@ -176,6 +176,28 @@ def test_select_falls_back_on_an_empty_selection(tiny_cfg):
     assert "selected no tools" in p.note
 
 
+@pytest.mark.parametrize("tier", ["classify", "select", "plan"])
+@pytest.mark.parametrize("reply", [[], "a string", 42, None])
+def test_a_reply_that_is_json_but_not_an_object_degrades_to_the_router(
+        tiny_cfg, tier, reply):
+    """plan() promises it never raises, on every tier.
+
+    `_classify` and `_select` reached straight into `payload.get`, so a reply
+    that parsed as JSON but was not an object escaped as an AttributeError --
+    and those are the two tiers that exist for the smallest, least reliable
+    models. A grammar-constrained provider should not produce this; the premise
+    of the module is that it is not trusted to.
+
+    `None` is the JSON literal `null`, which parsed without error and left the
+    reason unset: the report then said "planning failed: None", or on the
+    narrator path showed a template fallback with no reason at all.
+    """
+    cfg = _ollama_cfg(planning=tier)
+    p = planner.plan(cfg, "q", "2026-02", client=_TierClient(reply))
+    assert p.source == "router"
+    assert p.note and "None" not in p.note
+
+
 def test_plan_tier_on_ollama_is_constrained_to_the_per_tool_schema(tiny_cfg):
     cfg = _ollama_cfg(planning="plan")
     client = _TierClient({"goal": "g", "steps": [
