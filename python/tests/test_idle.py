@@ -128,3 +128,47 @@ def test_store_rejects_two_events_for_one_head_at_one_timestamp(tmp_path):
         con.execute("INSERT INTO cap_events VALUES "
                     "('MCC',1,'2026-02-01 00:00:00',2,0.0,2.0,1,false,false,false)")
     con.close()
+
+
+def test_a_hole_in_the_data_breaks_the_run_instead_of_being_absorbed(tmp_path):
+    """A window with no rows at all is downtime, not no-load cycling.
+
+    The islands were built from consecutive *no-load rows*, with nothing
+    bounding the gap between them, and duration is MAX(ts) - MIN(ts) over the
+    island. So a machine switched off between two no-load cycles had its whole
+    off-window counted as idling: three rows at 00:00:00-02 on 2026-02-01 and
+    three more on 2026-02-06 came back as ONE period, cycles=6,
+    duration_seconds=432002 -- 120 hours of "idle" from six seconds of cycling.
+    The module docstring says the opposite in as many words ("a machine that is
+    switched off produces no rows and no islands"), and February's headline
+    11,551.3 head-hours is 47.7% of the month, with nothing saying how much of
+    it was absorbed downtime.
+    """
+    path = tmp_path / "gap.duckdb"
+    con = duckdb.connect(str(path))
+    con.execute("""
+        CREATE TABLE cap_events (
+            machine_id VARCHAR NOT NULL, head_id SMALLINT NOT NULL, ts TIMESTAMP,
+            cap_seq BIGINT NOT NULL, app_torque REAL, status REAL, delta INTEGER,
+            is_fault BOOLEAN, aggregated BOOLEAN, is_reset BOOLEAN,
+            UNIQUE (machine_id, head_id, ts))
+    """)
+    rows = []
+    for i in range(4):                       # 40 s of real no-load cycling
+        rows.append(("MCC", 1, f"2026-02-01 00:00:{i * 10:02d}", i + 1, 0.0, 2.0))
+    for i in range(4):                       # five days later, more cycling
+        rows.append(("MCC", 1, f"2026-02-06 00:00:{i * 10:02d}", 100 + i, 0.0, 2.0))
+    for m, h, ts, seq, tq, st in rows:
+        con.execute("INSERT INTO cap_events VALUES (?,?,?,?,?,?,1,false,false,false)",
+                    [m, h, ts, seq, tq, st])
+    con.close()
+
+    cfg = Config(store_path=str(path), idle_min_seconds=30)
+    r = idle_periods(cfg, period="2026-02")
+    assert r.status == "ok"
+    periods = r.values["periods"]
+    assert len(periods) == 2, "the five-day hole must not be one idle period"
+    assert [p["duration_seconds"] for p in periods] == [30, 30]
+    assert sum(p["cycles"] for p in periods) == 8
+    assert any("gap" in a for a in r.provenance.assumptions), \
+        "the gap bound is a stated assumption, not a silent one"

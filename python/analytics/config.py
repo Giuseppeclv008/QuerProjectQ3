@@ -42,6 +42,12 @@ class Config:
 
     # A head is idle after this many seconds of sustained No-Load.
     idle_min_seconds: int = 300
+    # An island of no-load cycles is broken when consecutive rows are further
+    # apart than this. cap_events only holds rows where a counter advanced, so a
+    # switched-off machine emits nothing -- and without a bound its whole
+    # off-window was absorbed into the surrounding run and reported as idling.
+    # 600 s is far above the ~1 Hz cycling cadence and far below any real stop.
+    idle_max_gap_seconds: int = 600
 
     # WP3: the model that plans and narrates. It never computes a number.
     #
@@ -91,6 +97,9 @@ class Config:
             )
         if self.idle_min_seconds <= 0:
             raise ConfigError(f"idle_min_seconds must be > 0, got {self.idle_min_seconds}")
+        if self.idle_max_gap_seconds <= 0:
+            raise ConfigError(
+                f"idle_max_gap_seconds must be > 0, got {self.idle_max_gap_seconds}")
         if self.mad_k <= 0:
             raise ConfigError(
                 f"mad_k must be > 0, got {self.mad_k}; at k <= 0 the deviation band "
