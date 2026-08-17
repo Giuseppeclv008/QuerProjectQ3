@@ -90,7 +90,8 @@ int main(int argc, char** argv) {
         // localhost flush and bounds the orphan case at well under the chaos
         // budget.
         mas::ZmqPushSink results(ctx, result_ep, /*bind=*/false,
-                                 /*send_timeout_ms=*/60000, /*linger_ms=*/300);
+                                 /*send_timeout_ms=*/60000,
+                                 /*linger_ms=*/mas::kResultSinkLingerMs);
         mas::ZmqPushSink heartbeats(ctx, hb_ep, /*bind=*/false,
                                     /*send_timeout_ms=*/60000, /*linger_ms=*/0);
         std::optional<mas::DuckDbEventStore> duck;

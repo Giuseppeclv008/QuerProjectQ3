@@ -1,4 +1,5 @@
 #include "mas/transport/ZmqTransport.hpp"
+#include "mas/agent/CleaningWorker.hpp"
 #include <chrono>
 #include <gtest/gtest.h>
 #include <stdexcept>
@@ -74,6 +75,32 @@ TEST(ZmqTransport, ZeroLingerTeardownDropsUndeliverableQueueImmediately) {
     const std::chrono::duration<double> dt =
         std::chrono::steady_clock::now() - t0;
     EXPECT_LT(dt.count(), 2.0);
+}
+
+// The other half of the same knob, and the half that had no test. Fixing the
+// 121 s teardown above by zeroing linger cost the worker its Goodbye: the BYE
+// is sent and the sink is destroyed immediately after, so at linger_ms=0 the
+// frame is dropped on the way out and the coordinator reads an ordinary
+// departure as a death -- completions reopened, items re-dispatched,
+// workers_died inflated. worker_main.cpp now gives the result sink 300 ms for
+// exactly this, and that constant lives in a main() where no unit test can see
+// it. Without this test, reverting it to 0 leaves the whole suite green.
+TEST(ZmqTransport, NonZeroLingerFlushesAQueuedFrameToAPeerThatIsStillThere) {
+    zmq::context_t ctx(1);
+    mas::ZmqPullSource peer(ctx, "tcp://127.0.0.1:5598", /*bind=*/true,
+                            /*timeout_ms=*/2000);
+    {
+        // The worker's own constant, not a literal: this must fail if that
+        // value goes back to 0, which is the regression it exists to catch.
+        mas::ZmqPushSink sink(ctx, "tcp://127.0.0.1:5598", /*bind=*/false,
+                              /*send_timeout_ms=*/60000,
+                              /*linger_ms=*/mas::kResultSinkLingerMs);
+        sink.send(mas::Message{"goodbye"});
+    }   // sink destroyed straight after the send, as the worker destroys its own
+    const auto m = peer.recv();
+    ASSERT_TRUE(m.has_value())
+        << "the frame was dropped at teardown; linger is back to 0";
+    EXPECT_EQ(m->payload, "goodbye");
 }
 
 } // namespace

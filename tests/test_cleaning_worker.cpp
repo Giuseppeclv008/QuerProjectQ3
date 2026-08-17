@@ -261,4 +261,16 @@ TEST(CleaningWorker, AFailingHeartbeatSinkDoesNotFailTheFile) {
     EXPECT_EQ(r->events, 7) << "a lost beat must not become events=-1";
 }
 
+TEST(CleaningWorker, TheResultSinkLingersLongEnoughToFlushItsGoodbye) {
+    // The BYE is pushed at idle exit and the sink is destroyed immediately
+    // after, so a zero linger drops it and the coordinator reads a departure as
+    // a death: completions reopened, items re-dispatched, workers_died
+    // inflated. That was the state of the code before the linger fix, and the
+    // fix was a literal inside worker_main's main(), where nothing could assert
+    // on it -- reverting it left every test green. This is the whole guard:
+    // one number, in a header, that the worker and two tests all read.
+    EXPECT_GT(mas::kResultSinkLingerMs, 0)
+        << "a zero-linger result sink drops the Goodbye at teardown";
+}
+
 } // namespace
