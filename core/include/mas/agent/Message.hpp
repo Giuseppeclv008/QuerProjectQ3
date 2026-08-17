@@ -17,7 +17,12 @@ struct WorkItem {
 };
 
 // Worker -> sink: outcome of one WorkItem. events == -1 => input unreadable
-// (mirrors clean_file's contract). worker_id attributes the result to the
+// (mirrors clean_file's contract), deterministic, not worth re-dispatching.
+// events == -2 => the store failed part-way with rows already written: the
+// item is retryable, and re-running it is safe because the upsert is
+// idempotent on (machine_id, head_id, ts). Reporting both as -1 made the run
+// summary say "0 events" for files whose rows were sitting in the store.
+// worker_id attributes the result to the
 // worker that produced it, so the coordinator can write a dead worker's
 // store off and re-dispatch its completions (resilience spec §5/§6).
 struct WorkResult {

@@ -21,6 +21,7 @@ public:
 
     void write(std::span<const CapEvent> events) override {
         inner_.write(events);
+        written_ += static_cast<long long>(events.size());
         const auto now = std::chrono::steady_clock::now();
         if (now - last_ >= every_) {
             last_ = now;
@@ -28,8 +29,15 @@ public:
         }
     }
 
+    // Rows the inner store accepted before it threw, if it threw. The worker
+    // needs this to tell "the input was unreadable" from "the store died with
+    // rows already in it": the first is deterministic and must not be
+    // re-dispatched, the second left partial data behind and must be.
+    long long written() const { return written_; }
+
 private:
     IEventStore& inner_;
+    long long written_ = 0;
     std::function<void()> beat_;
     std::chrono::milliseconds every_;
     std::chrono::steady_clock::time_point last_;

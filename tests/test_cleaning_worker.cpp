@@ -261,6 +261,57 @@ TEST(CleaningWorker, AFailingHeartbeatSinkDoesNotFailTheFile) {
     EXPECT_EQ(r->events, 7) << "a lost beat must not become events=-1";
 }
 
+TEST(CleaningWorker, AStoreThatFailsPartWayThroughIsNotReportedAsUnreadableInput) {
+    // events == -1 means "input unreadable" (Pipeline.hpp:17). The worker routed
+    // a mid-file store throw into the same code, and the coordinator reads -1 as
+    // deterministic: counted failed, never re-dispatched. Measured on the real
+    // binaries, four files that each threw part-way produced
+    //   dispatched 4 files: 0 ok, 4 failed, 0 events
+    //   worker w1 done: store holds 12410496 rows
+    // -- twelve million rows the run reported as zero, which mas_merge then
+    // folds into the unified store. The two cases are not the same case: rows
+    // already landed, the upsert is idempotent on (machine_id, head_id, ts), so
+    // re-running the item completes it instead of duplicating it.
+    mas::test::FakeSource work;
+    work.queue.push_back(mas::encode(mas::WorkItem{"day1.csv"}));
+    work.queue.push_back(mas::make_stop());
+    mas::test::FakeSink results, hb;
+    FakeStore store;
+    mas::CleaningWorker w(work, results, hb, store, "w1",
+        [&](const std::string&, mas::IEventStore& s,
+            const std::function<void()>&) -> long long {
+            const mas::CapEvent e{};
+            s.write(std::span<const mas::CapEvent>(&e, 1));   // this row lands
+            throw std::runtime_error("disk full");            // then the store dies
+        });
+    w.run();
+
+    const auto r = mas::decode_result(results.sent.at(1));
+    ASSERT_TRUE(r.has_value());
+    EXPECT_EQ(r->events, -2)
+        << "a failure that already persisted rows is not an unreadable input";
+}
+
+TEST(CleaningWorker, AnInputThatNeverYieldsARowIsStillReportedUnreadable) {
+    // The other side of the same split: nothing was written, so -1 keeps its
+    // meaning and the coordinator keeps its "do not re-dispatch" shortcut.
+    mas::test::FakeSource work;
+    work.queue.push_back(mas::encode(mas::WorkItem{"missing.csv"}));
+    work.queue.push_back(mas::make_stop());
+    mas::test::FakeSink results, hb;
+    FakeStore store;
+    mas::CleaningWorker w(work, results, hb, store, "w1",
+        [&](const std::string&, mas::IEventStore&,
+            const std::function<void()>&) -> long long {
+            throw std::runtime_error("cannot open missing.csv");
+        });
+    w.run();
+
+    const auto r = mas::decode_result(results.sent.at(1));
+    ASSERT_TRUE(r.has_value());
+    EXPECT_EQ(r->events, -1);
+}
+
 TEST(CleaningWorker, TheResultSinkLingersLongEnoughToFlushItsGoodbye) {
     // The BYE is pushed at idle exit and the sink is destroyed immediately
     // after, so a zero linger drops it and the coordinator reads a departure as

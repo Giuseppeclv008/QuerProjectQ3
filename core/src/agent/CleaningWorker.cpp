@@ -58,17 +58,27 @@ int CleaningWorker::run() {
         // A throw is one bad item, not a dead worker. Unwinding past main here
         // sent NO result: the coordinator burned the full death threshold,
         // tombstoned the worker, wrote its store off, and re-dispatched
-        // everything it held. events == -1 is the failure channel built for
-        // exactly this; route into it and keep serving. beat() no longer
-        // throws (see above), so what lands here is the store or the parse --
-        // per-file and deterministic, which is what -1 ("do not re-dispatch")
-        // asserts.
+        // everything it held. So catch, report, keep serving.
+        //
+        // Which failure it was decides what the coordinator may do about it,
+        // and the two are not the same. Nothing written means the input never
+        // yielded a row -- deterministic, and -1 says "do not re-dispatch".
+        // Rows already written means the store died part-way with partial data
+        // on disk; -1 there was a lie the summary told, reporting 0 events for
+        // files whose rows mas_merge would go on to fold in. -2 says "partial,
+        // retry me": the upsert is idempotent on (machine_id, head_id, ts), so
+        // re-running the item completes it rather than duplicating it.
         long long events = -1;
         try {
             events = clean_fn_(item->in_path, beating, [this] { beat(); });
         } catch (const std::exception& e) {
+            events = beating.written() > 0 ? -2 : -1;
             std::cerr << "worker " << worker_id_ << ": " << item->in_path
-                      << " failed: " << e.what() << "\n";
+                      << " failed: " << e.what();
+            if (events == -2)
+                std::cerr << " (after " << beating.written()
+                          << " rows were written; item is retryable)";
+            std::cerr << "\n";
         }
         const std::chrono::duration<double> dt =
             std::chrono::steady_clock::now() - t0;

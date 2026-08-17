@@ -163,17 +163,41 @@ DispatchSummary run_coordinator(const std::vector<WorkItem>& items,
                         std::cerr << "coordinator: dropped duplicate/unknown result for "
                                   << r->in_path << "\n";
                     } else {
-                        st->second.done = true;
+                        // -2 is the one reported failure worth retrying: the
+                        // store died with rows already written, which the same
+                        // file on a healthy store does not do, and the upsert
+                        // is idempotent on (machine_id, head_id, ts) so the
+                        // retry completes the item rather than duplicating it.
+                        // Charged against the same cap that bounds
+                        // death-driven re-dispatch, so a store that fails every
+                        // time still terminates. -1 keeps its shortcut: nothing
+                        // was written, the failure is deterministic.
+                        const bool retryable =
+                            r->events == -2 &&
+                            st->second.redispatches < cfg.redispatch_cap &&
+                            count_live() > 0;
                         holder.erase(r->in_path);
-                        --open;
-                        if (r->events >= 0) {
-                            ++s.files_ok;
-                            s.total_events += r->events;
-                            w->completed.emplace_back(r->in_path, r->events);
+                        if (retryable) {
+                            // Deliberately not a `continue`: the rest of this
+                            // pass -- heartbeat drain, death sweep, abort check
+                            // -- must still run, or a retry would silently cost
+                            // the loop a tick of liveness.
+                            ++st->second.redispatches;
+                            std::cerr << "coordinator: re-dispatch " << r->in_path
+                                      << " (attempt " << (st->second.redispatches + 1)
+                                      << ", partial store failure)\n";
+                            work.send(encode(WorkItem{r->in_path}));
                         } else {
-                            ++s.files_failed;   // the worker reported the item
-                                                // itself failed: deterministic,
-                                                // re-dispatch would not help
+                            st->second.done = true;
+                            --open;
+                            if (r->events >= 0) {
+                                ++s.files_ok;
+                                s.total_events += r->events;
+                                w->completed.emplace_back(r->in_path, r->events);
+                            } else {
+                                ++s.files_failed;   // unreadable input, or a
+                                                    // partial failure past the cap
+                            }
                         }
                     }
                 }

@@ -69,6 +69,68 @@ TEST(Coordinator, DispatchesCollectsAndStopsEachLiveWorker) {
     EXPECT_TRUE(mas::is_stop(work.sent[4]));
 }
 
+TEST(Coordinator, APartialStoreFailureIsRetriedRatherThanCountedFailed) {
+    // events == -2 is "the store died with rows already written". Unlike -1 it
+    // is not deterministic -- the same file on a healthy store completes -- and
+    // the upsert is idempotent on (machine_id, head_id, ts), so re-running it
+    // finishes the item instead of duplicating rows. Charged against the
+    // re-dispatch cap like any other retry, so a genuinely poisoned item still
+    // terminates.
+    const std::vector<mas::WorkItem> items = {{"d1.csv"}};
+    mas::test::FakeSink work;
+    mas::test::FakeSource results;
+    results.queue.push_back(result("d1.csv", -2, "w1"));   // partial, retryable
+    results.queue.push_back(result("d1.csv", 7, "w1"));    // the retry completes it
+    mas::test::FakeSource hbs;
+    hbs.queue.push_back(hb("w1", 0));
+
+    const auto s = mas::run_coordinator(items, work, results, hbs,
+                                        mas::CoordinatorConfig{}, fixed_clock());
+
+    EXPECT_EQ(s.files_ok, 1);
+    EXPECT_EQ(s.files_failed, 0);
+    EXPECT_EQ(s.total_events, 7);
+    ASSERT_EQ(work.sent.size(), 3u);   // dispatch, re-dispatch, one STOP
+    EXPECT_TRUE(mas::decode_work(work.sent[1]).has_value());
+}
+
+TEST(Coordinator, RepeatedPartialFailuresStopAtTheRedispatchCap) {
+    // A store that fails every time must not be retried forever: same cap that
+    // bounds death-driven re-dispatch bounds this.
+    const std::vector<mas::WorkItem> items = {{"d1.csv"}};
+    mas::test::FakeSink work;
+    mas::test::FakeSource results;
+    for (int i = 0; i < 4; ++i)
+        results.queue.push_back(result("d1.csv", -2, "w1"));
+    mas::test::FakeSource hbs;
+    hbs.queue.push_back(hb("w1", 0));
+
+    mas::CoordinatorConfig cfg{};        // redispatch_cap = 2
+    const auto s = mas::run_coordinator(items, work, results, hbs, cfg,
+                                        fixed_clock());
+
+    EXPECT_EQ(s.files_ok, 0);
+    EXPECT_EQ(s.files_failed, 1);
+    ASSERT_EQ(work.sent.size(), 4u);   // dispatch + 2 retries + one STOP
+}
+
+TEST(Coordinator, AnUnreadableInputIsStillNotRetried) {
+    // -1 keeps its shortcut: nothing was written, the failure is deterministic,
+    // and re-running it would only fail again.
+    const std::vector<mas::WorkItem> items = {{"d1.csv"}};
+    mas::test::FakeSink work;
+    mas::test::FakeSource results;
+    results.queue.push_back(result("d1.csv", -1, "w1"));
+    mas::test::FakeSource hbs;
+    hbs.queue.push_back(hb("w1", 0));
+
+    const auto s = mas::run_coordinator(items, work, results, hbs,
+                                        mas::CoordinatorConfig{}, fixed_clock());
+
+    EXPECT_EQ(s.files_failed, 1);
+    ASSERT_EQ(work.sent.size(), 2u);   // dispatch, one STOP -- no retry
+}
+
 TEST(Coordinator, ATransportFailureAtShutdownStillReportsTheRun) {
     // Every other test in this file runs on FakeSink, whose send cannot fail.
     // The real one can: ZmqPushSink::send throws when a mute socket hits its
