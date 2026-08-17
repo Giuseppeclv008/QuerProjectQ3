@@ -88,6 +88,16 @@ def test_readme_gated_test_counts_match_the_gating():
     assert _claimed(r"agent layer's ([\d,]+) tests") == agent_layer
     assert _claimed(r"([\d,]+)-case GPU/CPU differential") == \
         per_file.get("test_cuda_cleaner.cpp", 0)
+    # Skips were exempted from the leftover scan rather than reconciled, and the
+    # README then stated 6 where the tree had 7. Count the gates instead: a
+    # GTEST_SKIP in a default-build source is a test that can report green
+    # without executing, which is the number a reader of "N tests green" needs.
+    skippable = sum(
+        len(re.findall(r"GTEST_SKIP", f.read_text(encoding="utf-8")))
+        for f in sorted((_ROOT / "tests").glob("*.cpp"))
+        if f.name != "test_cuda_cleaner.cpp"
+    )
+    assert _claimed(r"\*\*([\d,]+) C\+\+\ntests\*\* can skip") == skippable
 
 
 def test_presentation_cpp_test_counts_match_the_sources():

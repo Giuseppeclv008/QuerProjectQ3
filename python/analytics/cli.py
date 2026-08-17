@@ -11,9 +11,12 @@ offline fallback. `ask` is where agentic behaviour lives.
 
 Failure policy: a *configuration* problem (unreadable config, unknown report
 type) is a usage error and exits 2 before any work starts. An *analysis* problem
-(an empty period, a period the tools cannot parse) is not an error at all -- it
-produces a report whose limits section names the gap, because that is the honest
-output and because a report generated unattended must still land on disk.
+(an empty period, a head with too few closures) is not an error at all -- it
+produces a report whose limits section names the gap and exits 0, because that
+is the honest output and because a report generated unattended must still land
+on disk. A run in which *every* step failed also writes its report, but exits 1:
+an unattended caller has to be able to tell that from success, and a period the
+tools cannot parse is that case, not the exit-0 one.
 """
 import argparse
 import logging

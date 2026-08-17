@@ -101,8 +101,10 @@ receives a *value* saying "this analysis could not answer, and here is why" can
 route around it and report the gap. A four-step plan where step two fails still
 produces a report containing the other three answers and a limits section naming
 the failure. That is strictly more useful than a traceback, and it is the reason
-a malformed period like `--period February` exits 0 with an explanatory report
-rather than crashing.
+a malformed period like `--period February` writes an explanatory report rather
+than crashing. It exits **1**, not 0: every step failed, and an unattended caller
+must be able to tell that from a run that merely found nothing. A period that is
+well-formed but empty exits 0, because the analysis genuinely ran.
 
 The catch-all is deliberate and is the last line of defence: the eight tools are
 written not to raise, and the boundary exists for the case where one does anyway.
@@ -191,7 +193,7 @@ a human having to notice.
 |---|---|
 | `report.md` | the source of truth; six mandated sections plus the trace |
 | `report.html` | self-contained — every PNG inlined as a data URI, no external requests |
-| `trace.json` | every tool call, its effective arguments, status and rows scanned |
+| `trace.json` | the store fingerprint (path, rows, ts range, distinct heads) plus every tool call, its effective arguments, status and rows scanned |
 | `*.png` | figures, drawn from `ToolResult`s only |
 | `report.pdf` | best-effort, only when WeasyPrint and its native deps are present |
 

@@ -188,7 +188,7 @@ organized by layer.
 │   │   │   ├── Transport.hpp               # IMessageSource / IMessageSink interfaces
 │   │   │   └── ZmqTransport.hpp            # ZMQ PUSH/PULL adapters (linger_ms control)
 │   │   └── util/
-│   │       └── platform_metrics.hpp        # Self-reported wall/CPU/peak-RSS (one of three #ifdef _WIN32 sites)
+│   │       └── platform_metrics.hpp        # Self-reported wall/CPU/peak-RSS (one of six #ifdef _WIN32 sites)
 │   ├── cuda/                               # CUDA cleaning pipeline (built only with MAS_ENABLE_CUDA)
 │   │   ├── CudaCleaner.hpp                 # Host-callable interface; leaks no CUDA types
 │   │   └── CudaCleaner.cu                  # Kernels S2-S5 + host orchestration (CUB)
@@ -236,6 +236,7 @@ organized by layer.
 │   ├── test_parquet_export.cpp
 │   ├── test_zmq_smoke.cpp
 │   ├── test_zmq_transport.cpp
+│   ├── test_zmq_e2e.cpp                    # Coordinator + worker over real sockets
 │   ├── test_message.cpp
 │   ├── test_cleaning_worker.cpp
 │   ├── test_coordinator.cpp
@@ -273,7 +274,7 @@ organized by layer.
 │       │   ├── router.py                   # Keyword router and the three canned plans
 │       │   ├── llm.py                      # The one place this project calls the API
 │       │   ├── planner.py                  # Claude -> a registry-validated plan
-│       │   ├── narrator.py                 # Claude -> prose around numbers it cannot alter
+│       │   ├── narrator.py                 # Claude -> prose around figures rendered from ToolResults
 │       │   └── executor.py                 # Runs a plan; every failure becomes a value
 │       └── report/
 │           ├── render.py                   # The six mandated sections + tool-call trace
@@ -294,7 +295,7 @@ organized by layer.
 │   ├── run_bench_cuda.py                   # Portable driver: Python | C++ | CUDA, one command
 │   ├── README.md                           # Windows/Linux/macOS run instructions
 │   ├── requirements-bench.txt              # numpy, pandas, matplotlib
-│   ├── results_cuda.csv                    # CUDA-sweep data (RTX 4070 Laptop, 2026-08-13)
+│   ├── results_cuda.csv                    # CUDA-sweep data (RTX 4070 Laptop; the sweep date is in the file's own header lines)
 │   ├── results_cuda_stages.csv             # Per-stage GPU timings from the same sweep
 │   └── fixtures/
 │       └── make_tiny_csvs.py               # Deterministic 2-row fixture generator
@@ -490,7 +491,7 @@ nothing is what lets the benchmark build on a machine with no DuckDB at all.
 
 | Component | File(s) | Description |
 |-----------|---------|-------------|
-| `ProcMetrics` / `read_metrics()` / `metrics_line()` | [`platform_metrics.hpp`](core/include/mas/util/platform_metrics.hpp) | Self-reported wall, CPU (user+sys) and peak RSS. `GetProcessTimes`/`GetProcessMemoryInfo` on Windows, `getrusage` elsewhere (`ru_maxrss` is bytes on macOS, KB on Linux). One of five `#ifdef _WIN32` sites in core (AtomicPublish.hpp holds the other three: `_getpid`, and the fsync pair). Emits one machine-readable `metrics:` line that the benchmark driver parses. |
+| `ProcMetrics` / `read_metrics()` / `metrics_line()` | [`platform_metrics.hpp`](core/include/mas/util/platform_metrics.hpp) | Self-reported wall, CPU (user+sys) and peak RSS. `GetProcessTimes`/`GetProcessMemoryInfo` on Windows, `getrusage` elsewhere (`ru_maxrss` is bytes on macOS, KB on Linux). Two of the six `#ifdef _WIN32` sites in core (AtomicPublish.hpp holds the other four: the include block, `_getpid`, and the fsync pair). Emits one machine-readable `metrics:` line that the benchmark driver parses. |
 | `Engine` / `parse_engine()` / `resolve_engine()` | [`engine.hpp`](core/include/mas/util/engine.hpp) | The `--engine=cpu\|cuda` policy: parse the flag value, refuse an engine the binary was not built with (the error names `-DMAS_ENABLE_CUDA=ON` as the remedy), never fall back. Kept as pure functions so the refusal rules are unit-tested from builds that have no CUDA. |
 
 This replaces the old harness's `/usr/bin/time -l` wrapper, which is BSD-only —
@@ -649,7 +650,7 @@ that gets handed over.
 ### `clean` — Single-File Batch Pipeline
 
 ```
-usage: clean [--format duckdb|parquet] <raw_in.csv> <events_out.csv|.duckdb|out_dir> [machine_id]
+usage: clean [--format duckdb|parquet] <raw_in.csv> <events_out.csv|.duckdb|out_dir> <machine_id>
 ```
 
 Processes a single raw CSV day-file. Output selection:
@@ -659,7 +660,9 @@ Processes a single raw CSV day-file. Output selection:
 - otherwise, by file extension: `.duckdb` → `DuckDbEventStore` (probes input
   first to avoid creating an empty DB); anything else → `CsvEventStore`
 
-Default `machine_id`: `"MCC"`.
+`machine_id` is **required**: both `clean` and `mas_worker` exit 2 without it.
+It used to default to `"MCC"`, which silently mislabelled every event written
+from another machine's pool.
 
 ### `mas_monolith` — Multi-Threaded In-Process Pipeline
 
@@ -718,13 +721,13 @@ departed, not dead: nothing of its is reopened.
 ### `mas_worker` — Cleaning Agent
 
 ```
-usage: mas_worker [--format duckdb|parquet] <work_endpoint> <result_endpoint> <hb_endpoint> <out.duckdb|out_dir> <worker_id> [machine_id]
+usage: mas_worker [--format duckdb|parquet] <work_endpoint> <result_endpoint> <hb_endpoint> <out.duckdb|out_dir> <worker_id> <machine_id>
 ```
 
 Connects to all three coordinator endpoints. Key behaviors:
 - **1 s work recv timeout** — each empty tick emits a heartbeat
 - **Idle-exit after 60 consecutive empty ticks** (~60 s) — exits cleanly if the coordinator vanishes
-- **`linger_ms=0`** on result and heartbeat sinks — process exit is prompt (fixed a 121 s teardown bug found by chaos E2E)
+- **`linger_ms=0`** on the heartbeat sink, **300 ms on the result sink** — prompt exit (it fixed a 121 s teardown found by chaos E2E) without dropping the Goodbye frame, which is pushed immediately before the socket closes
 - **Hello heartbeat** on `run()` entry — registers with the coordinator promptly
 
 ### `mas_merge` — Post-Run Store Unification
@@ -971,8 +974,8 @@ pure-Python (`oracle.py`), vectorized Python (`clean_vectorized.py`), C++ 1-thre
 and 8-thread (`bench_cpu`), and CUDA (`mas_cuda_clean`).
 
 ```bash
-cmake -S . -B build -DMAS_BENCH_ONLY=ON -DMAS_ENABLE_CUDA=ON
-cmake --build build --config Release
+cmake -S . -B build-bench -DMAS_BENCH_ONLY=ON -DMAS_ENABLE_CUDA=ON
+cmake --build build-bench --config Release
 python bench/run_bench_cuda.py --data telemetry_..._2026-02.zip
 ```
 
@@ -982,7 +985,8 @@ CMake, a C++20 compiler, and Python. **It also builds no tests** (the suite is a
 googletest fetch): on the GPU box, build the 11-case GPU/CPU differential from a
 second build directory before trusting the numbers —
 `cmake -B build-gpu-tests -DMAS_ENABLE_CUDA=ON -DMAS_ENABLE_ZMQ=OFF`, then
-`ctest --test-dir build-gpu-tests` (this one does download). See
+`ctest -C Release --test-dir build-gpu-tests` (this one does download; `-C Release` is
+required on the multi-config MSVC generator this recipe targets). See
 [`bench/README.md`](bench/README.md) for the Windows path and
 [`docs/superpowers/specs/2026-08-10-cuda-cleaning-bench-design.md`](docs/superpowers/specs/2026-08-10-cuda-cleaning-bench-design.md)
 for the design.
@@ -1096,8 +1100,8 @@ all** — the suite is a googletest fetch and the bench build's contract is
 
 ```bash
 # Portable benchmark build: configures anywhere with CMake + a C++20 compiler
-cmake -S . -B build -DMAS_BENCH_ONLY=ON -DMAS_BUILD_TESTS=OFF
-cmake --build build --config Release
+cmake -S . -B build-bench -DMAS_BENCH_ONLY=ON -DMAS_BUILD_TESTS=OFF
+cmake --build build-bench --config Release
 ```
 
 ZeroMQ is **compiled out, never deleted** — it carries the processes-vs-threads
@@ -1176,8 +1180,8 @@ bench/run_bench.sh --quick
 ### CUDA Benchmark (Python vs C++ vs CUDA)
 
 ```bash
-cmake -S . -B build -DMAS_BENCH_ONLY=ON -DMAS_ENABLE_CUDA=ON
-cmake --build build --config Release
+cmake -S . -B build-bench -DMAS_BENCH_ONLY=ON -DMAS_ENABLE_CUDA=ON
+cmake --build build-bench --config Release
 pip install -r bench/requirements-bench.txt
 
 python bench/run_bench_cuda.py --data telemetry_..._2026-02.zip
@@ -1264,7 +1268,8 @@ scripts/arol ask "which head behaves differently?" --period 2026-02 \
 ```
 
 Nothing below the planner knows the difference: both paths return the same plan
-type, the same executor runs it, and every number still comes from the same SQL.
+type, the same executor runs it, and every figure, table, plot, trace row and
+limits entry still comes from the same SQL.
 
 **How much of the planning the model does** is a separate choice, because a model
 can route reliably long before it can compose a plan:
@@ -1342,9 +1347,12 @@ alone is ~2,600 tokens, Ollama defaults to 2048, and it **truncates silently**
 rather than erroring — which looks exactly like a stupid model.
 
 A configuration problem (unreadable config, unknown report type) exits 2 before
-any work starts. An analysis gap — an empty period, a period the tools cannot
-parse — is not an error: it produces a report whose limits section names the gap,
-because a report generated unattended must still land on disk.
+any work starts. An analysis gap — an empty period, a head with too
+few closures — is not an error: it produces a report whose limits section names
+the gap and exits 0, because a report generated unattended must still land on
+disk. A run in which *every* step failed still writes its report, but exits 1,
+so an unattended caller can tell it from success: `--period February` is that
+case, not the exit-0 one.
 
 ### Reproduce the demo
 
@@ -1376,9 +1384,16 @@ cd python && ../.venv/bin/python -m pytest -q   # 296 Python tests (see the two 
 
 Two separate data gates apply to the Python suite: **5 tests** need the rebuilt
 3-month store (`../events_3mo.duckdb`, from `scripts/build_store.sh`) and skip
-without it, and **1 test** needs a real extracted day-file and skips without
-that — so a fresh clone shows 6 skips, and a machine with the pool extracted
+without it, and **2 tests** need a real extracted day-file and skip without
+that — so a fresh clone shows 7 skips, and a machine with the pool extracted
 but no store shows 5.
+
+The C++ side has gates too, and this is the only place that says so: **4 C++
+tests** can skip in the default build. Two are pool-gated — the real-day-file
+half of `CapEventExtractorFlat` (765,711 events) and the whole of
+`test_bench_cpu_parity.cpp` — so on a fresh clone **180 tests green** means 178
+executed. The other two skip only where creating a symlink is denied
+(`test_atomic_publish.cpp`, `test_parquet_export.cpp`).
 
 Under `-DMAS_BENCH_ONLY=ON` the C++ suite is not built at all — the bench
 contract is "downloads nothing" and googletest is a fetch, so the tests are
@@ -1404,9 +1419,11 @@ way).
 | `test_parquet_event_store.cpp` | Every column round-trips, reprocessing replaces the file, an empty day still yields a readable one, quoted paths, `abandon()` writes nothing, a failed write writes nothing and leaves no temp, a throw *between* writes (a heartbeat that times out) publishes nothing either, writing after `close()` is an error, two writers on one path leave one whole file |
 | `test_parquet_export.cpp` | mas_export: all ten columns round-trip, exports from a chmod-444 store without writing to it, since/until bounds, bare-date upper bound covers the whole day, empty range still readable, quoted paths, refuses the store's WAL including through a `./` spelling, names a path it cannot stat |
 | `test_zmq_smoke.cpp` | ZeroMQ library linkage sanity |
-| `test_zmq_transport.cpp` | PUSH/PULL round-trip, timeout behavior, zero-linger teardown regression |
-| `test_message.cpp` | Encode/decode for WorkItem, WorkResult, Heartbeat, STOP; malformed payload rejection |
+| `test_zmq_transport.cpp` | PUSH/PULL round-trip, timeout behavior, zero-linger teardown regression, and the other direction: a non-zero linger must still flush a queued frame, or the worker's Goodbye is lost |
+| `test_zmq_e2e.cpp` | Coordinator and worker settle a real file over real sockets, and the worker-failure route survives the real transport |
+| `test_message.cpp` | Encode/decode for WorkItem, WorkResult, Heartbeat, CLAIM, BYE and STOP — including that they cannot cross-decode on the socket they share; malformed payload and out-of-range numerics rejected |
 | `test_cleaning_worker.cpp` | Agent loop with FakeTransport: heartbeat emission, work processing, STOP handling, idle-exit countdown |
+| `test_cuda_cleaner.cpp` | The 11-case GPU/CPU differential: the kernel's events must match `CsvRawReader` + `CapEventExtractor` bitwise, all nine fields (needs `MAS_ENABLE_CUDA` and a device) |
 | `test_coordinator.cpp` | Liveness sweep: heartbeat refreshes, death detection, re-dispatch, dead-worker store write-off, redispatch cap, abort, deterministic ClockFn tests |
 
 Test doubles: [`FakeTransport.hpp`](tests/fakes/FakeTransport.hpp) provides
@@ -1435,7 +1452,7 @@ a number.
 | **INSERT OR IGNORE + UNIQUE key** | Idempotent reprocessing: re-running a day-file is always safe. Dead-worker re-dispatches produce harmless overlap. |
 | **Heartbeat-driven liveness** | 3-endpoint design: dedicated HB channel drained without blocking. Workers beat on entry, per-tick, and per-result. Coordinator sweeps deaths with injectable `ClockFn` for deterministic testing. |
 | **Dead-worker store write-off** | A dead worker's completed items are re-opened and re-dispatched. Its store is written off — `mas_merge` skips corrupt stores, and the idempotent upsert absorbs any partial overlap. |
-| **`linger_ms=0` on worker sinks** | Connect-mode PUSH sockets create pipes immediately and queue sends below HWM even without a peer. Infinite linger delays teardown. `linger_ms=0` drops undeliverable heartbeats instantly at exit. |
+| **Bounded linger on worker sinks** | Connect-mode PUSH sockets create pipes immediately and queue sends below HWM even without a peer, so infinite linger delays teardown. The heartbeat sink uses `linger_ms=0` and drops undeliverable beats instantly; the result sink uses `kResultSinkLingerMs` (300 ms) because the Goodbye frame is sent just before close, and dropping it turns a departure into a death. |
 | **Injectable `ClockFn`** | Coordinator tests drive deadlines by advancing a fake clock, no sleeping. |
 | **`FakeTickSource`** | Models interleaved recv timeouts (nullopt entries) for testing idle-exit countdown without real timers. |
 | **Monolith mode** | Thread-based alternative to the MAS for environments where multi-process ZeroMQ is overkill. Same file-grain work unit and shared-nothing store strategy. |
@@ -1450,7 +1467,7 @@ a number.
 
 ## Roadmap
 
-- [x] **Python analytics agents** — eight deterministic analysis tools, an LLM planner and narrator that cannot alter a number, and the `arol` CLI. See [Analytics CLI and Reports](#analytics-cli-and-reports).
+- [x] **Python analytics agents** — eight deterministic analysis tools, an LLM planner, a narrator whose figures and tables are rendered from the tool results, and the `arol` CLI. See [Analytics CLI and Reports](#analytics-cli-and-reports).
 - [x] **CUDA cleaning pipeline and the three-way benchmark** — the transform is element-wise, proved by test, so it ports to the GPU; the portable driver measures Python, C++ and CUDA on one machine. See [CUDA cleaning benchmark](#cuda-cleaning-benchmark).
 - [x] **Run the CUDA sweep on real hardware** — done on an RTX 4070 Laptop (CUDA 13.3, Windows 11): first sweep 2026-08-10, re-measured 2026-08-13 with the corrected timers and 2026-08-16 on the post-review kernel with the pool's real machine id in the store rows. `--verify` caught a real 1-ulp GPU parse defect on the first run. Clean phase measured 1.08× the 8-thread C++ and 6.6× the single-thread; 1.08× end to end because the store dominates — see [docs/bench/results.md](docs/bench/results.md).
 - [x] **Attack the merge bottleneck** — the benchmark's headline finding. `DuckDbEventStore::merge_all()` replaces the per-row `INSERT OR IGNORE` probes with one set-based dedup over the union: 65.9 s → 22.8 s in isolation (2.89×), ~2.1× across the M2 sweep, same rows; end to end on actively-cooled hardware the design lands at **3.83×** the sequential baseline (537.8 s → 140.4 s, MAS N=16, resweep 2026-08-13). Partitioned Parquet output or a concurrent-writer store remain the larger redesigns
