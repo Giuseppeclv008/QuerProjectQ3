@@ -1372,14 +1372,14 @@ it, `--pdf` logs how to install it and writes Markdown and HTML as normal.
 
 The project has **196 C++ unit tests** across 21 Google Test files — 185 in the
 default build plus the 11-case GPU/CPU differential behind `-DMAS_ENABLE_CUDA=ON`
-— plus **299
+— plus **300
 Python tests** for the analytics tier. Every test count in this
 README is asserted by `python/tests/test_readme_counts.py`, so adding a test and
 forgetting this paragraph fails the suite rather than quietly dating it.
 
 ```bash
 cd build && ctest --output-on-failure           # 185 C++ tests in the default build; the 11-case GPU/CPU differential is compiled only with -DMAS_ENABLE_CUDA=ON (and skips without a device)
-cd python && ../.venv/bin/python -m pytest -q   # 299 Python tests (see the two data gates below)
+cd python && ../.venv/bin/python -m pytest -q   # 300 Python tests (see the two data gates below)
 ```
 
 Two separate data gates apply to the Python suite: **5 tests** need the rebuilt

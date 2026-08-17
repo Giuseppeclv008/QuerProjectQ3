@@ -32,8 +32,25 @@ def _sample(con, sql, params, limit):
     rows = con.execute(f"{sql} LIMIT {limit + 1}", params).fetchall()
     if len(rows) <= limit:
         return rows, len(rows)
+
+    # The cap binds, so the sample must be representative rather than the first
+    # `limit` rows. Every one of these queries already ends in ORDER BY ts, so a
+    # bare LIMIT returned the EARLIEST hits -- and plots.anomalies_over_time
+    # scatters this list under the title "Flagged closures over time". On
+    # February's 162,019 deviation hits a 5,000-item cap covered about 0.86 of
+    # 28 days: a reader saw the deviations stop three days in.
+    #
+    # A fixed stride, not USING SAMPLE: the sample has to be identical on every
+    # run of the same store, or two regenerations of a committed report differ
+    # for no reason a reader can check.
     total = con.execute(f"SELECT COUNT(*) FROM ({sql})", params).fetchone()[0]
-    return rows[:limit], total
+    stride = -(-total // limit)          # ceil, so the stride never under-covers
+    rows = con.execute(
+        f"""SELECT * EXCLUDE (_mas_rn) FROM (
+                SELECT *, ROW_NUMBER() OVER () AS _mas_rn FROM ({sql})
+            ) WHERE (_mas_rn - 1) % {stride} = 0 LIMIT {limit}""",
+        params).fetchall()
+    return rows, total
 
 
 def anomalies(cfg, period=None, method="both"):

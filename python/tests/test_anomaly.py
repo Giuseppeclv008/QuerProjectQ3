@@ -228,3 +228,52 @@ def test_deviation_band_is_sigma_consistent_with_floor(tmp_path):
         "2.35 is inside 3 sigma-equivalents; flagging it means the band is "
         "still raw MAD")
     assert "mad_floor=0.01" in res.provenance.filters
+
+
+def test_the_itemised_sample_spans_the_period_instead_of_its_first_hours(tmp_path):
+    """`LIMIT` on a query already ordered by ts takes the EARLIEST hits.
+
+    plots.anomalies_over_time scatters exactly that list under the title
+    "Flagged closures over time", so once the cap binds the figure shows every
+    marker crammed into the start of the period and nothing after -- a reader
+    sees deviations that stop. On February's 162,019 deviation hits a 5,000-item
+    cap covers about 0.86 of 28 days, roughly 3% of the frame.
+
+    The counts were always exact; it is the itemised sample, and therefore the
+    picture, that was skewed. A representative sample is also what makes the
+    figure honest by construction rather than by caption.
+    """
+    path = tmp_path / "spread.duckdb"
+    con = duckdb.connect(str(path))
+    con.execute("""
+        CREATE TABLE cap_events (
+            machine_id VARCHAR NOT NULL, head_id SMALLINT NOT NULL, ts TIMESTAMP,
+            cap_seq BIGINT NOT NULL, app_torque REAL, status REAL, delta INTEGER,
+            is_fault BOOLEAN, aggregated BOOLEAN, is_reset BOOLEAN,
+            UNIQUE (machine_id, head_id, ts))
+    """)
+    # 28 days, 40 out-of-band closures a day: 1,120 hits against a cap of 50.
+    seq = 0
+    for day in range(1, 29):
+        for i in range(40):
+            seq += 1
+            con.execute(
+                "INSERT INTO cap_events VALUES (?,?,?,?,?,0.0,1,false,false,false)",
+                ["MCC", 1, f"2026-02-{day:02d} {i // 2:02d}:{(i % 2) * 30:02d}:00",
+                 seq, 9.5])
+    con.close()
+
+    cfg = Config(store_path=str(path), max_anomaly_items=50)
+    r = anomalies(cfg, period="2026-02", method="threshold")
+    assert r.status == "ok"
+    hits = r.values["threshold_hits"]
+    assert r.values["counts"]["threshold_hits"] == 1120, "the count stays exact"
+    # "at most `limit` rows materialised" is the contract: a ceil stride can
+    # land one short of the cap, which is the right way to be wrong.
+    assert 40 <= len(hits) <= 50, "the cap still bounds what is itemised"
+
+    days = {h["ts"].day for h in hits}
+    assert max(days) - min(days) >= 20, (
+        f"the sample covers days {min(days)}-{max(days)}; a scatter drawn from "
+        "it would show the period stopping early"
+    )
