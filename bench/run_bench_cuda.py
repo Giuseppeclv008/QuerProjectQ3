@@ -140,6 +140,49 @@ def provenance():
         lines.append(f"# nvcc: {tail}")
     except (OSError, subprocess.SubprocessError):
         lines.append("# nvcc: not found")
+    # The py-numpy row is attributed in the README to pandas' CSV parser and
+    # float_precision="round_trip"; without the version that claim cannot be
+    # reproduced from the artifact. run_bench.sh has recorded its build type
+    # since it was written and this driver -- the one that produces the headline
+    # CUDA CSV -- recorded neither, so a Debug configure would have yielded a
+    # file indistinguishable from a Release one. Spec 6.5 asks for the compiler
+    # too.
+    for mod in ("numpy", "pandas"):
+        try:
+            lines.append(f"# {mod}: {__import__(mod).__version__}")
+        except Exception:                                        # noqa: BLE001
+            lines.append(f"# {mod}: not importable")
+    cache = os.path.join("build-bench", "CMakeCache.txt")
+    if not os.path.exists(cache):
+        cache = os.path.join("build", "CMakeCache.txt")
+    wanted = ("CMAKE_BUILD_TYPE", "CMAKE_CXX_COMPILER_ID",
+              "CMAKE_CXX_COMPILER_VERSION")
+    found = {}
+    try:
+        with open(cache, encoding="utf-8") as fh:
+            for line in fh:
+                key = line.split(":", 1)[0]
+                if key in wanted:
+                    found[key] = line.strip().split("=", 1)[-1]
+    except OSError:
+        pass
+    # Only the build type is in the cache; the compiler ID and version live in
+    # CMakeFiles/<cmake-version>/CMakeCXXCompiler.cmake, which is where spec 6.5's
+    # two fields actually are.
+    import glob
+    import re as _re
+    for cc in glob.glob(os.path.join(os.path.dirname(cache), "CMakeFiles",
+                                     "*", "CMakeCXXCompiler.cmake")):
+        try:
+            text = open(cc, encoding="utf-8").read()
+        except OSError:
+            continue
+        for key in ("CMAKE_CXX_COMPILER_ID", "CMAKE_CXX_COMPILER_VERSION"):
+            m = _re.search(rf'set\({key} "([^"]*)"\)', text)
+            if m and key not in found:
+                found[key] = m.group(1)
+    for key in wanted:
+        lines.append(f"# {key.lower()}: {found.get(key, 'unknown')}")
     return lines
 
 

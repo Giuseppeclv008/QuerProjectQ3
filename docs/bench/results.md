@@ -32,6 +32,26 @@
 
 Caveats: measured on an actively-cooled i7-13700H laptop (6P+8E cores, 20 threads — N=16 exceeds the P-cores but not the hardware threads), median-of-3, merge phase reported separately; mono-MT uses a std::thread atomic-counter pool (dynamic load balancing, slightly fairer than PUSH/PULL round-robin).
 
+## Provenance of the table above
+
+`bench/results.csv` was written at `442603c` (2026-08-13) from a tree at
+`ba6d4f8`, recorded in [`docs/validation-log.md`](../validation-log.md). It
+carries no `#` header lines: `run_bench.sh` only began writing its provenance
+block afterwards, so the base commit is stated here instead of in the file.
+
+**The binaries have changed since.** `git log ba6d4f8..HEAD -- core` touches
+every one of them: the CSV read path was unified into `RowParse.cpp` with 72
+extra per-cell validity checks and a CR strip in the parse loop (`d81f9fc`),
+`DuckDbEventStore` had its transaction boundaries restructured (`89e50a3`), and
+the 45 MAS rows measure an agent protocol that gained CLAIM and BYE frames under
+a commit marked breaking (`03df3ca`). These 81 rows are therefore a measurement
+of the design, not of the exact binaries at HEAD.
+
+One direct cross-check exists rather than an argument: `mono-1T` at 28 days was
+re-measured on 2026-08-16 at 533.3 s against this table's 537.8 s — 0.8%, inside
+the 1.1% spread the row itself reports. The CUDA table below is on a different
+footing: its CSV was re-swept at `7ca3700`, after the kernel commit it names.
+
 ## Data notes (resweep 2026-08-13: same month, actively-cooled hardware)
 
 The table above is the full 81-run matrix re-measured on a machine that can
