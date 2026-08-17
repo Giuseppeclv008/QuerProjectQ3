@@ -20,7 +20,8 @@ measured on `events_3mo.duckdb` (55,132,433 rows, machine `MCC`, 36 heads,
 ## 2. The problem
 
 - An AROL Equatorque capping machine polls **36 capping heads at ~1 Hz** and
-  uploads one wide CSV per day: ~86,400 rows × 109 columns, ~1.6 GB/month zipped.
+  uploads one wide CSV per day: ~86,400 rows × 109 columns, ~1.6 GB/month
+  unzipped (the month zips are 26–42 MB).
 - **89 day-files** in the provided pool.
 - The PLC reports **state, not events**. ~24.5% of rows are exact consecutive
   duplicates, and the per-head cap counters only advance when a cap is actually
@@ -67,10 +68,12 @@ measured on `events_3mo.duckdb` (55,132,433 rows, machine `MCC`, 36 heads,
   oracle-exact**.
 - Resilience shown, not claimed: worker SIGKILL mid-run and coordinator death
   with an orphan worker both recover (chaos E2E).
-- **Headline finding: the merge is the bottleneck.** A 63–65 s unification cost
-  caps end-to-end speedup at **1.11×** no matter how many workers are added —
-  and it is *flat* in N, because it now only moves rows. Under the old key it
-  grew with store count, and that growth was the defect doing work.
+- **Headline finding: the merge is what is left to win.** MAS N=16 runs the
+  month end-to-end at **3.83×** the sequential baseline (537.8 s → 140.4 s); the
+  clean phase alone parallelizes at **7.2×**. The gap between the two is a
+  65–73 s unification cost that is *flat* in N, because it now only moves rows —
+  under the old key it grew with store count, and that growth was the defect
+  doing work. Amdahl on the serial fraction, not a failure to scale.
 - Show the speedup chart. Name the fix (partitioned Parquet or a
   concurrent-writer store) as roadmap, not as done.
 
@@ -190,7 +193,7 @@ measured on `events_3mo.duckdb` (55,132,433 rows, machine `MCC`, 36 heads,
 
 ## 11. Engineering
 
-- **232 Python tests, 85 C++ tests**, all green; test output pristine. Both
+- **296 Python tests, 188 C++ tests**, all green; test output pristine. Both
   counts are asserted against the sources by `test_readme_counts.py`, so the
   slide cannot drift from the suite.
 - **Golden-report regression**: a fixed store and a fixed plan must render
@@ -232,7 +235,7 @@ measured on `events_3mo.duckdb` (55,132,433 rows, machine `MCC`, 36 heads,
 
       scripts/demo.sh
 
-  20.3 M rows, three report types, 12/12 tool steps `ok`, ~8 s.
+  55.1 M rows, three report types, 12/12 tool steps `ok`, ~23 s.
 - Live `arol ask "..."` — show the plan the model chose, then show the same
   command with the key unset falling back to the router and *saying so* in the
   report.

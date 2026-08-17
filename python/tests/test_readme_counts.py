@@ -22,17 +22,28 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[2]
+_DECK = sorted((_ROOT / "docs" / "presentation").glob("*.md"))
+
+
+def _claimed_in(text, pattern, where):
+    """The single number `text` states for `pattern`, or a failure saying why not."""
+    found = {int(m.replace(",", "")) for m in re.findall(pattern, text)}
+    assert found, f"{where} carries no count matching {pattern!r}"
+    assert len(found) == 1, (
+        f"{where} states more than one value for {pattern!r}: {sorted(found)}"
+    )
+    return found.pop()
 
 
 def _claimed(pattern):
-    """The single number the README states for `pattern`, or a failure saying why not."""
-    text = (_ROOT / "README.md").read_text(encoding="utf-8")
-    found = {int(m.replace(",", "")) for m in re.findall(pattern, text)}
-    assert found, f"README carries no count matching {pattern!r}"
-    assert len(found) == 1, (
-        f"README states more than one value for {pattern!r}: {sorted(found)}"
-    )
-    return found.pop()
+    return _claimed_in((_ROOT / "README.md").read_text(encoding="utf-8"),
+                       pattern, "README")
+
+
+def _deck():
+    """Both presentation files as one text; a count may live in either."""
+    assert _DECK, "docs/presentation holds no .md files; has the deck moved?"
+    return "\n".join(p.read_text(encoding="utf-8") for p in _DECK)
 
 
 def _cpp_counts():
@@ -79,6 +90,41 @@ def test_readme_gated_test_counts_match_the_gating():
         per_file.get("test_cuda_cleaner.cpp", 0)
 
 
+def test_presentation_cpp_test_counts_match_the_sources():
+    """The deck is guarded because it says it is.
+
+    outline.md told its reader "both counts are asserted against the sources by
+    test_readme_counts.py, so the slide cannot drift from the suite" -- and this
+    file only ever read README.md. The deck was two generations behind while
+    saying so (232 Python / 85 C++ against 282 / 187), which is the false safety
+    signal this suite exists to prevent, relocated into the one document the
+    project is defended from.
+    """
+    actual, per_file = _cpp_counts()
+    deck = _deck()
+    assert _claimed_in(deck, r"\*\*[\d,]+ Python tests, ([\d,]+) C\+\+ tests\*\*",
+                       "the deck") == actual
+    assert _claimed_in(deck, r"\*\*([\d,]+) C\+\+\*\* \([\d,]+ file GTest\)",
+                       "the deck") == actual
+    assert _claimed_in(deck, r"\(([\d,]+) file GTest\)", "the deck") == len(per_file)
+
+
+def test_every_presentation_test_count_is_one_of_the_guarded_forms():
+    """Same rule as the README's: no unguarded count may sit in the deck."""
+    guarded = [
+        r"\*\*[\d,]+ Python tests, [\d,]+ C\+\+ tests\*\*",
+        r"\*\*[\d,]+ C\+\+\*\* \([\d,]+ file GTest\) \+ \*\*[\d,]+ Python\*\*",
+    ]
+    stripped = _deck()
+    for pat in guarded:
+        stripped = re.sub(pat, "", stripped)
+    leftovers = re.findall(r"[^\n]*\b[\d,]+ tests?\b[^\n]*", stripped)
+    assert not leftovers, (
+        "unguarded test-count claim(s) in docs/presentation -- add a "
+        f"reconciliation to this file or reword them: {leftovers!r}"
+    )
+
+
 def test_readme_python_test_count_matches_collection(request):
     config = request.config
     if config.option.keyword or config.option.markexpr:
@@ -94,6 +140,11 @@ def test_readme_python_test_count_matches_collection(request):
     collected = len(request.session.items)
     assert _claimed(r"\*\*([\d,]+)\s*\nPython tests\*\*") == collected
     assert _claimed(r"#\s*([\d,]+) Python tests") == collected
+    # The deck states the same total twice, in both files.
+    deck = _deck()
+    assert _claimed_in(deck, r"\*\*([\d,]+) Python tests, [\d,]+ C\+\+ tests\*\*",
+                       "the deck") == collected
+    assert _claimed_in(deck, r"\+ \*\*([\d,]+) Python\*\*", "the deck") == collected
 
 
 def test_every_readme_test_count_is_one_of_the_guarded_forms():

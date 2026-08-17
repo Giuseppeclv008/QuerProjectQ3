@@ -19,7 +19,7 @@ Da sapere a memoria, indipendentemente dal ruolo. Chiunque deve poter rispondere
 
 | Fatto | Fonte |
 |---|---|
-| Input: 89 CSV giornalieri, ~86.400 righe × 109 colonne/giorno, ~1,6 GB/mese zippati, 36 teste @1 Hz | `README.md` § Problem Statement |
+| Input: 89 CSV giornalieri, ~86.400 righe × 109 colonne/giorno, ~1,6 GB/mese **non** compressi (gli zip mensili sono 26–42 MB), 36 teste @1 Hz | `README.md` § Problem Statement |
 | Il PLC riporta **stato, non eventi**; ~24,5% righe sono duplicati consecutivi esatti | idem |
 | Una chiusura si **ricostruisce dal delta del contatore per testa** | `README.md` § Core Domain |
 | `status` è **bitmask**, non enum: reject ⇔ bit 0 impostato (`status % 2 != 0` — la forma `!= 0` copre anche status negativi) | `README.md` § Status Semantics |
@@ -42,7 +42,7 @@ Slide 1–3 e 13: script condiviso, chiunque le può dire.
 3. [`core/include/mas/domain/CapEventExtractorFlat.hpp`](../../core/include/mas/domain/CapEventExtractorFlat.hpp) — la stessa trasformata element-wise
 4. [`core/src/store/CsvRawReader.cpp`](../../core/src/store/CsvRawReader.cpp) — parsing, header validation
 5. [`core/src/store/DuckDbEventStore.cpp`](../../core/src/store/DuckDbEventStore.cpp) — schema, staging+merge, upsert idempotente, PIMPL
-6. [`core/cuda/CudaCleaner.cu`](../../core/cuda/CudaCleaner.cu) — 7 stage GPU, `--verify`
+6. [`core/cuda/CudaCleaner.cu`](../../core/cuda/CudaCleaner.cu) — 8 stage GPU, `--verify`
 7. Test: `tests/test_cap_event.cpp`, `test_cap_event_extractor.cpp`, `test_cap_event_extractor_flat.cpp`, `test_duckdb_event_store.cpp`
 8. `README.md` § Core Domain, § Status Semantics, § Database Design
 9. `python/oracle.py`, `python/validate_real.py` — l'oracolo indipendente che valida P1
@@ -100,21 +100,23 @@ Slide 1–3 e 13: script condiviso, chiunque le può dire.
 
 | | tempo |
 |---|---|
-| mono-1T | 101,0 s |
-| MAS N=8 | 92,6 s totale (clean 29,8 s + **merge 62,8 s**) |
-| MAS N=16 | 91,2 s (clean 27,1 s + merge 64,0 s) |
+| mono-1T | 537,8 s |
+| mono-MT T=8 | 157,3 s (clean 86,0 s + merge 71,3 s) |
+| MAS N=8 | 182,6 s totale (clean 111,9 s + **merge 70,7 s**) |
+| MAS N=16 | 140,4 s (clean 75,6 s + merge 64,8 s) |
 
-- La **fase clean scala bene**: 101,0 s → 27,1 s = **3,73×**.
-- Il **merge no**: 63–65 s, e a differenza di prima è *piatto* in N. End-to-end il MAS si ferma a **1,11×**. Il branch `perf/merge-set-based` lo porta a 22,8 s misurati in isolamento (2,89×).
-- mono-MT non batte mai davvero mono-1T a scala mensile (meglio 1,01× a T=4; T=2 è più lento).
+- La **fase clean scala bene**: 537,8 s → 74,9 s = **7,2×**.
+- Il **merge no**: 65–73 s, e a differenza di prima è *piatto* in N. End-to-end il MAS arriva a **3,83×**: è il merge seriale a separare 7,2× da 3,83×, non un difetto di scaling.
+- mono-MT **batte** mono-1T a scala mensile: T=8 fa 3,42×. Resta sotto MAS N=16 (3,83×).
+- Attenzione al confronto con le slide vecchie: questi numeri vengono dal resweep su i7-13700H raffreddato attivamente. Il vecchio 1,11× era il rapporto misurato su M2, dove mono-1T faceva 101,8 s; la baseline si muove di 5,28× fra le due macchine, il mix di costo no.
 - Sweep: 1/7/28 giorni × architetture × 3 ripetizioni = **81/81 run oracle-exact**.
-- Test: **90 C++** (14 file GTest) + **229 Python**. In `MAS_BENCH_ONLY=ON` restano 34 test C++ — esclusi per design, non skippati.
+- Test: **188 C++** (21 file GTest) + **296 Python**. In `MAS_BENCH_ONLY=ON` **non viene costruito nessun test**: la suite tira googletest dalla rete e il contratto della build bench è "non scarica niente".
 
 ### Domande probabili
 
 | Domanda | Risposta breve |
 |---|---|
-| Perché aggiungere worker non aiuta? | Il merge è seriale e cresce col numero di store. Legge di Amdahl sulla porzione di unificazione. Fix noto (Parquet partizionato o store multi-writer) = roadmap, non fatto. |
+| Perché aggiungere worker aiuta sempre meno? | Il merge è seriale ed è *piatto* in N (65–73 s): non cresce più col numero di store — quello era il vecchio difetto — ma resta un costo fisso. Legge di Amdahl sulla porzione di unificazione: clean 7,2×, end-to-end 3,83×. Fix noto (Parquet partizionato o store multi-writer) = roadmap, non fatto. |
 | Come rilevate un worker morto senza falsi positivi? | Silenzio > 30 s con HB su canale dedicato non bloccante; il worker batte anche a vuoto, quindi il silenzio significa davvero morto o bloccato in `clean_file()`. |
 | Un re-dispatch può duplicare righe? | No: upsert idempotente su `UNIQUE(machine_id, head_id, ts)`. |
 | Come testate la morte senza aspettare 30 s reali? | `ClockFn` iniettabile: i test avanzano il clock. Il chaos E2E invece è reale (SIGKILL a un worker, e coordinator morto con worker orfano). |
@@ -172,7 +174,3 @@ Slide 1–3 e 13: script condiviso, chiunque le può dire.
 - P1 → P2: "…ricostruito l'evento. Ora: quanto costa farlo su 89 file, e cosa succede se un processo muore."
 - P2 → P3: "…lo store è unico e affidabile. Cosa ci si chiede sopra."
 - P3 → chiusura: "il modello ha scelto le analisi; l'SQL ha prodotto ogni numero."
-
-## Da correggere prima delle slide
-
-- `outline.md` slide 11 dice **73 test C++ e 201 Python**; `README.md` § Testing dice **90 e 229**. Il conteggio delle macro `TEST`/`TEST_F` in `tests/*.cpp` dà **90**, quindi l'outline è vecchio. Lato Python `grep '^def test_'` dà 225 funzioni (229 con i casi parametrizzati): rilanciare `pytest -q` e allineare l'outline — è il tipo di numero che un docente ricontrolla dal vivo.
