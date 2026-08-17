@@ -90,7 +90,13 @@ def head_correlation(cfg, period=None, heads=None, by="day"):
         period=period, rows_scanned=scanned,
         filters=[f"heads={sorted(heads)}", f"by={by}"],
         assumptions=["heads correlate on their bucketed mean torque series; the head "
-                     "with the lowest mean correlation to its peers is the one out of step",
+                     "with the lowest mean correlation to its peers is the one out "
+                     "of step *in shape*",
+                     "Pearson correlation is invariant to a per-head affine shift, so "
+                     "this ranking cannot see a level offset: a head running "
+                     "consistently below the others while moving with them scores ~1 "
+                     "and is reported as tracking. Compare per-head median torque "
+                     "(torque_stats by head) to rule that out",
                      "a head with no defined correlation to any peer (constant torque, "
                      f"zero variance, or fewer than {MIN_BUCKETS} shared buckets) is "
                      "omitted from outliers and shown as None in the matrix",

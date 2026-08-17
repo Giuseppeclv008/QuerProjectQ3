@@ -253,6 +253,17 @@ Measured over three months, no head exceeds the threshold on either signal.
 Pearson correlation on the per-head bucketed mean-torque series, giving a 36×36
 matrix, plus each head's mean correlation to its peers.
 
+**This ranking sees shape, not level.** Pearson correlation is invariant to an
+affine transform of either series, so a head running consistently below every
+other head while moving with them scores ~1.000 and is reported as tracking. The
+statistic is not wrong; the question it answers is narrower than "which head
+behaves differently". A level offset is visible in `torque_stats(by='head')` as
+a shifted median, and the correlation result now says so in its assumptions so
+the limitation reaches the report's *Confidence and limits* section rather than
+living only here. Verified with a synthetic store: three heads on the same
+twelve-day ramp, one of them 0.30 Nm below the other two, all correlate above
+0.99.
+
 **A head with undefined correlation is omitted, not reported as zero.** A head
 whose torque is constant over the period has zero variance, so its correlation is
 undefined; reporting `0.0` would present it as the most anomalous head on the

@@ -177,10 +177,15 @@ def summarise(execution):
                 lo, hi = odd["mean_correlation"], closest["mean_correlation"]
                 if hi - lo < 0.001:      # indistinguishable at the printed precision
                     lines.append(
-                        f"- **Head agreement.** All {len(ranked)} heads track each "
-                        f"other closely (mean correlation {lo:.4f}-{hi:.4f}); none "
-                        f"is out of step."
+                        f"- **Head agreement.** All {len(ranked)} heads move together "
+                        f"(mean correlation {lo:.4f}-{hi:.4f}), so none is out of step "
+                        f"in shape. This says nothing about level: Pearson is "
+                        f"invariant to a per-head offset, and a head running steadily "
+                        f"below the others scores the same."
                     )
+                    checks.append("Compare per-head median torque (torque_stats "
+                                  "by head) — the correlation ranking cannot see a "
+                                  "head that tracks the pack at a lower level.")
                 else:
                     lines.append(
                         f"- **Odd head out.** Head {odd['head_id']} has the lowest "

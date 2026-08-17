@@ -173,3 +173,39 @@ def test_constant_head_is_none_in_matrix_and_omitted_from_outliers(constant_head
     ranked = [o["head_id"] for o in r.values["outliers"]]
     assert 4 not in ranked
     assert set(ranked) == {1, 2}
+
+
+def test_a_head_offset_from_the_pack_is_not_reported_as_tracking(tmp_path):
+    """Pearson is invariant to an affine shift, so it cannot see a level offset.
+
+    A head running well below every other head but moving in the same shape
+    scores 1.000 and the summary said "none is out of step" -- a conclusion the
+    statistic is structurally incapable of supporting. The correlation is not
+    wrong; the claim built on it was. The result must disclose the blind spot so
+    it reaches the report's Confidence and limits section.
+    """
+    from analytics.tools.correlation import head_correlation
+    path = tmp_path / "offset.duckdb"
+    con = duckdb.connect(str(path))
+    con.execute("""
+        CREATE TABLE cap_events (
+            machine_id VARCHAR NOT NULL, head_id SMALLINT NOT NULL, ts TIMESTAMP,
+            cap_seq BIGINT NOT NULL, app_torque REAL, status REAL, delta INTEGER,
+            is_fault BOOLEAN, aggregated BOOLEAN, is_reset BOOLEAN,
+            UNIQUE (machine_id, head_id, ts))
+    """)
+    seq = 0
+    for day in range(1, 13):
+        for head, offset in ((1, 0.0), (2, 0.0), (3, -0.30)):   # head 3 sits low
+            seq += 1
+            torque = 2.0 + 0.01 * day + offset
+            con.execute("INSERT INTO cap_events VALUES (?,?,?,?,?,0.0,1,false,false,false)",
+                        ["MCC", head, f"2026-02-{day:02d} 00:00:00", seq, torque])
+    con.close()
+
+    r = head_correlation(Config(store_path=str(path)), period="2026-02", by="day")
+    assert r.status == "ok"
+    # The offset head still correlates perfectly: that is the point.
+    assert min(o["mean_correlation"] for o in r.values["outliers"]) > 0.99
+    assert any("level" in a or "offset" in a for a in r.provenance.assumptions), \
+        "the report must say the ranking sees shape, not level"
