@@ -69,6 +69,39 @@ TEST(Coordinator, DispatchesCollectsAndStopsEachLiveWorker) {
     EXPECT_TRUE(mas::is_stop(work.sent[4]));
 }
 
+TEST(Coordinator, ATransportFailureAtShutdownStillReportsTheRun) {
+    // Every other test in this file runs on FakeSink, whose send cannot fail.
+    // The real one can: ZmqPushSink::send throws when a mute socket hits its
+    // send timeout, and coordinator_main gives that socket a 60 s one. The
+    // likeliest moment is the STOP fan-out, because the peers are on their way
+    // out by then -- and a throw there escaped run_coordinator entirely, so the
+    // "dispatched N files" summary never printed and the process exited 1 on a
+    // run whose events were already settled and persisted.
+    //
+    // The STOP fan-out is best-effort by construction: the comment at the send
+    // site says a surplus STOP is free, and an undelivered one costs a worker
+    // its 60-tick idle-exit budget, not a row. Dispatch is not best-effort and
+    // still throws -- a work socket that cannot accept the work is a failed run.
+    const std::vector<mas::WorkItem> items = {{"d1.csv"}};
+    mas::test::ThrowingSink work;
+    work.fail_after = 1;                    // the dispatch lands; the STOP does not
+    mas::test::FakeSource results;
+    results.queue.push_back(result("d1.csv", 42, "w1"));
+    mas::test::FakeSource hbs;
+    hbs.queue.push_back(hb("w1", 0));
+
+    mas::DispatchSummary s{};
+    ASSERT_NO_THROW(s = mas::run_coordinator(items, work, results, hbs,
+                                             mas::CoordinatorConfig{},
+                                             fixed_clock()));
+
+    EXPECT_EQ(s.files_ok, 1);
+    EXPECT_EQ(s.files_failed, 0);
+    EXPECT_EQ(s.total_events, 42);
+    ASSERT_EQ(work.sent.size(), 1u);        // the WORK frame, and no STOP
+    EXPECT_TRUE(mas::decode_work(work.sent[0]).has_value());
+}
+
 TEST(Coordinator, ResultAloneRegistersItsWorker) {
     // No heartbeat ever arrives; the result itself is the liveness signal
     // and the registry gains w1, which then receives the single STOP.

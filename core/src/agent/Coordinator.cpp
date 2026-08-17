@@ -335,8 +335,22 @@ DispatchSummary run_coordinator(const std::vector<WorkItem>& items,
         (w.alive ? live : tombstoned)++;
         (void)id;
     }
-    if (live > 0)
-        for (int i = 0; i < live + tombstoned; ++i) work.send(make_stop());
+    // Best-effort by construction, so a transport failure here must not lose
+    // the run. Every item is settled and every event is already in a worker's
+    // store by this point; an undelivered STOP costs a worker its 60-tick
+    // idle-exit budget, not a row. Unguarded, a throw skipped the return and
+    // coordinator_main reported "error:" and exit 1 for a run that had in fact
+    // finished -- and the peers a mute socket implies are exactly the peers
+    // that are shutting down anyway. Dispatch above is deliberately not
+    // wrapped: a work socket that cannot accept the work is a failed run.
+    if (live > 0) {
+        try {
+            for (int i = 0; i < live + tombstoned; ++i) work.send(make_stop());
+        } catch (const std::exception& e) {
+            std::cerr << "coordinator: could not deliver STOP (" << e.what()
+                      << "); workers will idle-exit on their own budget\n";
+        }
+    }
     return s;
 }
 
