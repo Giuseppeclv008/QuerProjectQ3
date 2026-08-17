@@ -382,6 +382,38 @@ TEST(DuckDbEventStore, StorePredatingTheKeyChangeIsRefused) {
     removeDb(path);
 }
 
+TEST(DuckDbEventStore, EmptyStorePredatingTheKeyChangeIsRefused) {
+    // The guard above read COUNT(*) rather than the constraint, so an old file
+    // whose first run died before it wrote anything walked straight through --
+    // and the constructor then stamped store_meta as migrated, so the refusal
+    // could never fire on that file again. The index is still
+    // UNIQUE(..., cap_seq): the very fixture in CounterResetDoesNotEvict...
+    // collapses from 4 rows to 1, with a provenance marker asserting the
+    // opposite. Row count is not the question; the live constraint is.
+    const std::string path = mas::test::temp_artifact("t_store_legacy_empty.duckdb");
+    removeDb(path);
+    {   // the old shape, and not one row in it
+        duckdb::DuckDB db(path);
+        duckdb::Connection con(db);
+        con.Query(R"sql(
+            CREATE TABLE cap_events (
+                machine_id VARCHAR NOT NULL, head_id SMALLINT NOT NULL,
+                ts TIMESTAMP, cap_seq BIGINT NOT NULL, app_torque REAL,
+                status REAL, delta INTEGER, is_fault BOOLEAN,
+                aggregated BOOLEAN, is_reset BOOLEAN,
+                UNIQUE (machine_id, head_id, cap_seq)))sql");
+    }
+    try {
+        mas::DuckDbEventStore store(path, "MCC1");
+        ADD_FAILURE() << "opened an empty store keyed on cap_seq";
+    } catch (const std::runtime_error& e) {
+        EXPECT_NE(std::string(e.what()).find("keyed on cap_seq"),
+                  std::string::npos)
+            << e.what();
+    }
+    removeDb(path);
+}
+
 TEST(DuckDbEventStore, PathContainingASingleQuoteWorks) {
     // ATTACH and COPY splice the path into a SQL string literal and DuckDB has
     // no binding for either, so an unescaped quote ends the literal early.

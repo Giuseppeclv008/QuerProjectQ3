@@ -64,8 +64,35 @@ DuckDbEventStore::DuckDbEventStore(const std::string& db_path,
         auto tagged = query_or_throw(impl_->con,
             "SELECT value FROM store_meta WHERE key = 'event_identity'");
         if (tagged->RowCount() == 0) {
-            auto rows = query_or_throw(impl_->con, "SELECT COUNT(*) FROM cap_events");
-            if (rows->GetValue(0, 0).GetValue<int64_t>() > 0)
+            // Ask the live index, not the row count. An old file whose first run
+            // died before it wrote anything is still keyed on cap_seq, and a
+            // COUNT(*) test waves it through -- then stamps store_meta as
+            // migrated, so this refusal can never fire on that file again.
+            //
+            // The probe is two inserts differing only in ts: the current key
+            // accepts both, UNIQUE(..., cap_seq) rejects the second. Doing it by
+            // behaviour rather than by reading duckdb_constraints() keeps the
+            // check independent of the catalog's shape across DuckDB versions,
+            // and tests the property the numbers actually depend on. Splitting
+            // it into two statements is what separates "keyed on cap_seq" from
+            // "this file is not a cap_events store at all": the first insert
+            // failing is a schema problem and is reported as itself.
+            exec_or_throw(impl_->con, "BEGIN TRANSACTION");
+            static constexpr const char* kProbe =
+                "INSERT INTO cap_events VALUES ('__mas_identity_probe__',-1,";
+            auto first = impl_->con.Query(
+                std::string(kProbe) + "'2000-01-01 00:00:00',-1,0,0,0,false,false,false)");
+            if (first->HasError()) {
+                const std::string err = first->GetError();
+                impl_->con.Query("ROLLBACK");
+                throw std::runtime_error(
+                    "store " + db_path + " does not hold a usable cap_events table: " + err);
+            }
+            auto second = impl_->con.Query(
+                std::string(kProbe) + "'2000-01-01 00:00:01',-1,0,0,0,false,false,false)");
+            const bool keyed_on_cap_seq = second->HasError();
+            exec_or_throw(impl_->con, "ROLLBACK");
+            if (keyed_on_cap_seq)
                 throw std::runtime_error(
                     "store " + db_path + " predates the event-identity fix: it is "
                     "keyed on cap_seq, which collapses distinct closures across "

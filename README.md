@@ -219,7 +219,7 @@ organized by layer.
 │           ├── bench_cpu_main.cpp          # → bench_cpu       (store-free contender)
 │           └── cuda_clean_main.cpp         # → mas_cuda_clean  (GPU contender, --verify)
 │
-├── tests/                                  # Google Test unit tests (21 files, 187 tests)
+├── tests/                                  # Google Test unit tests (21 files, 188 tests)
 │   ├── test_cap_event.cpp
 │   ├── test_cap_event_extractor.cpp
 │   ├── test_cap_event_extractor_flat.cpp   # The GPU precondition, proved against the stateful one
@@ -1090,7 +1090,7 @@ cmake --build build --parallel
 | `MAS_BUILD_TESTS` | `ON` | Build the GoogleTest suite. `OFF` drops the last dependency that needs network. |
 
 The default triple (`OFF, ON, OFF, ON`) is the build this project has always
-had: **176 tests green**. With `MAS_BENCH_ONLY=ON` **no tests are built at
+had: **177 tests green**. With `MAS_BENCH_ONLY=ON` **no tests are built at
 all** — the suite is a googletest fetch and the bench build's contract is
 "downloads nothing", so `_deps/` is never created:
 
@@ -1362,7 +1362,7 @@ it, `--pdf` logs how to install it and writes Markdown and HTML as normal.
 
 ## Testing
 
-The project has **187 C++ unit tests** across 21 Google Test files — 176 in the
+The project has **188 C++ unit tests** across 21 Google Test files — 177 in the
 default build plus the 11-case GPU/CPU differential behind `-DMAS_ENABLE_CUDA=ON`
 — plus **282
 Python tests** for the analytics tier. Every test count in this
@@ -1370,7 +1370,7 @@ README is asserted by `python/tests/test_readme_counts.py`, so adding a test and
 forgetting this paragraph fails the suite rather than quietly dating it.
 
 ```bash
-cd build && ctest --output-on-failure           # 176 C++ tests in the default build; the 11-case GPU/CPU differential is compiled only with -DMAS_ENABLE_CUDA=ON (and skips without a device)
+cd build && ctest --output-on-failure           # 177 C++ tests in the default build; the 11-case GPU/CPU differential is compiled only with -DMAS_ENABLE_CUDA=ON (and skips without a device)
 cd python && ../.venv/bin/python -m pytest -q   # 282 Python tests (see the two data gates below)
 ```
 
