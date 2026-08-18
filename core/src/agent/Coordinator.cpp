@@ -78,8 +78,9 @@ DispatchSummary run_coordinator(const std::vector<WorkItem>& items,
     // worker can ever be given.
     //
     // That is exact at the two charged sites, where the item really has failed
-    // or lost its holder. At the uncharged ones -- an unclaimed item at a
-    // death, a claim from a tombstoned worker -- it is the least-bad option
+    // or lost its holder. At the three uncharged ones -- an unclaimed item at a
+    // death, a claim from a tombstoned worker, and an item whose holder
+    // announced an idle exit -- it is the least-bad option
     // rather than a free one: the item may still be sitting in a live but busy
     // worker's pipe, which is exactly when a PUSH send hits its high-water mark
     // and times out, so a later merge can fold in rows for a file this summary

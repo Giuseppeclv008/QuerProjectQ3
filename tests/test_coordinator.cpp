@@ -35,8 +35,19 @@ struct TimedSource : mas::IMessageSource {
     std::deque<std::pair<std::optional<mas::Message>, std::chrono::milliseconds>>
         script;
     sc::time_point* t = nullptr;
+    // The 200 ms is the recv timeout the production ZmqPullSource is given, and
+    // an exhausted script keeps modelling it rather than freezing time. Frozen,
+    // an item that never settles could never be reached by the death sweep or
+    // the abort check either, so a coordinator regression that drops a
+    // re-dispatch entirely made the run spin instead of failing -- and gtest has
+    // no per-test timeout, so CI hung rather than reporting. Every test here
+    // reaches open == 0 before its script drains, so advancing costs them
+    // nothing.
     std::optional<mas::Message> recv() override {
-        if (script.empty()) return std::nullopt;
+        if (script.empty()) {
+            *t += std::chrono::milliseconds(200);
+            return std::nullopt;
+        }
         auto [m, dt] = std::move(script.front());
         script.pop_front();
         *t += dt;

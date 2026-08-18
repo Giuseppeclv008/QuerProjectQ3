@@ -74,7 +74,9 @@ and the `e2e` rows would silently stay missing.
 If **both** `build-bench/` and `build/` hold `bench_cpu`, the driver refuses to
 guess and aborts: `BUILD_DIR=<dir>` is then **required**, not merely available.
 Pick the directory that also holds `mas_monolith`, or the `e2e` rows will be
-missing from the run; the abort message names it for you.
+missing from the run. The abort message names it when only one of the two has
+it; when both do, either will produce the `e2e` rows and the choice is simply
+which configure you meant to measure.
 
 The driver picks up `mas_monolith` automatically and adds the `e2e` rows; if it
 still cannot find it, it says so at startup. Those rows run the monolith's

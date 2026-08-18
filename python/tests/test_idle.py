@@ -184,10 +184,13 @@ def test_a_gap_bound_below_the_minimum_removes_the_absorbed_window(tmp_path):
     exercised that direction -- the other idle tests all run a gap bound above
     their minimum -- so the claim rested on reading the SQL.
 
-    Two 120-second bursts of no-load cycling, 200 seconds apart. Under a 600 s
-    bound the hole is absorbed and the whole 440 s is one qualifying period;
-    under a 60 s bound the run splits into two 120 s segments, each below a
-    300 s minimum, so nothing qualifies and the absorbed hole cannot be counted.
+    Two 120-second bursts of no-load cycling, 500 seconds apart. The hole is
+    deliberately longer than `idle_min_seconds` itself, so it is the case the
+    doc describes: a stretch of no rows at all that would qualify as an idle
+    period on its own. Under a 600 s bound it is absorbed and the whole 740 s
+    is one qualifying period; under a 60 s bound the run splits into two 120 s
+    segments, each below the 300 s minimum, so nothing qualifies and the hole
+    cannot be counted.
     """
     path = tmp_path / "gap_bound.duckdb"
     con = duckdb.connect(str(path))
@@ -199,7 +202,7 @@ def test_a_gap_bound_below_the_minimum_removes_the_absorbed_window(tmp_path):
             UNIQUE (machine_id, head_id, ts))
     """)
     seq = 0
-    for start in (0, 320):                    # 0-120 s, then 320-440 s: a 200 s hole
+    for start in (0, 620):                    # 0-120 s, then 620-740 s: a 500 s hole
         for off in range(0, 121, 10):
             seq += 1
             sec = start + off
@@ -212,8 +215,8 @@ def test_a_gap_bound_below_the_minimum_removes_the_absorbed_window(tmp_path):
         Config(store_path=str(path), idle_min_seconds=300,
                idle_max_gap_seconds=600), period="2026-02")
     assert absorbed.status == "ok"
-    assert [p["duration_seconds"] for p in absorbed.values["periods"]] == [440], (
-        "with the bound above the hole, the 200 s of no data is absorbed and "
+    assert [p["duration_seconds"] for p in absorbed.values["periods"]] == [740], (
+        "with the bound above the hole, the 500 s of no data is absorbed and "
         "counted as idle time"
     )
 

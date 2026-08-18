@@ -115,9 +115,17 @@ def resolve_build_dir():
             with_mono = [d for d in found
                          if any(os.path.isfile(os.path.join(ROOT, sub, mono))
                                 for sub in (d, os.path.join(d, "Release")))]
-            note = (f" ({', '.join(with_mono)} also holds {mono}, so only that one "
-                    "can produce the e2e rows)" if with_mono else
-                    f" (neither holds {mono}, so neither can produce the e2e rows)")
+            if not with_mono:
+                note = f" (neither holds {mono}, so neither can produce the e2e rows)"
+            elif len(with_mono) == 1:
+                note = (f" ({with_mono[0]} also holds {mono}, so only that one "
+                        "can produce the e2e rows)")
+            else:
+                # Both e2e-capable: the state bench/README's -DMAS_BENCH_ONLY=OFF
+                # recipe produces alongside a full build/. mas_monolith settles
+                # nothing here, so do not pretend it does.
+                note = (f" (both also hold {mono}, so either can produce the e2e "
+                        "rows; pick the configure you meant to measure)")
             die(f"{' and '.join(found)} both hold {exe}; which one to benchmark "
                 f"is a guess, and benchmarking the stale one is silent{note}",
                 "BUILD_DIR=<dir> python bench/run_bench_cuda.py ...")
