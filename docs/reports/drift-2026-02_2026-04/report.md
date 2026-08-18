@@ -1,5 +1,9 @@
 # Torque drift report for 2026-02..2026-04.
 
+> **Stale.** The head-agreement sentence below predates `baa4819`: correlation
+> over these series measures shared shape, so it cannot support "none is out of
+> step", which is a claim about level. See [`../README.md`](../README.md).
+
 *Generated 2026-08-16T21:52:52Z — narrative source: template, plan source: router, model: none (deterministic template and router).*
 
 ## Goal

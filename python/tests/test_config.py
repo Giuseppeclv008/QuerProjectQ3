@@ -42,6 +42,38 @@ def test_direct_construction_with_zero_idle_seconds_fails_loudly():
         Config(idle_min_seconds=0)
 
 
+def test_zero_idle_max_gap_seconds_fails_loudly():
+    with pytest.raises(ConfigError, match="idle_max_gap_seconds"):
+        Config(idle_max_gap_seconds=0)
+
+
+def test_the_two_idle_knobs_are_independent_in_both_directions():
+    """Neither ordering of the idle knobs is a config error.
+
+    An earlier version of this validation demanded
+    `idle_max_gap_seconds >= idle_min_seconds`, justified by "a hole shorter
+    than the gap bound is absorbed into a run it is long enough to be an idle
+    period of on its own". That is backwards: idle.py breaks a run on holes
+    *longer* than the gap bound, so for an absorbed hole to qualify as an idle
+    period by itself you need `min_seconds <= hole <= max_gap` -- which is
+    exactly the relation the check was demanding rather than the one it
+    prevented. It also rejected the conservative direction: max_gap = 60 with
+    min_seconds = 300 breaks a run at any 60-second hole and is strictly harder
+    to inflate than the defaults, yet it raised at startup.
+
+    Both orderings are coherent. The gap bound constrains continuity of the
+    data; the minimum constrains duration of the result.
+    """
+    strict = Config(idle_min_seconds=300, idle_max_gap_seconds=60)
+    assert strict.idle_max_gap_seconds == 60
+
+    permissive = Config(idle_min_seconds=300, idle_max_gap_seconds=600)
+    assert permissive.idle_max_gap_seconds == 600
+
+    equal = Config(idle_min_seconds=300, idle_max_gap_seconds=300)
+    assert equal.idle_max_gap_seconds == 300
+
+
 def test_load_config_missing_file_raises_config_error():
     with pytest.raises(ConfigError, match="/nonexistent/path.json"):
         load_config("/nonexistent/path.json")

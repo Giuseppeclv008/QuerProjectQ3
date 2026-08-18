@@ -24,7 +24,8 @@ cat > "$cfg" <<JSON
   "torque_min": 1.5,
   "torque_max": 2.5,
   "mad_k": 3.0,
-  "idle_min_seconds": 300
+  "idle_min_seconds": 300,
+  "idle_max_gap_seconds": 600
 }
 JSON
 

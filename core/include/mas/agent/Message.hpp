@@ -16,12 +16,31 @@ struct WorkItem {
     std::string in_path;
 };
 
-// Worker -> sink: outcome of one WorkItem. events == -1 => input unreadable
-// (mirrors clean_file's contract), deterministic, not worth re-dispatching.
-// events == -2 => the store failed part-way with rows already written: the
-// item is retryable, and re-running it is safe because the upsert is
-// idempotent on (machine_id, head_id, ts). Reporting both as -1 made the run
-// summary say "0 events" for files whose rows were sitting in the store.
+// Worker -> sink: outcome of one WorkItem.
+//
+// events == -1 => nothing was persisted. -1 is also what the IEventStore
+// clean_file returns when in_path cannot be opened, so the usual cause is an
+// unreadable input: deterministic, not worth re-dispatching.
+//
+// events == -2 => rows had already been persisted when the throw happened, so
+// the item is retryable; re-running it is safe because the upsert is idempotent
+// on (machine_id, head_id, ts). Reporting both as -1 made the run summary say
+// "0 events" for files whose rows were sitting in the store.
+//
+// The split is on *rows persisted*, not on which component threw, and is
+// deliberately not exhaustive in either direction. A store that dies on its
+// very first batch (full disk, locked DB) has written nothing and is reported
+// -1 even though a retry might have succeeded; a parser that throws after a
+// batch has landed is reported -2 and spends a re-dispatch on a deterministic
+// failure. Both are safe: -1 never strands persisted rows unreported, and -2
+// never duplicates them.
+//
+// This -2 is unrelated to the -2 of the CSV-convenience clean_file overload in
+// domain/Pipeline.hpp ("out_path cannot be created or a write fails"). No live
+// path crosses them -- worker_main binds the IEventStore overload, which
+// returns only -1 or >= 0 -- but anyone rewiring CleanFn to the CSV overload
+// must reconcile the two codes before they reach a WorkResult.
+//
 // worker_id attributes the result to the
 // worker that produced it, so the coordinator can write a dead worker's
 // store off and re-dispatch its completions (resilience spec §5/§6).

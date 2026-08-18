@@ -277,3 +277,94 @@ def test_the_itemised_sample_spans_the_period_instead_of_its_first_hours(tmp_pat
         f"the sample covers days {min(days)}-{max(days)}; a scatter drawn from "
         "it would show the period stopping early"
     )
+
+    # The sample IS the stride, and the stride is taken in ts order. Spanning the
+    # period is necessary but not sufficient: a sample that spans it and still
+    # varies between runs would make two regenerations of a committed report
+    # differ for no reason a reader can check. Pinned against the full ordered
+    # result rather than against the implementation.
+    #
+    # Honest about its own strength: this assertion is a contract pin, not a
+    # mutation detector. Dropping the window's ORDER BY still passes it, because
+    # DuckDB does in practice carry the subquery's ordering into a bare
+    # ROW_NUMBER() OVER () -- that is precisely why the explicit ordering is
+    # there, and why no test can be written that fails without it on this
+    # engine -- at least none I could construct on this fixture. What it does
+    # defend is the shape of the result: a future change that samples by rank,
+    # offset, or USING SAMPLE fails here.
+    con = duckdb.connect(str(path), read_only=True)
+    full = con.execute(
+        "SELECT ts FROM cap_events WHERE app_torque > 2.5 ORDER BY ts, head_id"
+    ).fetchall()
+    con.close()
+    stride = -(-len(full) // 50)
+    assert [h["ts"] for h in hits] == [r[0] for r in full[::stride]][:50], (
+        "the itemised sample is not the ts-ordered stride"
+    )
+
+    again = anomalies(cfg, period="2026-02", method="threshold")
+    assert [h["ts"] for h in again.values["threshold_hits"]] == \
+        [h["ts"] for h in hits], "the same store sampled twice gave two answers"
+
+
+def test_the_sample_is_stable_when_many_heads_share_one_timestamp(tmp_path):
+    """The tie-break case the trailing ORDER BY columns exist for.
+
+    The span test above runs on a single head, so its `ts` values are already
+    unique and the tie-breakers are never exercised. On the real store 36 heads
+    share every poll timestamp, so ordering on `ts` alone is a partial order and
+    which row of a tie group lands in the sample would be the engine's choice.
+    Here every hit shares one of four timestamps, nine heads deep.
+
+    Full rows, not just `ts`: with the timestamps deliberately degenerate, a
+    `ts`-only assertion would pass on any permutation of the heads.
+
+    Like its sibling above, this is a contract pin rather than a mutation
+    detector -- I checked, and dropping the tie-break columns still passes,
+    because DuckDB's ordering happens to be stable here too. What it pins is
+    that the sample equals the `(ts, head_id)` stride, so a change that samples
+    some other way, or that lets the tie group be reordered, fails.
+    """
+    path = tmp_path / "ties.duckdb"
+    con = duckdb.connect(str(path))
+    con.execute("""
+        CREATE TABLE cap_events (
+            machine_id VARCHAR NOT NULL, head_id SMALLINT NOT NULL, ts TIMESTAMP,
+            cap_seq BIGINT NOT NULL, app_torque REAL, status REAL, delta INTEGER,
+            is_fault BOOLEAN, aggregated BOOLEAN, is_reset BOOLEAN,
+            UNIQUE (machine_id, head_id, ts))
+    """)
+    seq = 0
+    for day in (1, 8, 15, 22):
+        for head in range(1, 10):
+            seq += 1
+            con.execute(
+                "INSERT INTO cap_events VALUES (?,?,?,?,?,0.0,1,false,false,false)",
+                ["MCC", head, f"2026-02-{day:02d} 12:00:00", seq, 9.5])
+    con.close()
+
+    cfg = Config(store_path=str(path), max_anomaly_items=6)
+    r = anomalies(cfg, period="2026-02", method="threshold")
+    assert r.status == "ok"
+    assert r.values["counts"]["threshold_hits"] == 36, "the count stays exact"
+
+    hits = r.values["threshold_hits"]
+    assert len(hits) <= 6
+
+    def shape(rows):
+        return [(h["head_id"], h["ts"]) for h in rows]
+
+    again = anomalies(cfg, period="2026-02", method="threshold")
+    assert shape(again.values["threshold_hits"]) == shape(hits), (
+        "36 rows across 4 timestamps sampled twice gave two different answers"
+    )
+
+    # And it is the ordered stride, tie-break included, not merely stable.
+    con = duckdb.connect(str(path), read_only=True)
+    full = con.execute(
+        "SELECT head_id, ts FROM cap_events WHERE app_torque > 2.5 "
+        "ORDER BY ts, head_id"
+    ).fetchall()
+    con.close()
+    stride = -(-len(full) // 6)
+    assert shape(hits) == [(h, t) for h, t in full[::stride]][:6]

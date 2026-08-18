@@ -1582,8 +1582,19 @@ the tiny fixture); the reports were regenerated once more so the committed
 The entry of 2026-07-26 records that the live `plan (llm)` path had never been
 exercised against a real model on this project's data, and the 2026-08-16
 review then found the flat plan schema shipping keywords the Anthropic
-structured-output API rejects (I16) — a defect that would have failed every
-`ask` into the keyword router silently. The fix is unit-guarded; this run is
+structured-output API rejects (**I16 of the 2026-08-16 round**) — a defect that
+would have failed every `ask` into the keyword router silently.
+
+> **Review-ID scoping.** Finding IDs are per review round and are reused across
+> rounds. Commit `41f61a6` closes "review I13, I16" of the **2026-08-17** round
+> (the CUDA bench provenance), which is a different finding from the I16 named
+> here. The schema *fix* for this one did land (`abedf5b`); what remains open is
+> **acceptance against the real Anthropic API**, which is unverified because no
+> key has ever been used — see the closing paragraph of this entry. Grepping for
+> a bare `I16` across the tree hits both findings; date-qualify before
+> concluding anything about either.
+
+The fix is unit-guarded; this run is
 the end-to-end evidence that the loop works, on the model the project had
 already measured, with no key and no network.
 

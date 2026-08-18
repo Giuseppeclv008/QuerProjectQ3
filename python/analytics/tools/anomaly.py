@@ -29,7 +29,8 @@ def _sample(con, sql, params, limit):
     total is recomputed with COUNT(*) -- but only when the sample actually
     filled up, which on a healthy period it does not.
     """
-    rows = con.execute(f"{sql} LIMIT {limit + 1}", params).fetchall()
+    res = con.execute(f"{sql} LIMIT {limit + 1}", params)
+    rows = res.fetchall()
     if len(rows) <= limit:
         return rows, len(rows)
 
@@ -43,14 +44,42 @@ def _sample(con, sql, params, limit):
     # A fixed stride, not USING SAMPLE: the sample has to be identical on every
     # run of the same store, or two regenerations of a committed report differ
     # for no reason a reader can check.
-    total = con.execute(f"SELECT COUNT(*) FROM ({sql})", params).fetchone()[0]
-    stride = -(-total // limit)          # ceil, so the stride never under-covers
-    rows = con.execute(
-        f"""SELECT * EXCLUDE (_mas_rn) FROM (
-                SELECT *, ROW_NUMBER() OVER () AS _mas_rn FROM ({sql})
-            ) WHERE (_mas_rn - 1) % {stride} = 0 LIMIT {limit}""",
+    #
+    # The window carries its own ORDER BY. A bare `ROW_NUMBER() OVER ()` inherits
+    # the subquery's ordering only as an implementation detail of the engine --
+    # it held on DuckDB 1.5.4 at 8 threads, but nothing in SQL promises it, and
+    # resting a reproducibility guarantee on unspecified behaviour is the thing
+    # the stride was chosen to avoid. `ts` leads so the sample spans the period;
+    # the remaining projected columns follow as tie-breakers, because up to 36
+    # heads share one poll timestamp and a partial order would leave which row
+    # of a tie group gets picked up to the engine again.
+    #
+    # The column names come from the probe's own cursor rather than from a
+    # second `SELECT ... LIMIT 0`: that extra round trip bound `params` again
+    # and scanned nothing useful.
+    cols = [d[0] for d in con.description]
+    order = ", ".join(['"ts"'] + [f'"{c}"' for c in cols if c != "ts"])
+    # One scan, not two: the stride is derived from COUNT(*) inside the same
+    # query that applies it, so the ranked set is built once instead of being
+    # rebuilt for the count and again for the sample.
+    #
+    # The ceil stride under-fills the cap just above the boundary -- at
+    # total = limit + 1 it is 2, returning about limit/2 rows. That is the safe
+    # direction against an "at most `limit` rows materialised" contract, and it
+    # is why the test asserts a range rather than equality, but it does mean the
+    # sample can be half the cap for totals barely over it.
+    fetched = con.execute(
+        f"""WITH _mas_ranked AS (
+                SELECT *, ROW_NUMBER() OVER (ORDER BY {order}) AS _mas_rn
+                FROM ({sql})
+            ), _mas_n AS (SELECT COUNT(*) AS _mas_total FROM _mas_ranked)
+            SELECT _mas_ranked.* EXCLUDE (_mas_rn), _mas_n._mas_total
+            FROM _mas_ranked, _mas_n
+            WHERE (_mas_rn - 1)
+                  % GREATEST(CAST(CEIL(_mas_total / {limit}.0) AS BIGINT), 1) = 0
+            ORDER BY _mas_rn LIMIT {limit}""",
         params).fetchall()
-    return rows, total
+    return [r[:-1] for r in fetched], fetched[0][-1]
 
 
 def anomalies(cfg, period=None, method="both"):

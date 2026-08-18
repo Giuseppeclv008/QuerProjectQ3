@@ -65,6 +65,38 @@ DispatchSummary run_coordinator(const std::vector<WorkItem>& items,
         return live;
     };
 
+    // One policy for every re-dispatch, because expressing it at a single call
+    // site is how the other four came to be missed. ZmqPushSink::send throws
+    // when a mute socket hits its send timeout, and coordinator_main gives that
+    // socket a 60 s one. Unguarded, the throw escapes run_coordinator and the
+    // process reports "error:" and exit 1 for a run in which every other item
+    // was settled and its events persisted.
+    //
+    // Re-dispatch is best-effort: the item has already failed or been orphaned,
+    // so an undeliverable retry leaves it exactly where it already was. It is
+    // settled failed rather than left open, and that is what guarantees the
+    // loop terminates -- a work socket that has stopped accepting anything
+    // would otherwise leave an open item no live worker can ever be given.
+    //
+    // The initial dispatch is deliberately NOT routed through here and still
+    // throws: failing to place work that has never run is a failed run, not a
+    // settled item. A test pins that half, so widening this guard to cover it
+    // fails rather than passes silently.
+    const auto try_redispatch = [&](const std::string& path,
+                                    ItemState& st) -> bool {
+        try {
+            work.send(encode(WorkItem{path}));
+            return true;
+        } catch (const std::exception& e) {
+            std::cerr << "coordinator: could not re-dispatch " << path << " ("
+                      << e.what() << "); settling it as failed\n";
+            st.done = true;
+            --open;
+            ++s.files_failed;
+            return false;
+        }
+    };
+
     // A goodbye (announced idle-exit) is the opposite of a death: the store is
     // intact, so completions stay counted, nothing reopens, no cap is charged,
     // and workers_died is untouched. Without the distinction, three workers
@@ -87,9 +119,9 @@ DispatchSummary run_coordinator(const std::vector<WorkItem>& items,
             }
             const auto st = state.find(h->first);
             if (st != state.end() && !st->second.done && count_live() > 0) {
-                std::cerr << "coordinator: re-dispatch " << h->first
+                std::cerr << "coordinator: attempting re-dispatch of " << h->first
                           << " (holder departed)\n";
-                work.send(encode(WorkItem{h->first}));
+                try_redispatch(h->first, st->second);
             }
             h = holder.erase(h);
         }
@@ -170,8 +202,16 @@ DispatchSummary run_coordinator(const std::vector<WorkItem>& items,
                         // retry completes the item rather than duplicating it.
                         // Charged against the same cap that bounds
                         // death-driven re-dispatch, so a store that fails every
-                        // time still terminates. -1 keeps its shortcut: nothing
-                        // was written, the failure is deterministic.
+                        // time still terminates. The budget is shared, and that
+                        // has a cost worth naming: an item that survives two
+                        // transient store faults has spent the resilience it
+                        // would otherwise have had for its holder dying. One
+                        // cap is still the right call -- two would let a file
+                        // alternating between the two failures run forever --
+                        // but a run that re-dispatches for a store fault is
+                        // less resilient to a death afterwards, not equally so.
+                        // -1 keeps its shortcut: nothing was written, the
+                        // failure is deterministic.
                         const bool retryable =
                             r->events == -2 &&
                             st->second.redispatches < cfg.redispatch_cap &&
@@ -183,10 +223,15 @@ DispatchSummary run_coordinator(const std::vector<WorkItem>& items,
                             // -- must still run, or a retry would silently cost
                             // the loop a tick of liveness.
                             ++st->second.redispatches;
-                            std::cerr << "coordinator: re-dispatch " << r->in_path
-                                      << " (attempt " << (st->second.redispatches + 1)
+                            std::cerr << "coordinator: attempting re-dispatch of "
+                                      << r->in_path << " (attempt "
+                                      << (st->second.redispatches + 1)
                                       << ", partial store failure)\n";
-                            work.send(encode(WorkItem{r->in_path}));
+                            // try_redispatch settles the item itself if the send
+                            // does not land, so there is nothing to do on either
+                            // outcome here -- and settling it again below would
+                            // double-count files_failed and decrement open twice.
+                            try_redispatch(r->in_path, st->second);
                         } else {
                             st->second.done = true;
                             --open;
@@ -229,10 +274,10 @@ DispatchSummary run_coordinator(const std::vector<WorkItem>& items,
                         }();
                     if (st != state.end() && !st->second.done && !held_by_live &&
                         count_live() > 0) {
-                        std::cerr << "coordinator: re-dispatch " << c->in_path
+                        std::cerr << "coordinator: attempting re-dispatch of " << c->in_path
                                   << " (claimed by tombstoned " << c->worker_id
                                   << "; uncharged)\n";
-                        work.send(encode(WorkItem{c->in_path}));
+                        try_redispatch(c->in_path, st->second);
                     }
                 }
             } else if (const auto g = decode_goodbye(*msg)) {
@@ -309,9 +354,9 @@ DispatchSummary run_coordinator(const std::vector<WorkItem>& items,
                 const bool charged = h != holder.end();
                 if (charged) holder.erase(h);
                 if (!charged) {
-                    std::cerr << "coordinator: re-dispatch " << path
+                    std::cerr << "coordinator: attempting re-dispatch of " << path
                               << " (unclaimed at a death; uncharged)\n";
-                    if (live > 0) work.send(encode(WorkItem{path}));
+                    if (live > 0) try_redispatch(path, st);
                     continue;
                 }
                 if (st.redispatches >= cfg.redispatch_cap) {
@@ -323,10 +368,11 @@ DispatchSummary run_coordinator(const std::vector<WorkItem>& items,
                     continue;
                 }
                 ++st.redispatches;
-                std::cerr << "coordinator: re-dispatch " << path << " (attempt "
-                          << (st.redispatches + 1) << ", holder died)\n";
+                std::cerr << "coordinator: attempting re-dispatch of " << path
+                          << " (attempt " << (st.redispatches + 1)
+                          << ", holder died)\n";
                 if (live > 0) {
-                    work.send(encode(WorkItem{path}));
+                    try_redispatch(path, st);
                 }
             }
         }

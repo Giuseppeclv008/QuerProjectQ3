@@ -14,8 +14,8 @@ See `docs/superpowers/specs/2026-08-10-cuda-cleaning-bench-design.md`.
 ## Run
 
 ```
-cmake -S . -B build -DMAS_BENCH_ONLY=ON -DMAS_ENABLE_CUDA=ON
-cmake --build build --config Release
+cmake -S . -B build-bench -DMAS_BENCH_ONLY=ON -DMAS_ENABLE_CUDA=ON
+cmake --build build-bench --config Release
 pip install -r bench/requirements-bench.txt
 python bench/run_bench_cuda.py --data telemetry_MCC777eda3db57348ef8a3113a642ae74db_2026-02.zip
 ```
@@ -61,9 +61,16 @@ no `mas_monolith`, and the driver skips every `e2e` row. (The same cache holds
 agent runtime back later.)
 
 ```
-cmake -S . -B build -DMAS_BENCH_ONLY=OFF -DMAS_ENABLE_CUDA=ON -DMAS_ENABLE_ZMQ=OFF
-cmake --build build --config Release
+cmake -S . -B build-bench -DMAS_BENCH_ONLY=OFF -DMAS_ENABLE_CUDA=ON -DMAS_ENABLE_ZMQ=OFF
+cmake --build build-bench --config Release
 ```
+
+Reconfigure the **same** directory the bench recipe used. The driver resolves
+one build directory and takes every contender from it, so that a run cannot mix
+binaries from two configures and report a build type the measured binaries did
+not come from. A second directory holding `mas_monolith` would not be searched,
+and the `e2e` rows would silently stay missing. (`BUILD_DIR=<dir>` overrides the
+choice if you need a different one.)
 
 The driver picks up `mas_monolith` automatically and adds the `e2e` rows; if it
 still cannot find it, it says so at startup. Those rows run the monolith's

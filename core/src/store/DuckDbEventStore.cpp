@@ -77,6 +77,15 @@ DuckDbEventStore::DuckDbEventStore(const std::string& db_path,
             // it into two statements is what separates "keyed on cap_seq" from
             // "this file is not a cap_events store at all": the first insert
             // failing is a schema problem and is reported as itself.
+            //
+            // Narrower than it looks, and the stamp it writes is irreversible:
+            // the probe only asks whether the *second* insert is rejected, so a
+            // cap_events table carrying no unique constraint at all accepts
+            // both, passes, and is stamped 'event_identity' as migrated. That
+            // file is not the one this guard was built for -- it is not a store
+            // any version of this code produced -- and the alternative is
+            // reading duckdb_constraints(), whose shape across DuckDB versions
+            // is exactly what the behavioural probe was chosen to avoid.
             exec_or_throw(impl_->con, "BEGIN TRANSACTION");
             static constexpr const char* kProbe =
                 "INSERT INTO cap_events VALUES ('__mas_identity_probe__',-1,";

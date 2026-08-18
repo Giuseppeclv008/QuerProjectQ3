@@ -12,6 +12,7 @@ Usage:
 """
 import argparse
 import csv
+import glob
 import os
 import platform
 import re
@@ -39,6 +40,16 @@ PY_NAIVE_MAX_FILES = max(VOLUMES)
 
 RESULTS = os.path.join(ROOT, "bench", "results_cuda.csv")
 STAGES = os.path.join(ROOT, "bench", "results_cuda_stages.csv")
+
+# The build directory is resolved once, ROOT-anchored, and shared by the binary
+# lookup and the provenance header. They must agree: a header naming a build
+# type the measured binaries did not come from is exactly the defect the
+# provenance row exists to close, and it fails silently. README documents
+# build-bench for the MAS_BENCH_ONLY configure; build/ is the in-tree default
+# and stays supported. BUILD_DIR overrides both, as run_bench.sh already allows.
+_BUILD_OVERRIDE = os.environ.get("BUILD_DIR")
+BUILD_CANDIDATES = (_BUILD_OVERRIDE,) if _BUILD_OVERRIDE else ("build-bench", "build")
+_resolved_build = None
 
 FIELDS = ["arch", "mode", "n_workers", "threads", "files", "repeat", "clean_s",
           "merge_s", "total_s", "events", "rows_per_s", "events_per_s",
@@ -72,16 +83,50 @@ def die(msg, fix=None):
     sys.exit(1)
 
 
+def resolve_build_dir():
+    """The ROOT-relative build directory that actually holds the bench binaries.
+
+    Decided by bench_cpu, cached, and reused by provenance() so the CSV header
+    describes the build that was measured. Only the candidate directories are
+    searched: a stale side build (build-plan once held an unoptimized bench_cpu,
+    CMAKE_BUILD_TYPE empty) must never be silently benchmarked in place of the
+    real one.
+
+    Ambiguity is refused rather than ranked. Preference by position is what
+    produced the bug this function replaced -- "always build/" simply became
+    "always build-bench/", moving the silent-wrong-binary failure to a different
+    developer. This repo accumulates build directories (.gitignore lists six),
+    so a fresh build/ from the top-level README's instructions sitting beside a
+    months-old build-bench/ is an ordinary state, and either answer is a guess.
+    Set BUILD_DIR to say which.
+    """
+    global _resolved_build
+    if _resolved_build is None:
+        exe = "bench_cpu" + (".exe" if os.name == "nt" else "")
+        found = [d for d in BUILD_CANDIDATES
+                 if any(os.path.isfile(os.path.join(ROOT, sub, exe))
+                        for sub in (d, os.path.join(d, "Release")))]
+        if len(found) > 1:
+            die(f"{' and '.join(found)} both hold {exe}; which one to benchmark "
+                "is a guess, and benchmarking the stale one is silent",
+                f"BUILD_DIR={found[0]} python bench/run_bench_cuda.py ...")
+        if found:
+            _resolved_build = found[0]
+    return _resolved_build
+
+
 def find_binary(name):
     """MSVC multi-config puts binaries in build/Release; make both work.
 
-    Only the documented build directory is searched: a stale side build
-    (build-plan once held an unoptimized bench_cpu, CMAKE_BUILD_TYPE empty)
-    must never be silently benchmarked in place of the real one.
+    Every binary comes from the single directory resolve_build_dir() picked, so
+    one run cannot mix binaries from two different configures.
     """
+    d = resolve_build_dir()
+    if d is None:
+        return None
     exe = name + (".exe" if os.name == "nt" else "")
-    for d in ("build", "build/Release"):
-        p = os.path.join(ROOT, d, exe)
+    for sub in (d, os.path.join(d, "Release")):
+        p = os.path.join(ROOT, sub, exe)
         if os.path.isfile(p):
             return p
     return None
@@ -152,12 +197,19 @@ def provenance():
             lines.append(f"# {mod}: {__import__(mod).__version__}")
         except Exception:                                        # noqa: BLE001
             lines.append(f"# {mod}: not importable")
-    cache = os.path.join("build-bench", "CMakeCache.txt")
-    if not os.path.exists(cache):
-        cache = os.path.join("build", "CMakeCache.txt")
+    # The cache read here must be the one find_binary() drew the binaries from,
+    # and ROOT-anchored: a CWD-relative lookup silently yields three `unknown`
+    # lines from any directory but the repo root, and a CSV that looks complete
+    # while naming nothing is worse than one that names the gap out loud.
+    build_dir = resolve_build_dir()
+    cache = os.path.join(ROOT, build_dir, "CMakeCache.txt") if build_dir else ""
     wanted = ("CMAKE_BUILD_TYPE", "CMAKE_CXX_COMPILER_ID",
               "CMAKE_CXX_COMPILER_VERSION")
     found = {}
+    if not cache or not os.path.exists(cache):
+        print(f"WARNING: no CMakeCache.txt under {build_dir or 'any build dir'}; "
+              "the build-type and compiler fields will read 'unknown'",
+              file=sys.stderr)
     try:
         with open(cache, encoding="utf-8") as fh:
             for line in fh:
@@ -169,16 +221,18 @@ def provenance():
     # Only the build type is in the cache; the compiler ID and version live in
     # CMakeFiles/<cmake-version>/CMakeCXXCompiler.cmake, which is where spec 6.5's
     # two fields actually are.
-    import glob
-    import re as _re
-    for cc in glob.glob(os.path.join(os.path.dirname(cache), "CMakeFiles",
+    # ROOT-anchored like the cache itself: with no build dir resolved, cache is
+    # "" and os.path.dirname("") is "", which would glob relative to the CWD --
+    # the same class of bug the cache lookup above was fixed for.
+    cc_root = os.path.dirname(cache) if cache else os.path.join(ROOT, "__none__")
+    for cc in glob.glob(os.path.join(cc_root, "CMakeFiles",
                                      "*", "CMakeCXXCompiler.cmake")):
         try:
             text = open(cc, encoding="utf-8").read()
         except OSError:
             continue
         for key in ("CMAKE_CXX_COMPILER_ID", "CMAKE_CXX_COMPILER_VERSION"):
-            m = _re.search(rf'set\({key} "([^"]*)"\)', text)
+            m = re.search(rf'set\({key} "([^"]*)"\)', text)
             if m and key not in found:
                 found[key] = m.group(1)
     for key in wanted:
@@ -306,9 +360,9 @@ def main():
     cuda = find_binary("mas_cuda_clean")
     mono = find_binary("mas_monolith")
     if not bench_cpu:
-        die("bench_cpu not found",
-            "cmake -S . -B build -DMAS_BENCH_ONLY=ON -DMAS_ENABLE_CUDA=ON && "
-            "cmake --build build --config Release")
+        die(f"bench_cpu not found under {' or '.join(BUILD_CANDIDATES)}",
+            "cmake -S . -B build-bench -DMAS_BENCH_ONLY=ON -DMAS_ENABLE_CUDA=ON && "
+            "cmake --build build-bench --config Release")
     try:
         import numpy, pandas   # noqa: F401
     except ImportError:
@@ -320,9 +374,10 @@ def main():
     if not mono:
         print("WARNING: mas_monolith not found -- the e2e rows will be missing. "
               "MAS_BENCH_ONLY is a cached option: reconfiguring the same build "
-              "directory without it keeps it ON. Configure with "
-              "-DMAS_BENCH_ONLY=OFF (or a separate build dir) to include "
-              "them.\n")
+              "directory without it keeps it ON. Reconfigure THIS directory "
+              "with -DMAS_BENCH_ONLY=OFF to include them -- a separate build "
+              "directory is not searched, so it would guarantee the opposite. "
+              "Use BUILD_DIR=<dir> to point elsewhere.\n")
 
     # oracle_union counts distinct (head_id, ts) -- the store identity. The
     # day-files are contiguous and non-overlapping, so this EQUALS the sum of
