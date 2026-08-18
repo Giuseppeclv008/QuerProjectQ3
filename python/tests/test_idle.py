@@ -172,3 +172,63 @@ def test_a_hole_in_the_data_breaks_the_run_instead_of_being_absorbed(tmp_path):
     assert sum(p["cycles"] for p in periods) == 8
     assert any("gap" in a for a in r.provenance.assumptions), \
         "the gap bound is a stated assumption, not a silent one"
+
+
+def test_a_gap_bound_below_the_minimum_removes_the_absorbed_window(tmp_path):
+    """The configuration `docs/analytics-methods.md` says is valid, made executable.
+
+    With the defaults (`idle_max_gap_seconds` 600 above `idle_min_seconds` 300),
+    a hole between the two is absorbed into its surrounding run and reported as
+    idle time on its own. That is a disclosed modelling choice, and the doc says
+    narrowing the bound below the minimum removes the window entirely. Nothing
+    exercised that direction -- the other idle tests all run a gap bound above
+    their minimum -- so the claim rested on reading the SQL.
+
+    Two 120-second bursts of no-load cycling, 500 seconds apart. The hole is
+    deliberately longer than `idle_min_seconds` itself, so it is the case the
+    doc describes: a stretch of no rows at all that would qualify as an idle
+    period on its own. Under a 600 s bound it is absorbed and the whole 740 s
+    is one qualifying period; under a 60 s bound the run splits into two 120 s
+    segments, each below the 300 s minimum, so nothing qualifies and the hole
+    cannot be counted.
+    """
+    path = tmp_path / "gap_bound.duckdb"
+    con = duckdb.connect(str(path))
+    con.execute("""
+        CREATE TABLE cap_events (
+            machine_id VARCHAR NOT NULL, head_id SMALLINT NOT NULL, ts TIMESTAMP,
+            cap_seq BIGINT NOT NULL, app_torque REAL, status REAL, delta INTEGER,
+            is_fault BOOLEAN, aggregated BOOLEAN, is_reset BOOLEAN,
+            UNIQUE (machine_id, head_id, ts))
+    """)
+    seq = 0
+    for start in (0, 620):                    # 0-120 s, then 620-740 s: a 500 s hole
+        for off in range(0, 121, 10):
+            seq += 1
+            sec = start + off
+            con.execute(
+                "INSERT INTO cap_events VALUES ('MCC',1,?,?,0.0,2.0,1,false,false,false)",
+                [f"2026-02-01 00:{sec // 60:02d}:{sec % 60:02d}", seq])
+    con.close()
+
+    absorbed = idle_periods(
+        Config(store_path=str(path), idle_min_seconds=300,
+               idle_max_gap_seconds=600), period="2026-02")
+    assert absorbed.status == "ok"
+    assert [p["duration_seconds"] for p in absorbed.values["periods"]] == [740], (
+        "with the bound above the hole, the 500 s of no data is absorbed and "
+        "counted as idle time"
+    )
+
+    split = idle_periods(
+        Config(store_path=str(path), idle_min_seconds=300,
+               idle_max_gap_seconds=60), period="2026-02")
+    # Zero qualifying periods is reported as insufficient_data rather than as
+    # ok-with-an-empty-list: the tier's convention is that a headline number
+    # nobody can stand behind is not rendered as a confident zero. Either way,
+    # no period is reported, which is the claim under test.
+    assert split.status == "insufficient_data", (
+        "with the bound below the minimum, the run splits at the hole into two "
+        "120 s segments, neither of which reaches the 300 s minimum"
+    )
+    assert split.values.get("periods", []) == []

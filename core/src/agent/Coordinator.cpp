@@ -72,28 +72,38 @@ DispatchSummary run_coordinator(const std::vector<WorkItem>& items,
     // process reports "error:" and exit 1 for a run in which every other item
     // was settled and its events persisted.
     //
-    // Re-dispatch is best-effort: the item has already failed or been orphaned,
-    // so an undeliverable retry leaves it exactly where it already was. It is
-    // settled failed rather than left open, and that is what guarantees the
-    // loop terminates -- a work socket that has stopped accepting anything
-    // would otherwise leave an open item no live worker can ever be given.
+    // Re-dispatch is best-effort. It is settled failed rather than left open,
+    // and that is what guarantees the loop terminates: a work socket that has
+    // stopped accepting anything would otherwise leave an open item no live
+    // worker can ever be given.
+    //
+    // That is exact at the two charged sites, where the item really has failed
+    // or lost its holder. At the three uncharged ones -- an unclaimed item at a
+    // death, a claim from a tombstoned worker, and an item whose holder
+    // announced an idle exit -- it is the least-bad option
+    // rather than a free one: the item may still be sitting in a live but busy
+    // worker's pipe, which is exactly when a PUSH send hits its high-water mark
+    // and times out, so a later merge can fold in rows for a file this summary
+    // counted failed. The summary can therefore undercount ok files against the
+    // merged store; it never overcounts them, and it never hangs.
     //
     // The initial dispatch is deliberately NOT routed through here and still
     // throws: failing to place work that has never run is a failed run, not a
     // settled item. A test pins that half, so widening this guard to cover it
     // fails rather than passes silently.
-    const auto try_redispatch = [&](const std::string& path,
-                                    ItemState& st) -> bool {
+    // Returns nothing on purpose: every caller's work is finished either way,
+    // because the failure branch settles the item itself. An earlier version
+    // returned bool and all five sites discarded it, which only invited a
+    // reader to hunt for the site that branched on it.
+    const auto try_redispatch = [&](const std::string& path, ItemState& st) {
         try {
             work.send(encode(WorkItem{path}));
-            return true;
         } catch (const std::exception& e) {
             std::cerr << "coordinator: could not re-dispatch " << path << " ("
                       << e.what() << "); settling it as failed\n";
             st.done = true;
             --open;
             ++s.files_failed;
-            return false;
         }
     };
 

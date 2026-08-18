@@ -179,8 +179,11 @@ def test_every_readme_test_count_is_one_of_the_guarded_forms():
         # Deliberate non-suite figures: subsets described in prose.
         r"\d+ tests? (?:need|skip|fail)",
         r"\*\*\d+ tests?\*\* need",
-        r"21 coordinator tests",     # the deterministic-liveness story
-        r"50 ZMQ tests",             # historical figure inside a dated entry
+        # ("21 coordinator tests" and "50 ZMQ tests" were exempted here long
+        #  after the README stopped containing either. An exemption for a
+        #  phrase that is not in the text guards nothing and hides that the
+        #  list has drifted, so they are gone; if either claim returns it will
+        #  fail here until it is reconciled, which is the point.)
     ]
     stripped = text
     for pat in guarded:

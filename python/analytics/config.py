@@ -106,7 +106,7 @@ class Config:
         # continuity bound on the *data* (holes longer than it end a run), while
         # min_seconds is a duration floor on the *result*. Every combination is
         # coherent, and the rejected direction was the conservative one --
-        # max_gap = 60 with min_seconds = 300 breaks a run at any 60-second hole
+        # max_gap = 60 with min_seconds = 300 breaks a run at any hole longer than 60 s
         # and is strictly harder to inflate than the defaults, yet it raised.
         #
         # The direction that does warrant care is the one the defaults sit on:
