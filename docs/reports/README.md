@@ -3,7 +3,7 @@
 These four directories are committed artifacts: a reader opens them expecting
 the numbers to be the ones this code produces. Three fixes landed after they
 were last generated, and the rebuilt 3-month store
-(`scripts/build_store.sh` → `../events_3mo.duckdb`) is not in the repo, so they
+(`scripts/build_store.sh` → `events_3mo.duckdb` at the repository root) is not in the repo, so they
 could not be regenerated in the same commit that invalidated them.
 
 Recording that in commit messages alone is not enough: a reader browsing this
@@ -39,5 +39,7 @@ removes its banner along with the stale numbers.
 `docs/validation-log.md` for the run that produced the committed copy and the
 provider settings it used.
 
-When a directory is regenerated, delete its row here and the banner in its
-`report.md`. An empty table means the committed reports match the code.
+When a directory is regenerated, delete its row here and the banners in **both**
+its `report.md` and its `report.html` — `demo.sh` rewrites those files, so a
+leftover banner would outlive the staleness it describes. An empty table means
+the committed reports match the code.

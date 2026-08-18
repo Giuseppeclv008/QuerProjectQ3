@@ -58,8 +58,10 @@ def test_the_two_idle_knobs_are_independent_in_both_directions():
     period by itself you need `min_seconds <= hole <= max_gap` -- which is
     exactly the relation the check was demanding rather than the one it
     prevented. It also rejected the conservative direction: max_gap = 60 with
-    min_seconds = 300 breaks a run at any 60-second hole and is strictly harder
-    to inflate than the defaults, yet it raised at startup.
+    min_seconds = 300 breaks a run at any hole longer than 60 s and is strictly
+    harder to inflate than the defaults, yet it raised at startup. (The break
+    is on holes strictly longer than the bound -- idle.py tests `> max_gap` --
+    so a hole of exactly max_gap seconds is still absorbed.)
 
     Both orderings are coherent. The gap bound constrains continuity of the
     data; the minimum constrains duration of the result.

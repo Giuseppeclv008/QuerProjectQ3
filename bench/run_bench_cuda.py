@@ -107,9 +107,20 @@ def resolve_build_dir():
                  if any(os.path.isfile(os.path.join(ROOT, sub, exe))
                         for sub in (d, os.path.join(d, "Release")))]
         if len(found) > 1:
+            # No default is printed: the first candidate is build-bench, and
+            # under the MAS_BENCH_ONLY configure that directory holds no
+            # mas_monolith -- following such a hint verbatim would silently drop
+            # every e2e row, which is the failure this refusal exists to stop.
+            mono = "mas_monolith" + (".exe" if os.name == "nt" else "")
+            with_mono = [d for d in found
+                         if any(os.path.isfile(os.path.join(ROOT, sub, mono))
+                                for sub in (d, os.path.join(d, "Release")))]
+            note = (f" ({', '.join(with_mono)} also holds {mono}, so only that one "
+                    "can produce the e2e rows)" if with_mono else
+                    f" (neither holds {mono}, so neither can produce the e2e rows)")
             die(f"{' and '.join(found)} both hold {exe}; which one to benchmark "
-                "is a guess, and benchmarking the stale one is silent",
-                f"BUILD_DIR={found[0]} python bench/run_bench_cuda.py ...")
+                f"is a guess, and benchmarking the stale one is silent{note}",
+                "BUILD_DIR=<dir> python bench/run_bench_cuda.py ...")
         if found:
             _resolved_build = found[0]
     return _resolved_build
@@ -224,9 +235,9 @@ def provenance():
     # ROOT-anchored like the cache itself: with no build dir resolved, cache is
     # "" and os.path.dirname("") is "", which would glob relative to the CWD --
     # the same class of bug the cache lookup above was fixed for.
-    cc_root = os.path.dirname(cache) if cache else os.path.join(ROOT, "__none__")
-    for cc in glob.glob(os.path.join(cc_root, "CMakeFiles",
-                                     "*", "CMakeCXXCompiler.cmake")):
+    for cc in (glob.glob(os.path.join(os.path.dirname(cache), "CMakeFiles",
+                                      "*", "CMakeCXXCompiler.cmake"))
+               if cache else []):
         try:
             text = open(cc, encoding="utf-8").read()
         except OSError:

@@ -1594,9 +1594,9 @@ would have failed every `ask` into the keyword router silently.
 > a bare `I16` across the tree hits both findings; date-qualify before
 > concluding anything about either.
 
-The fix is unit-guarded; this run is
-the end-to-end evidence that the loop works, on the model the project had
-already measured, with no key and no network.
+The fix is unit-guarded; this run is the end-to-end evidence that the loop
+works, on the model the project had already measured, with no key and no
+network.
 
 **Setup.** Same box, same evening, after Parts A and B: Ollama 0.32.12 native
 on Windows (service on `127.0.0.1:11434`, the config default), `qwen2.5:7b`

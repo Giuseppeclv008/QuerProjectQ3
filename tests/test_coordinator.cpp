@@ -191,6 +191,100 @@ TEST(Coordinator, AnUndeliverableDeathRedispatchAlsoSettlesInsteadOfLosingTheRun
     EXPECT_EQ(work.sent.size(), 2u);      // the two dispatches, nothing after
 }
 
+TEST(Coordinator, AnUndeliverableDepartedHolderRedispatchSettlesTheItem) {
+    // Site 3 of 5: a worker announces an idle exit while still holding an item.
+    // Departure is not death, so nothing is charged and no store is written
+    // off -- but the item must still be re-placed, and that send can fail like
+    // any other. Pinned separately because all five sites were unguarded once
+    // and only two of them had a test.
+    const std::vector<mas::WorkItem> items = {{"d1.csv"}, {"d2.csv"}};
+    mas::test::ThrowingSink work;
+    work.fail_after = 2;                  // both dispatches land; the re-place does not
+    mas::test::FakeSource results;
+    results.queue.push_back(claim("d2.csv", "w2"));
+    results.queue.push_back(result("d1.csv", 11, "w1"));
+    results.queue.push_back(bye("w2"));   // departs still holding d2
+    mas::test::FakeSource hbs;
+    hbs.queue.push_back(hb("w1", 0));
+
+    mas::DispatchSummary s{};
+    ASSERT_NO_THROW(s = mas::run_coordinator(items, work, results, hbs,
+                                             mas::CoordinatorConfig{},
+                                             fixed_clock()));
+
+    EXPECT_EQ(s.files_ok, 1);             // d1 survives with the run
+    EXPECT_EQ(s.files_failed, 1);         // d2 settles once
+    EXPECT_EQ(s.total_events, 11);
+    EXPECT_EQ(s.workers_died, 0);         // an announced exit is not a death
+    EXPECT_EQ(work.sent.size(), 2u);
+}
+
+TEST(Coordinator, AnUndeliverableUnclaimedDeathRedispatchSettlesTheItem) {
+    using namespace std::chrono_literals;
+    // Site 4 of 5: an item nobody claimed, at a death. It may be queued in the
+    // dead worker's pipe, so it is re-placed uncharged -- the dead worker
+    // vouched for nothing. That send is guarded too.
+    const std::vector<mas::WorkItem> items = {{"d1.csv"}, {"d2.csv"}};
+    sc::time_point t{};
+    mas::test::ThrowingSink work;
+    work.fail_after = 2;
+    TimedSource results;
+    results.t = &t;
+    results.script.push_back({result("d1.csv", 11, "w1"), 0ms});
+    results.script.push_back({std::nullopt, 31000ms});   // w2 goes silent
+    mas::test::FakeTickSource hbs;
+    hbs.script.push_back(hb("w1", 0));
+    hbs.script.push_back(hb("w2", 0));
+    hbs.script.push_back(std::nullopt);
+    hbs.script.push_back(hb("w1", 1));                   // w1 alive at t=31 s
+
+    mas::DispatchSummary s{};
+    ASSERT_NO_THROW(s = mas::run_coordinator(items, work, results, hbs,
+                                             mas::CoordinatorConfig{},
+                                             [&] { return t; }));
+
+    EXPECT_EQ(s.files_ok, 1);
+    EXPECT_EQ(s.files_failed, 1);         // d2, unclaimed, settles once
+    EXPECT_EQ(s.workers_died, 1);
+    EXPECT_EQ(work.sent.size(), 2u);
+}
+
+TEST(Coordinator, AnUndeliverableZombieClaimRedispatchSettlesTheItem) {
+    using namespace std::chrono_literals;
+    // Site 5 of 5: a CLAIM arriving from a worker already tombstoned for
+    // silence. The zombie is alive enough to have taken the item, and its
+    // RESULT will be dropped at the same gate, so the item is re-placed
+    // uncharged or it never settles at all. Here the death sweep's own
+    // re-dispatch lands (send 3) and it is the zombie's claim that cannot.
+    const std::vector<mas::WorkItem> items = {{"d1.csv"}, {"d2.csv"}};
+    sc::time_point t{};
+    mas::test::ThrowingSink work;
+    work.fail_after = 3;                  // 2 dispatches + the sweep's re-place
+    TimedSource results;
+    results.t = &t;
+    results.script.push_back({claim("d2.csv", "w2"), 0ms});
+    results.script.push_back({result("d1.csv", 11, "w1"), 0ms});
+    results.script.push_back({std::nullopt, 31000ms});   // sweep tombstones w2
+    results.script.push_back({claim("d2.csv", "w2"), 0ms});   // the zombie speaks
+    mas::test::FakeTickSource hbs;
+    hbs.script.push_back(hb("w1", 0));
+    hbs.script.push_back(hb("w2", 0));
+    hbs.script.push_back(std::nullopt);
+    hbs.script.push_back(hb("w1", 1));
+    hbs.script.push_back(std::nullopt);
+    hbs.script.push_back(hb("w1", 2));
+
+    mas::DispatchSummary s{};
+    ASSERT_NO_THROW(s = mas::run_coordinator(items, work, results, hbs,
+                                             mas::CoordinatorConfig{},
+                                             [&] { return t; }));
+
+    EXPECT_EQ(s.files_ok, 1);
+    EXPECT_EQ(s.files_failed, 1);
+    EXPECT_EQ(s.workers_died, 1);
+    EXPECT_EQ(work.sent.size(), 3u);      // the throw is the fourth send
+}
+
 TEST(Coordinator, AnUndeliverableFirstDispatchStillFailsTheRun) {
     // The other half of the asymmetry, and the one nothing pinned: dispatch is
     // deliberately NOT best-effort. A work socket that cannot accept the work

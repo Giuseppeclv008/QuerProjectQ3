@@ -69,8 +69,12 @@ Reconfigure the **same** directory the bench recipe used. The driver resolves
 one build directory and takes every contender from it, so that a run cannot mix
 binaries from two configures and report a build type the measured binaries did
 not come from. A second directory holding `mas_monolith` would not be searched,
-and the `e2e` rows would silently stay missing. (`BUILD_DIR=<dir>` overrides the
-choice if you need a different one.)
+and the `e2e` rows would silently stay missing.
+
+If **both** `build-bench/` and `build/` hold `bench_cpu`, the driver refuses to
+guess and aborts: `BUILD_DIR=<dir>` is then **required**, not merely available.
+Pick the directory that also holds `mas_monolith`, or the `e2e` rows will be
+missing from the run; the abort message names it for you.
 
 The driver picks up `mas_monolith` automatically and adds the `e2e` rows; if it
 still cannot find it, it says so at startup. Those rows run the monolith's

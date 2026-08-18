@@ -57,7 +57,7 @@ def _sample(con, sql, params, limit):
     # The column names come from the probe's own cursor rather than from a
     # second `SELECT ... LIMIT 0`: that extra round trip bound `params` again
     # and scanned nothing useful.
-    cols = [d[0] for d in con.description]
+    cols = [d[0] for d in res.description]
     order = ", ".join(['"ts"'] + [f'"{c}"' for c in cols if c != "ts"])
     # One scan, not two: the stride is derived from COUNT(*) inside the same
     # query that applies it, so the ranked set is built once instead of being
