@@ -100,13 +100,22 @@ class Config:
         if self.idle_max_gap_seconds <= 0:
             raise ConfigError(
                 f"idle_max_gap_seconds must be > 0, got {self.idle_max_gap_seconds}")
-        if self.idle_max_gap_seconds < self.idle_min_seconds:
-            raise ConfigError(
-                f"idle_max_gap_seconds ({self.idle_max_gap_seconds}) must be >= "
-                f"idle_min_seconds ({self.idle_min_seconds}); below it, a hole in the "
-                "data shorter than the gap bound is absorbed into a run it is long "
-                "enough to be an idle period of on its own"
-            )
+        # No relation is required between idle_max_gap_seconds and
+        # idle_min_seconds, and an earlier version of this file wrongly demanded
+        # max_gap >= min_seconds. They measure different things: max_gap is a
+        # continuity bound on the *data* (holes longer than it end a run), while
+        # min_seconds is a duration floor on the *result*. Every combination is
+        # coherent, and the rejected direction was the conservative one --
+        # max_gap = 60 with min_seconds = 300 breaks a run at any 60-second hole
+        # and is strictly harder to inflate than the defaults, yet it raised.
+        #
+        # The direction that does warrant care is the one the defaults sit on:
+        # with max_gap (600) above min_seconds (300), a data hole between the
+        # two is absorbed into its surrounding run and can be reported as idle
+        # head-time on its own. That is a disclosed modelling choice, not a
+        # config error -- 600 s is far above the ~1 Hz cycling cadence, the
+        # tool declares the bound in its assumptions, and docs/analytics-methods
+        # states the trade-off -- so it is documented rather than rejected.
         if self.mad_k <= 0:
             raise ConfigError(
                 f"mad_k must be > 0, got {self.mad_k}; at k <= 0 the deviation band "

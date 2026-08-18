@@ -91,17 +91,27 @@ def resolve_build_dir():
     searched: a stale side build (build-plan once held an unoptimized bench_cpu,
     CMAKE_BUILD_TYPE empty) must never be silently benchmarked in place of the
     real one.
+
+    Ambiguity is refused rather than ranked. Preference by position is what
+    produced the bug this function replaced -- "always build/" simply became
+    "always build-bench/", moving the silent-wrong-binary failure to a different
+    developer. This repo accumulates build directories (.gitignore lists six),
+    so a fresh build/ from the top-level README's instructions sitting beside a
+    months-old build-bench/ is an ordinary state, and either answer is a guess.
+    Set BUILD_DIR to say which.
     """
     global _resolved_build
     if _resolved_build is None:
         exe = "bench_cpu" + (".exe" if os.name == "nt" else "")
-        for d in BUILD_CANDIDATES:
-            for sub in (d, os.path.join(d, "Release")):
-                if os.path.isfile(os.path.join(ROOT, sub, exe)):
-                    _resolved_build = d
-                    break
-            if _resolved_build:
-                break
+        found = [d for d in BUILD_CANDIDATES
+                 if any(os.path.isfile(os.path.join(ROOT, sub, exe))
+                        for sub in (d, os.path.join(d, "Release")))]
+        if len(found) > 1:
+            die(f"{' and '.join(found)} both hold {exe}; which one to benchmark "
+                "is a guess, and benchmarking the stale one is silent",
+                f"BUILD_DIR={found[0]} python bench/run_bench_cuda.py ...")
+        if found:
+            _resolved_build = found[0]
     return _resolved_build
 
 
@@ -211,7 +221,11 @@ def provenance():
     # Only the build type is in the cache; the compiler ID and version live in
     # CMakeFiles/<cmake-version>/CMakeCXXCompiler.cmake, which is where spec 6.5's
     # two fields actually are.
-    for cc in glob.glob(os.path.join(os.path.dirname(cache), "CMakeFiles",
+    # ROOT-anchored like the cache itself: with no build dir resolved, cache is
+    # "" and os.path.dirname("") is "", which would glob relative to the CWD --
+    # the same class of bug the cache lookup above was fixed for.
+    cc_root = os.path.dirname(cache) if cache else os.path.join(ROOT, "__none__")
+    for cc in glob.glob(os.path.join(cc_root, "CMakeFiles",
                                      "*", "CMakeCXXCompiler.cmake")):
         try:
             text = open(cc, encoding="utf-8").read()
@@ -360,9 +374,10 @@ def main():
     if not mono:
         print("WARNING: mas_monolith not found -- the e2e rows will be missing. "
               "MAS_BENCH_ONLY is a cached option: reconfiguring the same build "
-              "directory without it keeps it ON. Configure with "
-              "-DMAS_BENCH_ONLY=OFF (or a separate build dir) to include "
-              "them.\n")
+              "directory without it keeps it ON. Reconfigure THIS directory "
+              "with -DMAS_BENCH_ONLY=OFF to include them -- a separate build "
+              "directory is not searched, so it would guarantee the opposite. "
+              "Use BUILD_DIR=<dir> to point elsewhere.\n")
 
     # oracle_union counts distinct (head_id, ts) -- the store identity. The
     # day-files are contiguous and non-overlapping, so this EQUALS the sum of

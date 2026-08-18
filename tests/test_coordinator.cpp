@@ -145,6 +145,52 @@ TEST(Coordinator, AnUndeliverableRetrySettlesTheItemInsteadOfLosingTheRun) {
     EXPECT_EQ(work.sent.size(), 2u);     // the two dispatches, nothing after
 }
 
+TEST(Coordinator, AnUndeliverableDeathRedispatchAlsoSettlesInsteadOfLosingTheRun) {
+    using namespace std::chrono_literals;
+    // The -2 retry is not the only re-dispatch, and it was not the only
+    // unguarded one: the death sweep, the departed-holder path and the
+    // tombstoned-claim path all place work on the same socket for the same
+    // reason. Guarding one of five is what let this bug exist at four sites at
+    // once, so the policy now lives in try_redispatch and this test pins the
+    // death-sweep site specifically -- a different code path from the -2 test,
+    // reached through the sweep rather than through a result.
+    //
+    // w2 claims d2 and goes silent; the sweep tombstones it and tries to
+    // re-place d2 on a socket that has stopped accepting. d1, already
+    // completed by w1, must survive with the run.
+    const std::vector<mas::WorkItem> items = {{"d1.csv"}, {"d2.csv"}};
+    sc::time_point t{};
+    mas::test::ThrowingSink work;
+    work.fail_after = 2;                  // both initial dispatches land
+    TimedSource results;
+    results.t = &t;
+    // pass 1: w2 claims d2 at t=0; the drain registers w1 and w2.
+    // pass 2: w1 completes d1, still at t=0.
+    // pass 3: an empty tick jumps to t=31 s and the drain refreshes only w1,
+    //         so the sweep tombstones w2 alone and re-places its claimed d2.
+    results.script.push_back({claim("d2.csv", "w2"), 0ms});
+    results.script.push_back({result("d1.csv", 11, "w1"), 0ms});
+    results.script.push_back({std::nullopt, 31000ms});   // w2 goes silent
+    mas::test::FakeTickSource hbs;
+    hbs.script.push_back(hb("w1", 0));
+    hbs.script.push_back(hb("w2", 0));
+    hbs.script.push_back(std::nullopt);   // end pass-1 drain
+    hbs.script.push_back(hb("w1", 1));
+    hbs.script.push_back(std::nullopt);   // end pass-2 drain
+    hbs.script.push_back(hb("w1", 2));    // w1 still alive at t=31 s
+
+    mas::DispatchSummary s{};
+    ASSERT_NO_THROW(s = mas::run_coordinator(items, work, results, hbs,
+                                             mas::CoordinatorConfig{},
+                                             [&] { return t; }));
+
+    EXPECT_EQ(s.files_ok, 1);             // d1 is not lost with the run
+    EXPECT_EQ(s.files_failed, 1);         // d2 settles once, and only once
+    EXPECT_EQ(s.total_events, 11);
+    EXPECT_EQ(s.workers_died, 1);
+    EXPECT_EQ(work.sent.size(), 2u);      // the two dispatches, nothing after
+}
+
 TEST(Coordinator, AnUndeliverableFirstDispatchStillFailsTheRun) {
     // The other half of the asymmetry, and the one nothing pinned: dispatch is
     // deliberately NOT best-effort. A work socket that cannot accept the work

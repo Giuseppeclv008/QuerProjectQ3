@@ -29,7 +29,8 @@ def _sample(con, sql, params, limit):
     total is recomputed with COUNT(*) -- but only when the sample actually
     filled up, which on a healthy period it does not.
     """
-    rows = con.execute(f"{sql} LIMIT {limit + 1}", params).fetchall()
+    res = con.execute(f"{sql} LIMIT {limit + 1}", params)
+    rows = res.fetchall()
     if len(rows) <= limit:
         return rows, len(rows)
 
@@ -52,12 +53,21 @@ def _sample(con, sql, params, limit):
     # the remaining projected columns follow as tie-breakers, because up to 36
     # heads share one poll timestamp and a partial order would leave which row
     # of a tie group gets picked up to the engine again.
-    cols = [d[0] for d in con.execute(f"SELECT * FROM ({sql}) LIMIT 0",
-                                      params).description]
+    #
+    # The column names come from the probe's own cursor rather than from a
+    # second `SELECT ... LIMIT 0`: that extra round trip bound `params` again
+    # and scanned nothing useful.
+    cols = [d[0] for d in con.description]
     order = ", ".join(['"ts"'] + [f'"{c}"' for c in cols if c != "ts"])
-    # One pass, not two: the stride is derived from COUNT(*) inside the same
-    # query that applies it, so the ranked set is scanned once instead of being
+    # One scan, not two: the stride is derived from COUNT(*) inside the same
+    # query that applies it, so the ranked set is built once instead of being
     # rebuilt for the count and again for the sample.
+    #
+    # The ceil stride under-fills the cap just above the boundary -- at
+    # total = limit + 1 it is 2, returning about limit/2 rows. That is the safe
+    # direction against an "at most `limit` rows materialised" contract, and it
+    # is why the test asserts a range rather than equality, but it does mean the
+    # sample can be half the cap for totals barely over it.
     fetched = con.execute(
         f"""WITH _mas_ranked AS (
                 SELECT *, ROW_NUMBER() OVER (ORDER BY {order}) AS _mas_rn

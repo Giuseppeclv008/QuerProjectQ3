@@ -162,6 +162,16 @@ stopped" from "the head kept cycling under no load" without splitting genuine
 runs. It is a threshold that silently reshapes a headline number, so it is
 configurable and stated in the tool's declared assumptions.
 
+**The trade-off it does not remove.** With the defaults, `idle_max_gap_seconds`
+(600) sits above `idle_min_seconds` (300), so a hole between the two — say 500
+seconds of no rows at all — is still absorbed into its surrounding run and
+contributes to the reported head-hours on its own. Narrowing the bound below
+`idle_min_seconds` removes that window entirely and is a valid configuration;
+the defaults keep it because 600 s is far above the ~1 Hz cycling cadence, and
+splitting genuine runs at every brief poll stutter would understate idling in
+the other direction. The two knobs are independent, and neither ordering is
+rejected.
+
 Ordering is tie-broken on `cap_seq` as well as `ts`. The tie-breaker is now
 belt-and-braces rather than load-bearing: the window is `PARTITION BY head_id`,
 and within one head a duplicate timestamp is unrepresentable — the store's
