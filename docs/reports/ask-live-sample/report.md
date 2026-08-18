@@ -1,5 +1,9 @@
 # Identify an unusual head and provide a rationale.
 
+> **Stale.** The head-agreement sentence below predates `baa4819`: correlation
+> over these series measures shared shape, so it cannot support "none is out of
+> step", which is a claim about level. See [`../README.md`](../README.md).
+
 *Generated 2026-08-16T21:58:46Z — narrative source: template, plan source: llm, model: ollama:qwen2.5:7b.*
 
 ## Goal

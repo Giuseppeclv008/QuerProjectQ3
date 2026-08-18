@@ -100,6 +100,13 @@ class Config:
         if self.idle_max_gap_seconds <= 0:
             raise ConfigError(
                 f"idle_max_gap_seconds must be > 0, got {self.idle_max_gap_seconds}")
+        if self.idle_max_gap_seconds < self.idle_min_seconds:
+            raise ConfigError(
+                f"idle_max_gap_seconds ({self.idle_max_gap_seconds}) must be >= "
+                f"idle_min_seconds ({self.idle_min_seconds}); below it, a hole in the "
+                "data shorter than the gap bound is absorbed into a run it is long "
+                "enough to be an idle period of on its own"
+            )
         if self.mad_k <= 0:
             raise ConfigError(
                 f"mad_k must be > 0, got {self.mad_k}; at k <= 0 the deviation band "

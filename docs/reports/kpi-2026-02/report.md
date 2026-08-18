@@ -1,5 +1,9 @@
 # Capping KPI report for 2026-02.
 
+> **Stale.** The idle head-hours below predate `6e1b9be`, which stops a hole in
+> the data from being counted as an idle run; they are an overstatement. See
+> [`../README.md`](../README.md) for what changes on regeneration.
+
 *Generated 2026-08-16T21:52:46Z — narrative source: template, plan source: router, model: none (deterministic template and router).*
 
 ## Goal

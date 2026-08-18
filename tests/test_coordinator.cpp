@@ -114,6 +114,65 @@ TEST(Coordinator, RepeatedPartialFailuresStopAtTheRedispatchCap) {
     ASSERT_EQ(work.sent.size(), 4u);   // dispatch + 2 retries + one STOP
 }
 
+TEST(Coordinator, AnUndeliverableRetrySettlesTheItemInsteadOfLosingTheRun) {
+    // The re-dispatch send is the one place work is placed on a socket that is
+    // not the initial dispatch, and it can throw for the same reason the STOP
+    // fan-out can: ZmqPushSink::send throws on a mute-socket timeout. Unguarded
+    // it escaped run_coordinator, so a run whose other items were all settled
+    // reported "error:" and exit 1 -- the bug the STOP guard already fixed, at
+    // a second site.
+    //
+    // Settling the item as failed is the honest outcome, not a silent success:
+    // it had already failed once with -2, and an undeliverable retry leaves it
+    // exactly where it was before the retry was attempted.
+    const std::vector<mas::WorkItem> items = {{"d1.csv"}, {"d2.csv"}};
+    mas::test::ThrowingSink work;
+    work.fail_after = 2;                 // both dispatches land; the retry does not
+    mas::test::FakeSource results;
+    results.queue.push_back(result("d2.csv", 9, "w1"));
+    results.queue.push_back(result("d1.csv", -2, "w1"));   // partial, retryable
+    mas::test::FakeSource hbs;
+    hbs.queue.push_back(hb("w1", 0));
+
+    mas::DispatchSummary s{};
+    ASSERT_NO_THROW(s = mas::run_coordinator(items, work, results, hbs,
+                                             mas::CoordinatorConfig{},
+                                             fixed_clock()));
+
+    EXPECT_EQ(s.files_ok, 1);            // d2 is not lost with the run
+    EXPECT_EQ(s.files_failed, 1);        // d1 settles failed, it does not hang
+    EXPECT_EQ(s.total_events, 9);
+    EXPECT_EQ(work.sent.size(), 2u);     // the two dispatches, nothing after
+}
+
+TEST(Coordinator, AnUndeliverableFirstDispatchStillFailsTheRun) {
+    // The other half of the asymmetry, and the one nothing pinned: dispatch is
+    // deliberately NOT best-effort. A work socket that cannot accept the work
+    // has produced no run at all, and reporting a summary for it would be the
+    // inverse lie. This test fails if a future over-broad try/catch swallows
+    // the dispatch path along with the retry and STOP paths.
+    const std::vector<mas::WorkItem> items = {{"d1.csv"}};
+    mas::test::ThrowingSink work;
+    work.fail_after = 0;                 // the very first dispatch throws
+    mas::test::FakeSource results;
+    mas::test::FakeSource hbs;
+
+    // An advancing clock, not fixed_clock(): if the throw is ever swallowed, no
+    // work was placed and no result can arrive, so on a frozen clock the
+    // coordinator's "nobody ever registered" abort can never elapse and this
+    // test hangs instead of failing. One virtual second per tick lets that
+    // abort fire, so a regression here is a red test rather than a stuck CI.
+    sc::time_point now{};
+    const mas::ClockFn ticking = [now]() mutable {
+        now += std::chrono::seconds(1);
+        return now;
+    };
+
+    EXPECT_THROW(mas::run_coordinator(items, work, results, hbs,
+                                      mas::CoordinatorConfig{}, ticking),
+                 std::runtime_error);
+}
+
 TEST(Coordinator, AnUnreadableInputIsStillNotRetried) {
     // -1 keeps its shortcut: nothing was written, the failure is deterministic,
     // and re-running it would only fail again.

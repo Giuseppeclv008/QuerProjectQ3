@@ -277,3 +277,30 @@ def test_the_itemised_sample_spans_the_period_instead_of_its_first_hours(tmp_pat
         f"the sample covers days {min(days)}-{max(days)}; a scatter drawn from "
         "it would show the period stopping early"
     )
+
+    # The sample IS the stride, and the stride is taken in ts order. Spanning the
+    # period is necessary but not sufficient: a sample that spans it and still
+    # varies between runs would make two regenerations of a committed report
+    # differ for no reason a reader can check. Pinned against the full ordered
+    # result rather than against the implementation.
+    #
+    # Honest about its own strength: this assertion is a contract pin, not a
+    # mutation detector. Dropping the window's ORDER BY still passes it, because
+    # DuckDB does in practice carry the subquery's ordering into a bare
+    # ROW_NUMBER() OVER () -- that is precisely why the explicit ordering is
+    # there, and why no test can be written that fails without it on this
+    # engine. What it does defend is the shape of the result: a future change
+    # that samples by rank, offset, or USING SAMPLE fails here.
+    con = duckdb.connect(str(path), read_only=True)
+    full = con.execute(
+        "SELECT ts FROM cap_events WHERE app_torque > 2.5 ORDER BY ts, head_id"
+    ).fetchall()
+    con.close()
+    stride = -(-len(full) // 50)
+    assert [h["ts"] for h in hits] == [r[0] for r in full[::stride]][:50], (
+        "the itemised sample is not the ts-ordered stride"
+    )
+
+    again = anomalies(cfg, period="2026-02", method="threshold")
+    assert [h["ts"] for h in again.values["threshold_hits"]] == \
+        [h["ts"] for h in hits], "the same store sampled twice gave two answers"

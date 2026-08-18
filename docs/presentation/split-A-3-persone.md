@@ -110,7 +110,7 @@ Slide 1–3 e 13: script condiviso, chiunque le può dire.
 - mono-MT **batte** mono-1T a scala mensile: T=8 fa 3,42×. Resta sotto MAS N=16 (3,83×).
 - Attenzione al confronto con le slide vecchie: questi numeri vengono dal resweep su i7-13700H raffreddato attivamente. Il vecchio 1,11× era il rapporto misurato su M2, dove mono-1T faceva 101,8 s; la baseline si muove di 5,28× fra le due macchine, il mix di costo no.
 - Sweep: 1/7/28 giorni × architetture × 3 ripetizioni = **81/81 run oracle-exact**.
-- Test: **196 C++** (21 file GTest) + **300 Python**. In `MAS_BENCH_ONLY=ON` **non viene costruito nessun test**: la suite tira googletest dalla rete e il contratto della build bench è "non scarica niente".
+- Test: **198 C++** (21 file GTest) + **300 Python**. In `MAS_BENCH_ONLY=ON` **non viene costruito nessun test**: la suite tira googletest dalla rete e il contratto della build bench è "non scarica niente".
 
 ### Domande probabili
 

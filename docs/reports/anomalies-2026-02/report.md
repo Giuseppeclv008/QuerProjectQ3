@@ -1,5 +1,9 @@
 # Anomaly report for 2026-02.
 
+> **Stale.** The itemised sample and the `anomalies_over_time` figure predate
+> `0a88fac`, which makes the sample span the period instead of its first hours.
+> The counts are exact and unaffected. See [`../README.md`](../README.md).
+
 *Generated 2026-08-16T21:53:00Z — narrative source: template, plan source: router, model: none (deterministic template and router).*
 
 ## Goal

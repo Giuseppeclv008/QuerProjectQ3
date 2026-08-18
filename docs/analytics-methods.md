@@ -152,6 +152,16 @@ A gaps-and-islands query over per-head runs of no-load cycles. Consecutive
 no-load rows for one head form an island; a run lasting at least
 `idle_min_seconds` (default 300) is an idle period.
 
+An island also **ends at a hole in the data**: consecutive rows more than
+`idle_max_gap_seconds` apart (default 600) break the run instead of being
+absorbed into it. Without that bound a switched-off machine — which emits no
+rows at all, see the scope limit below — had its entire off-window counted as
+one long idle period, inflating the headline head-hours. 600 s is far above the
+~1 Hz cycling cadence and far below any real stop, so it separates "the data
+stopped" from "the head kept cycling under no load" without splitting genuine
+runs. It is a threshold that silently reshapes a headline number, so it is
+configurable and stated in the tool's declared assumptions.
+
 Ordering is tie-broken on `cap_seq` as well as `ts`. The tie-breaker is now
 belt-and-braces rather than load-bearing: the window is `PARTITION BY head_id`,
 and within one head a duplicate timestamp is unrepresentable — the store's

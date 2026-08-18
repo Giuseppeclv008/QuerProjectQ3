@@ -170,13 +170,22 @@ DispatchSummary run_coordinator(const std::vector<WorkItem>& items,
                         // retry completes the item rather than duplicating it.
                         // Charged against the same cap that bounds
                         // death-driven re-dispatch, so a store that fails every
-                        // time still terminates. -1 keeps its shortcut: nothing
-                        // was written, the failure is deterministic.
+                        // time still terminates. The budget is shared, and that
+                        // has a cost worth naming: an item that survives two
+                        // transient store faults has spent the resilience it
+                        // would otherwise have had for its holder dying. One
+                        // cap is still the right call -- two would let a file
+                        // alternating between the two failures run forever --
+                        // but a run that re-dispatches for a store fault is
+                        // less resilient to a death afterwards, not equally so.
+                        // -1 keeps its shortcut: nothing was written, the
+                        // failure is deterministic.
                         const bool retryable =
                             r->events == -2 &&
                             st->second.redispatches < cfg.redispatch_cap &&
                             count_live() > 0;
                         holder.erase(r->in_path);
+                        bool retried = false;
                         if (retryable) {
                             // Deliberately not a `continue`: the rest of this
                             // pass -- heartbeat drain, death sweep, abort check
@@ -186,8 +195,26 @@ DispatchSummary run_coordinator(const std::vector<WorkItem>& items,
                             std::cerr << "coordinator: re-dispatch " << r->in_path
                                       << " (attempt " << (st->second.redispatches + 1)
                                       << ", partial store failure)\n";
-                            work.send(encode(WorkItem{r->in_path}));
-                        } else {
+                            // Guarded, unlike the initial dispatch. Failing to
+                            // place *new* work is a failed run and still
+                            // throws. This item, though, has already failed
+                            // once and its rows are already in a worker's
+                            // store; an undeliverable retry means it stays
+                            // failed, which is exactly where it was before the
+                            // retry was attempted. Unguarded, the throw escaped
+                            // run_coordinator and lost a run in which every
+                            // other item was settled -- the shape of the bug
+                            // the STOP fan-out guard exists to prevent.
+                            try {
+                                work.send(encode(WorkItem{r->in_path}));
+                                retried = true;
+                            } catch (const std::exception& e) {
+                                std::cerr << "coordinator: could not re-dispatch "
+                                          << r->in_path << " (" << e.what()
+                                          << "); settling it as failed\n";
+                            }
+                        }
+                        if (!retried) {
                             st->second.done = true;
                             --open;
                             if (r->events >= 0) {
