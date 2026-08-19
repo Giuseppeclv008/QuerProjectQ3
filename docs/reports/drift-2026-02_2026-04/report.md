@@ -1,10 +1,6 @@
 # Torque drift report for 2026-02..2026-04.
 
-> **Stale.** The head-agreement sentence below predates `baa4819`: correlation
-> over these series measures shared shape, so it cannot support "none is out of
-> step", which is a claim about level. See [`../README.md`](../README.md).
-
-*Generated 2026-08-16T21:52:52Z — narrative source: template, plan source: router, model: none (deterministic template and router).*
+*Generated 2026-08-19T17:20:35Z — narrative source: template, plan source: router, model: none (deterministic template and router).*
 
 ## Goal
 
@@ -29,7 +25,7 @@ Torque drift report for 2026-02..2026-04.
 - **Drift (torque).** No head exceeds the Mann-Kendall drift threshold in this period.
 - **Drift (success_rate).** No head exceeds the Mann-Kendall drift threshold in this period.
 - **Torque variability.** Head 9 is the most variable (sigma = 0.0729 Nm about a median of 1.997 Nm).
-- **Head agreement.** All 36 heads track each other closely (mean correlation 0.9999-1.0000); none is out of step.
+- **Head agreement.** All 36 heads move together (mean correlation 0.9999-1.0000), so none is out of step in shape. This says nothing about level: Pearson is invariant to a per-head offset, and a head running steadily below the others scores the same.
 
 ### Torque Rolling Mean
 
@@ -47,15 +43,16 @@ Torque drift report for 2026-02..2026-04.
 - `torque_stats`: 31,634,351 rows scanned; filters: outcome=successful, app_torque > 0 (no-load excluded)
 - `head_correlation`: 31,647,915 rows scanned; filters: heads=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36], by=day
 - **Assumption.** 3 buckets is a floor, not power: treat correlations over few buckets as suggestive only.
+- **Assumption.** Pearson correlation is invariant to a per-head affine shift, so this ranking cannot see a level offset: a head running consistently below the others while moving with them scores ~1 and is reported as tracking. Compare per-head median torque (torque_stats by head) to rule that out.
 - **Assumption.** a capping operation is a closure with torque > 0; no-load cycles (status 2, torque 0) are excluded from success denominators.
 - **Assumption.** a head with no defined correlation to any peer (constant torque, zero variance, or fewer than 3 shared buckets) is omitted from outliers and shown as None in the matrix.
 - **Assumption.** drift is Mann-Kendall |tau| >= 0.5 AND p < 0.05 (tie-corrected normal approximation) over the per-head day series (non-parametric: assumes neither linearity nor Gaussian noise).
-- **Assumption.** heads correlate on their bucketed mean torque series; the head with the lowest mean correlation to its peers is the one out of step.
+- **Assumption.** heads correlate on their bucketed mean torque series; the head with the lowest mean correlation to its peers is the one out of step *in shape*.
 - **Assumption.** heads with fewer than 8 day buckets get no drift verdict (insufficient=true): the significance approximation is invalid there and tau alone is not evidence.
 
 ## Next checks
 
-- Re-run this report next period and compare the numbers.
+- Compare per-head median torque (torque_stats by head) — the correlation ranking cannot see a head that tracks the pack at a lower level.
 
 ## Tool-call trace
 

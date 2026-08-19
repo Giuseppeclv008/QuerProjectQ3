@@ -1,10 +1,6 @@
 # Capping KPI report for 2026-02.
 
-> **Stale.** The idle head-hours below predate `6e1b9be`, which stops a hole in
-> the data from being counted as an idle run; they are an overstatement. See
-> [`../README.md`](../README.md) for what changes on regeneration.
-
-*Generated 2026-08-16T21:52:46Z — narrative source: template, plan source: router, model: none (deterministic template and router).*
+*Generated 2026-08-19T17:20:33Z — narrative source: template, plan source: router, model: none (deterministic template and router).*
 
 ## Goal
 
@@ -33,7 +29,7 @@ Capping KPI report for 2026-02.
 - **Success rate.** 99.9950% (14,817,976 successful, 748 rejected). Lowest head: 29. A further 5,580 closures carry no pass/fail verdict and are outside the rate.
 - **Weakest head.** 29 at 99.9781% over 411,776 capping operations.
 - **Throughput.** 27,984.7704 pieces/hour, averaged over 28 active buckets.
-- **Idle time.** 22,459 sustained no-load periods, 11,551.3 head-hours in total.
+- **Idle time.** 25,046 sustained no-load periods, 7,228.1 head-hours in total.
 
 ### Success Rate Per Head
 
@@ -52,6 +48,7 @@ Capping KPI report for 2026-02.
 - `capping_speed`: 14,824,304 rows scanned; filters: bucket=day, app_torque > 0 (only real caps produce pieces)
 - `idle_periods`: 21,971,506 rows scanned; filters: min_seconds=300
 - **Assumption.** a capping operation is a closure with torque > 0; no-load cycles (status 2, torque 0) are excluded from success denominators.
+- **Assumption.** a gap of more than 600s between no-load cycles ends the run: the store holds no rows for a stopped machine, so an unbounded run would report downtime as idling.
 - **Assumption.** an idle period is a sustained run of no-load cycles (status 2.0, torque 0).
 - **Assumption.** buckets with zero capping operations are never emitted, so a fully idle hour or day does not pull the mean down.
 - **Assumption.** counts are rows, i.e. polls at which a head's counter advanced; a poll that caught up on several caps (delta > 1) counts once. Measured undercount on real data: 0.0017% of caps.

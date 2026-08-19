@@ -33,7 +33,13 @@ def test_every_telemetry_glob_in_a_bash_block_matches_the_pool():
     # the data would fail every fresh clone for the wrong reason.
     import pytest
 
-    if not glob.glob(str(_ROOT / "telemetry_*")):
+    # Gate on an extracted day-file, not on `telemetry_*` -- that pattern also
+    # matches the month ZIPS, which ship alongside the repo and are present on
+    # a machine where nothing has been extracted at all. With the zips there
+    # and the CSVs deleted, the gate opened and every glob under test matched
+    # nothing, failing exactly the "fresh clone, wrong reason" case the comment
+    # above says it exists to prevent.
+    if not glob.glob(str(_ROOT / "telemetry_*" / "*.csv")):
         pytest.skip("pool not extracted; glob targets cannot exist")
     missing = []
     for block in _fenced_bash_blocks(_README):
