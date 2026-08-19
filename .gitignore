@@ -52,3 +52,11 @@ pers_*
 
 /build-verify/
 /build-gpu-tests/
+
+# Secrets. The project reads ANTHROPIC_API_KEY from the environment and has
+# never used a .env file -- these entries exist so that creating one cannot
+# commit a key by accident.
+.env
+.env.*
+!.env.example
+*.pem
