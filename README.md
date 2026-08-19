@@ -219,7 +219,7 @@ organized by layer.
 │           ├── bench_cpu_main.cpp          # → bench_cpu       (store-free contender)
 │           └── cuda_clean_main.cpp         # → mas_cuda_clean  (GPU contender, --verify)
 │
-├── tests/                                  # Google Test unit tests (21 files, 202 tests)
+├── tests/                                  # Google Test unit tests (21 files, 203 tests)
 │   ├── test_cap_event.cpp
 │   ├── test_cap_event_extractor.cpp
 │   ├── test_cap_event_extractor_flat.cpp   # The GPU precondition, proved against the stateful one
@@ -1089,12 +1089,12 @@ cmake --build build --parallel
 | Option | Default | Effect |
 |--------|---------|--------|
 | `MAS_BENCH_ONLY` | `OFF` | Build only the cleaning core and the benchmark binaries. Fetches no DuckDB asset and no libzmq source, and forces `MAS_ENABLE_ZMQ=OFF`. |
-| `MAS_ENABLE_ZMQ` | `ON` | Build the ZeroMQ agent runtime (`mas_transport`, `mas_worker`, `mas_coordinator`) and its 9 transport tests. The agent layer's 62 tests run on `FakeTransport` in every store build, ZMQ or not. |
+| `MAS_ENABLE_ZMQ` | `ON` | Build the ZeroMQ agent runtime (`mas_transport`, `mas_worker`, `mas_coordinator`) and its 9 transport tests. The agent layer's 63 tests run on `FakeTransport` in every store build, ZMQ or not. |
 | `MAS_ENABLE_CUDA` | `OFF` | Build `mas_cuda_clean`, and (in the full build) compile the GPU cleaner into `mas_monolith` so `--engine=cuda` works. Requires the CUDA Toolkit. |
 | `MAS_BUILD_TESTS` | `ON` | Build the GoogleTest suite. `OFF` drops the last dependency that needs network. |
 
 The default triple (`OFF, ON, OFF, ON`) is the build this project has always
-had: **191 tests green**. With `MAS_BENCH_ONLY=ON` **no tests are built at
+had: **192 tests green**. With `MAS_BENCH_ONLY=ON` **no tests are built at
 all** — the suite is a googletest fetch and the bench build's contract is
 "downloads nothing", so `_deps/` is never created:
 
@@ -1375,7 +1375,7 @@ it, `--pdf` logs how to install it and writes Markdown and HTML as normal.
 
 ## Testing
 
-The project has **202 C++ unit tests** across 21 Google Test files — 191 in the
+The project has **203 C++ unit tests** across 21 Google Test files — 192 in the
 default build plus the 11-case GPU/CPU differential behind `-DMAS_ENABLE_CUDA=ON`
 — plus **304
 Python tests** for the analytics tier. Every test count in this
@@ -1383,7 +1383,7 @@ README is asserted by `python/tests/test_readme_counts.py`, so adding a test and
 forgetting this paragraph fails the suite rather than quietly dating it.
 
 ```bash
-cd build && ctest --output-on-failure           # 191 C++ tests in the default build; the 11-case GPU/CPU differential is compiled only with -DMAS_ENABLE_CUDA=ON (and skips without a device)
+cd build && ctest --output-on-failure           # 192 C++ tests in the default build; the 11-case GPU/CPU differential is compiled only with -DMAS_ENABLE_CUDA=ON (and skips without a device)
 cd python && ../.venv/bin/python -m pytest -q   # 304 Python tests (see the two data gates below)
 ```
 
@@ -1396,7 +1396,7 @@ but no store shows 5.
 The C++ side has gates too, and this is the only place that says so: **4 C++
 tests** can skip in the default build. Two are pool-gated — the real-day-file
 half of `CapEventExtractorFlat` (765,711 events) and the whole of
-`test_bench_cpu_parity.cpp` — so on a fresh clone **191 tests green** means 189
+`test_bench_cpu_parity.cpp` — so on a fresh clone **192 tests green** means 190
 executed. The other two skip only where creating a symlink is denied
 (`test_atomic_publish.cpp`, `test_parquet_export.cpp`).
 
