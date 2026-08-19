@@ -49,6 +49,7 @@ STAGES = os.path.join(ROOT, "bench", "results_cuda_stages.csv")
 # and stays supported. BUILD_DIR overrides both, as run_bench.sh already allows.
 _BUILD_OVERRIDE = os.environ.get("BUILD_DIR")
 BUILD_CANDIDATES = (_BUILD_OVERRIDE,) if _BUILD_OVERRIDE else ("build-bench", "build")
+_MISS = object()      # sentinel: "scanned, found nothing" -- distinct from "not scanned"
 _resolved_build = None
 
 FIELDS = ["arch", "mode", "n_workers", "threads", "files", "repeat", "clean_s",
@@ -129,9 +130,12 @@ def resolve_build_dir():
             die(f"{' and '.join(found)} both hold {exe}; which one to benchmark "
                 f"is a guess, and benchmarking the stale one is silent{note}",
                 "BUILD_DIR=<dir> python bench/run_bench_cuda.py ...")
-        if found:
-            _resolved_build = found[0]
-    return _resolved_build
+        # Memoised on a miss as well as a hit: find_binary() calls this three
+        # times and provenance() a fourth, and a scan that answers "nothing"
+        # should not be repeated -- nor should the four calls be able to
+        # disagree if the tree changes mid-run.
+        _resolved_build = found[0] if found else _MISS
+    return None if _resolved_build is _MISS else _resolved_build
 
 
 def find_binary(name):

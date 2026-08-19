@@ -39,7 +39,8 @@ removes its banner along with the stale numbers.
 `docs/validation-log.md` for the run that produced the committed copy and the
 provider settings it used.
 
-When a directory is regenerated, delete its row here. `demo.sh` rewrites both
-`report.md` and `report.html`, so their banners go with the stale numbers and
+When a directory is regenerated, delete its row here. The generator rewrites
+both `report.md` and `report.html` — `demo.sh` for the first three, the `ask`
+verb for `ask-live-sample/` — so their banners go with the stale numbers and
 need no separate removal. An empty table means the committed reports match the
 code.

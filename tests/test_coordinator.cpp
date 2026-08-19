@@ -35,17 +35,16 @@ struct TimedSource : mas::IMessageSource {
     std::deque<std::pair<std::optional<mas::Message>, std::chrono::milliseconds>>
         script;
     sc::time_point* t = nullptr;
-    // The 200 ms is the recv timeout the production ZmqPullSource is given, and
-    // an exhausted script keeps modelling it rather than freezing time. Frozen,
-    // an item that never settles could never be reached by the death sweep or
-    // the abort check either, so a coordinator regression that drops a
-    // re-dispatch entirely made the run spin instead of failing -- and gtest has
-    // no per-test timeout, so CI hung rather than reporting. Every test here
-    // reaches open == 0 before its script drains, so advancing costs them
-    // nothing.
+    // Drained reads are bounded by the shared watchdog rather than by advancing
+    // the clock. An earlier version added 200 ms per drained read, which fixed
+    // the hang here but nowhere else and left a trap: after exhaustion the clock
+    // moved on its own, so a future test could cross death_threshold without
+    // scripting it and pass for a reason its author never wrote. Counting reads
+    // leaves every deadline exactly where the script puts it.
+    mas::test::DrainedSourceWatchdog watchdog;
     std::optional<mas::Message> recv() override {
         if (script.empty()) {
-            *t += std::chrono::milliseconds(200);
+            watchdog.tick("TimedSource");
             return std::nullopt;
         }
         auto [m, dt] = std::move(script.front());
@@ -200,6 +199,28 @@ TEST(Coordinator, AnUndeliverableDeathRedispatchAlsoSettlesInsteadOfLosingTheRun
     EXPECT_EQ(s.total_events, 11);
     EXPECT_EQ(s.workers_died, 1);
     EXPECT_EQ(work.sent.size(), 2u);      // the two dispatches, nothing after
+}
+
+TEST(Coordinator, ARunThatNeverSettlesFailsInsteadOfHangingTheSuite) {
+    // The safety net itself, pinned. Without it this test is the hang: one item
+    // dispatched, no result ever sent, and a frozen clock -- so `while (open >
+    // 0)` reads a drained source forever, the death sweep never fires because
+    // no time passes, and the "nobody ever registered" abort needs a deadline
+    // that cannot elapse either. gtest has no per-test timeout, so CI would
+    // stall with no output rather than report a red test.
+    //
+    // Every re-dispatch and settle path in the coordinator is defended by some
+    // test above; this is what makes those tests *fail* rather than hang when
+    // one of those paths goes missing entirely, which is a different mutation
+    // from breaking one and a strictly harder one to notice.
+    const std::vector<mas::WorkItem> items = {{"d1.csv"}};
+    mas::test::FakeSink work;
+    mas::test::FakeSource results;      // no result for d1, ever
+    mas::test::FakeSource hbs;
+
+    EXPECT_THROW(mas::run_coordinator(items, work, results, hbs,
+                                      mas::CoordinatorConfig{}, fixed_clock()),
+                 std::runtime_error);
 }
 
 TEST(Coordinator, AnUndeliverableDepartedHolderRedispatchSettlesTheItem) {
