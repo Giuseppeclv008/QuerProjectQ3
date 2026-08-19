@@ -2,10 +2,24 @@
 #include "mas/agent/Message.hpp"
 #include "fakes/FakeTransport.hpp"
 #include <gtest/gtest.h>
+#include <cstddef>
 #include <string>
 #include <vector>
 
 namespace {
+
+// The largest legitimate run of drained reads anywhere in the suite is exactly
+// this worker's idle budget: HeartbeatsEveryEmptyTickAndExitsAfterBudget reads
+// an empty source kIdleExitTicks times on purpose, and that is correct
+// behaviour, not a stuck run. The watchdog that turns a genuinely unsettled run
+// into a failure rather than a hang must therefore sit above it -- a production
+// constant and a test-fake constant coupled across two headers, with nothing
+// but this line to notice if either moves. 60 against 10000 today.
+static_assert(static_cast<std::size_t>(mas::CleaningWorker::kIdleExitTicks) <
+                  mas::test::DrainedSourceWatchdog::kLimit,
+              "the idle budget now reaches the drained-source watchdog: a "
+              "worker exiting normally would be reported as a run that never "
+              "settled. Raise kLimit above kIdleExitTicks.");
 
 // In-memory store: records writes, never touches disk.
 struct FakeStore : mas::IEventStore {
