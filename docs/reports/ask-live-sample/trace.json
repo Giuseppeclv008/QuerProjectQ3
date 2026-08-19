@@ -11,26 +11,11 @@
       "step": 1,
       "tool": "head_correlation",
       "args": {
-        "period": "2026-02",
         "by": "day"
       },
-      "rationale": "Determine the pairwise correlation between heads to identify any that behave differently.",
+      "rationale": "Compare heads to find outliers based on correlation.",
       "status": "ok",
-      "rows_scanned": 14824304,
-      "message": ""
-    },
-    {
-      "step": 2,
-      "tool": "trend",
-      "args": {
-        "period": "2026-02",
-        "signal": "torque",
-        "by": "day",
-        "window": 7
-      },
-      "rationale": "Analyze torque trends to see if any head shows a different pattern over time.",
-      "status": "ok",
-      "rows_scanned": 14824304,
+      "rows_scanned": 31668727,
       "message": ""
     }
   ]
