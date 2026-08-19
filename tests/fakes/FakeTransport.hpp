@@ -29,7 +29,8 @@ struct DrainedSourceWatchdog {
     void tick(const char* which) {
         if (++drained_reads > kLimit)
             throw std::runtime_error(
-                std::string(which) + " was read " + std::to_string(kLimit) +
+                std::string(which) + " was read " +
+                std::to_string(drained_reads) +
                 " times after its script drained: the run is not settling. "
                 "A re-dispatch or settle path is missing, and without this the "
                 "test would hang instead of failing.");
