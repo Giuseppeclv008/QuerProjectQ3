@@ -217,6 +217,10 @@ TEST(Coordinator, ARunThatNeverSettlesFailsInsteadOfHangingTheSuite) {
     mas::test::FakeSink work;
     mas::test::FakeSource results;      // no result for d1, ever
     mas::test::FakeSource hbs;
+    // Both sources are the same type, so the labels are what tell a reader
+    // which one the failure came from.
+    results.watchdog.label = "results";
+    hbs.watchdog.label = "heartbeats";
 
     EXPECT_THROW(mas::run_coordinator(items, work, results, hbs,
                                       mas::CoordinatorConfig{}, fixed_clock()),

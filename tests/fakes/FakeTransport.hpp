@@ -26,11 +26,19 @@ namespace mas::test {
 struct DrainedSourceWatchdog {
     std::size_t drained_reads = 0;
     static constexpr std::size_t kLimit = 10000;
+    // Which socket this fake stands in for. The type name alone does not
+    // identify it: a coordinator test drives two FakeSources at once (results
+    // and heartbeats), so "FakeSource did not settle" names the class and
+    // withholds the one fact a reader needs. Set it wherever two watchdogged
+    // sources are live and the distinction would matter -- it defaults to the
+    // type name, so an unlabelled fake is no worse off than before.
+    std::string label;
     void tick(const char* which) {
         if (++drained_reads > kLimit)
             throw std::runtime_error(
-                std::string(which) + " was read " +
-                std::to_string(drained_reads) +
+                (label.empty() ? std::string(which)
+                               : std::string(which) + " (" + label + ")") +
+                " was read " + std::to_string(drained_reads) +
                 " times after its script drained: the run is not settling. "
                 "A re-dispatch or settle path is missing, and without this the "
                 "test would hang instead of failing.");
