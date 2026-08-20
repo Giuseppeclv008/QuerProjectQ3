@@ -224,7 +224,7 @@ measured on `events_3mo.duckdb` (55,132,433 rows, machine `MCC`, 36 heads,
   pass/fail verdict and exclude them from the rate rather than guessing.
 - **The live agentic path is proven on a local model, not on the hosted one.**
   `docs/reports/ask-live-sample/` is a committed `ask` run on qwen2.5:7b under
-  Ollama: plan source `llm`, two registry-validated steps, executor → renderer
+  Ollama: plan source `llm`, one registry-validated step, executor → renderer
   end to end on the real store. What stays unverified is **schema acceptance
   against the Anthropic API**, because no key has ever been used;
   `test_anthropic_schema_live.py` sends the schemas and is gated on one.
@@ -250,7 +250,8 @@ measured on `events_3mo.duckdb` (55,132,433 rows, machine `MCC`, 36 heads,
   command with the key unset falling back to the router and *saying so* in the
   report.
 - Committed artifacts: [`docs/reports/`](../reports/) — `kpi-2026-02`,
-  `drift-2026-02_2026-04`, `anomalies-2026-02`.
+  `drift-2026-02_2026-04`, `anomalies-2026-02`, and `ask-live-sample` (the live
+  agentic run).
 - Close on the invariant: **the model chose the analyses; the SQL produced every
   number.**
 
