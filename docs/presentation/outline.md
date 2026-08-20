@@ -215,17 +215,27 @@ measured on `events_3mo.duckdb` (55,132,433 rows, machine `MCC`, 36 heads,
 
 - **`NUM_HEADS` is compile-time 36.** The brief's own example shows a 48-head
   machine; no 48-head data exists to test against. Known limit, roadmap item.
-- **CSV ingestion only.** The store already exports Parquet; reading JSON or
-  Parquet input is a reader sibling, not agent work.
+- **Raw ingestion is CSV only.** The store itself is not: `clean --format
+  parquet` writes a Parquet store, `mas_export` exports one, and the same eight
+  tools read either backend (`test_backend_parity.py`). Reading JSON or Parquet
+  *raw telemetry* is a reader sibling, not agent work.
 - **~0.02% of closures carry statuses we decode but have not seen AROL confirm** —
   12,461 No-Load-with-torque and 12 No-Closure rows. We treat them as carrying no
   pass/fail verdict and exclude them from the rate rather than guessing.
-- **The live-API `ask` path is not covered by the committed evidence.** Every
-  planner and narrator test injects a fake client by design, and no API key was
-  available in the validation environment. The router-fallback path is verified.
+- **The live agentic path is proven on a local model, not on the hosted one.**
+  `docs/reports/ask-live-sample/` is a committed `ask` run on qwen2.5:7b under
+  Ollama: plan source `llm`, two registry-validated steps, executor → renderer
+  end to end on the real store. What stays unverified is **schema acceptance
+  against the Anthropic API**, because no key has ever been used;
+  `test_anthropic_schema_live.py` sends the schemas and is gated on one.
+- **The 7B plans but cannot narrate.** Every narration it produced was rejected
+  by the no-bullet detector (3 of 3 in July, 2 of 2 in August) and replaced by
+  the deterministic summary, with the reason printed in the limits section. The
+  prose in the committed sample is the template's.
 - **PDF export needs native dependencies** (WeasyPrint + Cairo/Pango). Markdown
   and HTML always ship; `--pdf` degrades with an install hint.
-- **The merge bottleneck is unfixed**, and it is what caps distributed speedup.
+- **The merge is unfixed**, and it is the serial fraction that holds end-to-end
+  speedup at 3.83× while the clean phase alone reaches 7.2×.
 
 ---
 
