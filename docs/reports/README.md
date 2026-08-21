@@ -14,11 +14,15 @@ is what "the committed reports match the code" looks like.
 
 What the regeneration measured, for the record. The idle fix (`6e1b9be`) was
 worth more than the note predicted: on February, like for like, the reported
-total fell from **11,551.3 head-hours to 7,094.1** — a 39% overstatement, and
-the period count *rose* from 22,459 to 24,813, exactly as breaking runs at
-holes in the data implies. On the full three months the figure is **7,228.1
-head-hours across 25,046 periods**. The head-agreement sentence (`baa4819`) is
-now scoped to shape and carries its own caveat about level.
+total fell from **11,551.3 head-hours to 7,228.1** — a 37% overstatement, and
+the period count *rose* from 22,459 to **25,046**, exactly as breaking runs at
+holes in the data implies. Those are the figures `kpi-2026-02/report.md` now
+carries, from `idle_periods(period='2026-02')` over 21,971,506 scanned rows.
+This paragraph used to quote a second pair for February and attribute the pair
+above to a three-month run; no three-month idle run is committed, and the
+February report is the only idle evidence in this directory. The head-agreement
+sentence (`baa4819`) is now scoped to shape and carries its own caveat about
+level.
 
 One difference worth naming rather than hiding: `ask-live-sample/` has no
 figures this time. The model planned one step (`head_correlation`) where the
