@@ -183,8 +183,12 @@ measured on `events_3mo.duckdb` (55,132,433 rows, machine `MCC`, 36 heads,
   independent uniform rates — a reasonable first approximation, not a model.
 - **Equally important: what we did *not* find.** No head exceeds the Mann-Kendall
   drift threshold on torque or on success rate over three months, and all 36
-  heads correlate above 0.9999 on mean torque. The machine is stable; head 29 is
-  a discrete problem, not a trend.
+  heads correlate above 0.9999 on mean torque — none is out of step *in shape*.
+  The machine is stable; head 29 is a discrete problem, not a trend.
+- **And what that correlation cannot see.** Pearson is invariant to a per-head
+  offset, so a head running steadily below the others while moving with them
+  scores ~1 and is reported as tracking. The report says so, and names the check
+  that would catch it: per-head median torque (`torque_stats by head`).
 - Reporting the absence honestly is a feature. An earlier version of the report
   always named a "least-correlated head", which on this data asserted that *the
   odd head out has a correlation of 1.000* — true arithmetic, false conclusion.
