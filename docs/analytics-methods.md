@@ -53,8 +53,7 @@ have status 65 — the other 16 are status 9, No InTorque.
 | 2 | yes | 12,461 | 0.0226% | No Load **with** torque |
 | 65 | yes | 1,071 | 0.0019% | Bad Closure + reject |
 | 9 | yes | 24 | 0.0000% | No InTorque + reject |
-| 4 | yes | 10 | 0.0000% | No Closure, not rejected |
-| 4 | no | 2 | 0.0000% | No Closure, not rejected |
+| 4 | — | 12 | 0.0000% | No Closure, not rejected (10 with torque, 2 without) |
 | 65 | no | 1 | 0.0000% | Bad Closure, no torque |
 
 1,071 + 24 + 1 = **1,096 rejected closures** over three months, which is exactly
