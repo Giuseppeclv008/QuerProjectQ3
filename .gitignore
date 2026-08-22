@@ -50,6 +50,15 @@ venv/
 # Personal files
 pers_*
 
+# Local run artifacts. Neither is produced by anything committed: `arol.json`
+# is the config the README tells the reader to write for their own box ("the
+# repo ships no arol.json"), so it carries an absolute store path that is true
+# on exactly one machine, and `live-ask-out/` is the --out directory the live
+# `ask` runs were pointed at by hand. The committed evidence for that path is
+# docs/reports/ask-live-sample/, which is deliberate and stays tracked.
+/arol.json
+/live-ask-out/
+
 /build-verify/
 /build-gpu-tests/
 
