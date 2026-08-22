@@ -129,8 +129,7 @@ that caused it. The brief's slide 6 lists 14 rows = 7 conditions × {reject, no 
 | 5 | 32 | Following Error |
 | 6 | 64 | Bad Closure |
 
-So `status = 65` is `64 + 1` (Bad Closure + reject) and `status = 9` is `8 + 1` (No InTorque
-+ reject). The single predicate is `CAST(status AS BIGINT) % 2 = 1`, implemented once in
+So `status = 65` is `64 + 1` (Bad Closure + reject) and `status = 9` is `8 + 1` (No InTorque + reject). The single predicate is `CAST(status AS BIGINT) % 2 = 1`, implemented once in
 `analytics/status.py:REJECT_SQL` and once in `CapEvent::is_reject`.
 
 **This changed measured numbers.** Over the three-month store the reject bit finds **600**
