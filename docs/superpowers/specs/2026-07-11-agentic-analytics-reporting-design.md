@@ -188,28 +188,28 @@ does define, will not inherit the assumption.
 Four tiers. Only the first exists today.
 
 ```
-┌─────────────────────────────────────────────────────────────┐
+┌──────────────────────────────────────────────────────────────┐
 │  Ingestion & Cleaning  [C++ MAS — SHIPPED, Plans 1–5]        │
 │  raw CSV day-files → dedup transform → cap_events (DuckDB)   │
-└────────────────────────────┬────────────────────────────────┘
+└────────────────────────────┬─────────────────────────────────┘
                              │  cleaned store (read-only)
-┌────────────────────────────▼────────────────────────────────┐
+┌────────────────────────────▼─────────────────────────────────┐
 │  WP2  Analytics Toolkit  [Python, deterministic]             │
 │  pure functions → parameterised SQL → typed results          │
 │  every result carries provenance (period, rows, filters)     │
-└────────────────────────────┬────────────────────────────────┘
+└────────────────────────────┬─────────────────────────────────┘
                              │  typed tool contract (one schema)
-              ┌──────────────┴───────────────┐
-              │                              │
-┌─────────────▼──────────────┐  ┌────────────▼─────────────────┐
+              ┌──────────────┴────────────────┐
+              │                               │
+┌─────────────▼───────────────┐  ┌────────────▼─────────────────┐
 │  WP3  Report Agent          │  │  WP4  BOT / CLI              │
 │  [Python + Claude API]      │  │  report kpi | drift |        │
 │  plans tool calls,          │  │         anomalies  (no LLM)  │
 │  narrates results,          │  │  ask "<free text>"  (LLM)    │
 │  NEVER computes a number    │  │                              │
 └─────────────┬───────────────┘  └────────────┬─────────────────┘
-              └──────────────┬───────────────┘
-                  ┌──────────▼───────────┐
+              └──────────────┬────────────────┘
+                  ┌──────────▼────────────┐
                   │  Reports + Plots      │
                   │  Markdown → HTML/PDF  │
                   └───────────────────────┘
