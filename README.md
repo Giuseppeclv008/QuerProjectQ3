@@ -1111,8 +1111,13 @@ dropping it.
 ### Run Tests
 
 ```bash
-cd build && ctest --output-on-failure
+cd build && ctest -C Release --output-on-failure
 ```
+
+`-C Release` is not optional on a multi-config generator: Visual Studio
+registers each ctest entry under a configuration, so the bare command finds
+nothing to run there. On the single-config generators it selects the build
+type the configure step above already pinned, so the one form works on both.
 
 ### Single-File Processing
 
@@ -1383,8 +1388,8 @@ README is asserted by `python/tests/test_readme_counts.py`, so adding a test and
 forgetting this paragraph fails the suite rather than quietly dating it.
 
 ```bash
-cd build && ctest --output-on-failure           # 192 C++ tests in the default build; the 11-case GPU/CPU differential is compiled only with -DMAS_ENABLE_CUDA=ON (and skips without a device)
-cd python && ../.venv/bin/python -m pytest -q   # 306 Python tests (see the three gates below)
+cd build && ctest -C Release --output-on-failure # 192 C++ tests in the default build; the 11-case GPU/CPU differential is compiled only with -DMAS_ENABLE_CUDA=ON (and skips without a device)
+cd python && ../.venv/bin/python -m pytest -q    # 306 Python tests (see the three gates below)
 ```
 
 Three gates apply to the Python suite. Two are data gates: **5 tests** need the

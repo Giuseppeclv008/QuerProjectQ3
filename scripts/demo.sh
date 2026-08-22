@@ -7,6 +7,12 @@ set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 store="${1:-$here/events_3mo.duckdb}"
+# Git Bash converts argv on the way to a native python.exe, which is why
+# --out below needs nothing -- but store_path travels inside the JSON, where
+# MSYS never sees it, and DuckDB reads a leading /c/... as a UNC share and
+# finds no store. -m rather than -w: the mixed form keeps forward slashes,
+# and a backslash inside a JSON string is an escape. No-op off Windows.
+command -v cygpath >/dev/null 2>&1 && store="$(cygpath -m "$store")"
 out="${2:-$here/docs/reports}"
 
 if [[ ! -f "$store" ]]; then
