@@ -1654,3 +1654,82 @@ for `provider == "anthropic"` and `per_tool` for everything else, and the
 Ollama request is a different shape entirely (a `format` grammar, not
 `output_config`); review I16 was specifically about keywords the *Anthropic*
 API rejects. That gap stays open and named.
+
+## 2026-08-22 — Pre-presentation pass on the box that will run it: the committed reports re-verified, two Windows-only potholes found
+
+The Windows box that will drive the presentation, on `e31551f` after a
+fast-forward of 33 commits. No store was built here: `events_3mo.duckdb` is
+the one the 2026-08-16 rebuild produced, and the month zips are not on this
+box at all, which is also why two pool-gated C++ tests skip. Everything below
+was measured against that store, fingerprint unchanged — 55,132,433 rows, 36
+heads, 2026-01-31 → 2026-04-30, the same line the committed `trace.json`
+files carry.
+
+**The committed reports, re-verified rather than regenerated.** All four
+directories under `docs/reports/` were regenerated in place and compared
+against what was committed. The `trace.json` files came back
+**byte-identical** — they hold `{"store": …, "steps": […]}` and no timestamp,
+so an identical run produces an identical file — and the `report.md` files
+differed only in the `Generated` line. The working tree was restored
+afterwards, so the committed artifacts still date 2026-08-19: that is when
+they were produced, and nothing here produced different content. The empty
+staleness table in `docs/reports/README.md` was not merely left unchallenged
+this time, it was tested.
+
+**Suites.** C++ **192/192** under `ctest -C Release`, 15.4 s, three skips: two
+pool-gated on the absent February day-file, one on symlink denial. Python
+**306 collected — 304 passed, 2 skipped** on the `ANTHROPIC_API_KEY` gate,
+61.3 s. `cmake` is not on PATH on this box — only the pip one inside
+`.venv/Scripts/`, which builds fine but leaves the README's bare `cmake`
+command unrunnable, and the pre-existing `build/` had to be deleted because it
+still carried the bench session's `MAS_BUILD_TESTS=OFF` cache.
+
+**Demo.** 12/12 steps (5 + 4 + 3), three directories written, **25.1 s and
+25.8 s** over two samples against the deck's "~23 s" — but only when handed
+the store path in Windows form. Invoked the way the README documents, with no
+argument, it returned **0 of 12**.
+
+**Two potholes, both Windows-only, both fixed in `e95b88d` — and neither has
+run on Windows yet.** `demo.sh` wrote the store path into its temporary config
+JSON in the form `pwd` returns under Git Bash, `/c/...`. MSYS converts argv on
+the way to a native `python.exe`, which is why `--out` arrived intact and
+needed nothing, but nothing converts a string travelling inside a file, so
+DuckDB received a path it read as a UNC share and opened no store. The fix is
+`cygpath -m` before the `-f` check, `-m` rather than `-w` because a backslash
+inside a JSON string is an escape. Second: the README's bare `ctest
+--output-on-failure` finds no tests at all under the Visual Studio generator,
+which registers each entry under a configuration; `-C Release` is what a
+multi-config generator needs and what the single-config ones already have
+pinned by the configure step above, checked as 185 discovered with the flag
+and 185 without on Unix Makefiles. Both fixes were written and tested on
+macOS, where `cygpath` does not exist and the added line is a no-op — **the
+Windows branch is unexercised.**
+
+**Every figure the deck states, re-derived.** Recomputed with SQL written
+against the store independently of the toolkit; all matched. 55,132,433 events
+over 36 heads. 1,096 rejects across the three months, 748 of them in February.
+February's 14,817,976 successful against 748 rejected is 99.994952%, where the
+slide rounds to 99.9950%. Head 29 holds 117 of the 1,095 rejected capping
+operations against a per-head mean of 30.4167 and 78 for the next-worst head
+35 — 3.85×, the slide's 3.8× — and its February rate is 99.9781%, from
+411,534 against 90. No head crosses the Mann-Kendall gate on either signal and
+every correlation stays above 0.9999, confirmed in the regenerated drift
+report. The 1,096 of the status table against the 1,095 of the head analysis
+is by construction: all odd status against odd status with torque > 0.
+
+**Live agentic path.** `ask` on qwen2.5:7b under Ollama, warm: plan source
+`llm`, two registry-validated steps, 2 of 2 executed. Narration fell back to
+the deterministic template on the 7B's timeout — the 2026-07-26 and
+2026-08-16 finding for the third time. Without a key, plan source `router`,
+and the limits section of the report says so in as many words. A cold first
+call can exceed 120 s, so the model wants warming before anyone is watching.
+
+**Offline.** Zero external references in all four reports, plots inline as
+data URIs; opened in a browser with no network, and the per-head chart renders
+with head 29 in red.
+
+**What this pass did not establish.** That `e95b88d` works where it matters.
+Until `scripts/demo.sh` runs with no argument on this box and returns 12/12,
+the documented invocation is still the one that failed, and the invocation
+known to work is still the one that names the store explicitly in `C:/...`
+form.
