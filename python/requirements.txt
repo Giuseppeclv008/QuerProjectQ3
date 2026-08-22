@@ -1,9 +1,23 @@
 # Pinned exactly (==, not >=): the suite byte-compares a golden report whose
 # formatting depends on pandas/DuckDB/matplotlib behaviour, so "any newer
 # version" is a moving target that can fail the golden test with no code
-# change. These are the versions the committed reports and goldens were
-# generated with. Upgrade deliberately: bump, regenerate the golden
-# (python -m tests.regen_golden), read the diff, commit both.
+# change. These are the versions the suite runs against, and the golden in
+# tests/fixtures/ is regenerated under them deliberately. Upgrade the same
+# way: bump, regenerate the golden (python -m tests.regen_golden), read the
+# diff, commit both.
+#
+# This file used to claim the committed reports under docs/reports/ were
+# generated with these versions too. It cannot: only matplotlib leaves a
+# version fingerprint in what it writes, and the committed PNGs carry 3.11.0
+# -- one patch behind the pin, which has read 3.11.1 since abedf5b, three days
+# before 01f2897 regenerated those reports. That regeneration ran on an
+# environment this file does not describe. The remaining pins leave no
+# fingerprint in a report and are neither confirmed nor contradicted by one.
+# The measured cost of the drift is 41 pixels of 583,200 in
+# anomalies_over_time.png and nothing else: no number in any report.md moves,
+# every trace.json stays byte-identical. Plot bytes are not guaranteed across
+# a patch release; the reports' figures do not depend on them. Recorded in
+# docs/validation-log.md under 2026-08-22.
 duckdb==1.5.5
 pandas==3.0.5
 numpy==2.5.2
