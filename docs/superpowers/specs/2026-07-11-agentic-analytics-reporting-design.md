@@ -227,7 +227,7 @@ justified by queries the brief actually asks (slides 13–18).
 | Tool | Answers (from the brief) | Brief requirement |
 |---|---|---|
 | `overview(period)` | "how many capping operations?", "time range covered?", "any missing/invalid torque?" | exploration + validation |
-| `success_rates(period, by=head\|day)` | "success rate per head?", "which head is lowest?", "daily breakdown?" | quality / success-rate |
+| `success_rates(period, by=head\|day\|overall)` | "success rate per head?", "which head is lowest?", "daily breakdown?" | quality / success-rate |
 | `torque_stats(period, filter)` | "average torque for successful closures?", "distribution?", "highest variability?" | torque analytics |
 | `trend(signal, window)` | "did average torque change over the month?", "how did success evolve?" | moving averages, drift |
 | `anomalies(period, method)` | "torque outside expected range?", "abnormal failure intervals?" | thresholds + statistical deviation |
