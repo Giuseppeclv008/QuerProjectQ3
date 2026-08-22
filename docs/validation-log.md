@@ -1733,3 +1733,44 @@ Until `scripts/demo.sh` runs with no argument on this box and returns 12/12,
 the documented invocation is still the one that failed, and the invocation
 known to work is still the one that names the store explicitly in `C:/...`
 form.
+
+**Closed the same day.** `scripts/demo.sh` then ran on that box with no
+argument: `cygpath` present at `/usr/bin/cygpath`, the store path converted to
+`C:/Polito_files/.../events_3mo.duckdb` with forward slashes only, exit 0,
+**12/12** steps, the three directories rewritten. The invocation the README
+documents is the working one again. Two things that run added.
+
+**The first run of the day costs twice.** 46.1 s on the first bare invocation
+and **23.7 s** on the second — same command, same box, minutes apart. The cold
+one pays for the OS file cache over a multi-gigabyte store and the
+interpreter's imports; the warm one is the deck's "~23 s" and is faster than
+the 25.1 and 25.8 s measured earlier through the explicit path. Nothing
+regressed. But a demo run cold in front of an audience takes twice as long as
+the slide promises, which puts `demo.sh` in the same class as the 7B's cold
+load: warm it first.
+
+**The committed plots were rendered by a Matplotlib the pin does not name.**
+Regenerating on the box produced four of five PNGs pixel-identical;
+`anomalies_over_time.png` differs in **41 pixels of 583,200** and four bytes,
+and the `.html` differ only in their `Generated` line and that one embedded
+base64. Every number in every `report.md` is unchanged and every `trace.json`
+is byte-identical, so this is a renderer patch release and not a data
+movement. What it exposes is upstream of the plots: the committed PNGs carry a
+**Matplotlib 3.11.0** header while `python/requirements.txt` has pinned
+`matplotlib==3.11.1` since `abedf5b` on 2026-08-16 — three days before
+`01f2897` regenerated the reports — under a comment stating in as many words
+that these are the versions the committed reports and goldens were generated
+with. For matplotlib that sentence is not true: the 2026-08-19 regeneration
+ran on an environment the pin does not describe. The suite is unaffected (the
+golden it byte-compares is text, and it is green on 3.11.1), and the visible
+cost is forty-one pixels. The cost that matters is the claim. Left as found
+rather than regenerated, because regenerating to fix a provenance sentence
+would move the artifacts' dates for no change a reader could see; the honest
+repair is either a regeneration on the pinned version, deliberately, or a
+requirements comment that says which of the pins the committed artifacts
+actually carry.
+
+**One thing this run corrected in the runbook it was given.** The
+non-regression step was written as `git diff docs/reports -- '*.md'`, which git
+reads as a revision named `docs/reports` and refuses. The form that works is
+`git diff -- 'docs/reports/*.md'`.
