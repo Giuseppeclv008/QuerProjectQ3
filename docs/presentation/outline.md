@@ -84,7 +84,7 @@ measured on `events_3mo.duckdb` (55,132,433 rows, machine `MCC`, 36 heads,
 - `status` is **a bitmask, not an enumeration** — bit 0 is the reject signal,
   bits 1–6 are the conditions. Slide 6 of the brief lists 14 rows = 7 conditions
   × {reject, no reject}.
-- A closure is a rejection **if its status is odd**.
+- A closure is a rejection **if and only if** its status is odd.
 - Measured over three months:
 
   | status | torque>0 | count | decoded |
