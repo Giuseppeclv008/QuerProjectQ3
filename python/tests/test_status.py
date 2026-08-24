@@ -24,7 +24,7 @@ def test_sixty_five_is_bad_closure_with_reject():
 
 
 def test_nine_is_no_intorque_with_reject():
-    # 15 of these exist in the three-month store; spec 12 called them "unknown".
+    # 24 of these exist in the three-month store; spec 12 called them "unknown".
     assert decode(9.0) == {"reject": True, "conditions": ["No InTorque"]}
 
 
