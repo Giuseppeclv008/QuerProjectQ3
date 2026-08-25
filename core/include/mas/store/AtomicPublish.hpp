@@ -18,14 +18,12 @@ namespace mas {
 // Writing a Parquet file where a reader will look for it, without a window in
 // which a partial one is visible under the real name.
 //
-// Both Parquet writers need this and only one had it. ParquetEventStore::close()
-// grew write-to-temp-then-rename because a re-dispatched work item puts two
-// processes on one output path; export_store_to_parquet kept COPYing straight to
-// the destination, so an out-of-space export left 2.9 MB of truncated Parquet
-// under the user's chosen name -- unreadable, fatal to any glob over that
-// directory, and, because the overwrite guard then refuses a destination that
-// exists, an obstacle to the retry that would have fixed it. A shared helper
-// makes it structurally hard to have one and not the other.
+// Both Parquet writers publish through here, which is what keeps the discipline
+// symmetric. A COPY aimed straight at the destination leaves truncated Parquet
+// under the user's chosen name when it runs out of space: unreadable, fatal to
+// any glob over that directory, and -- because the overwrite guard then refuses
+// a destination that exists -- an obstacle to the retry that would have fixed
+// it.
 //
 // The temp name is private to this process AND to this call: the pid separates
 // a tombstoned worker from its replacement, the counter separates two writers

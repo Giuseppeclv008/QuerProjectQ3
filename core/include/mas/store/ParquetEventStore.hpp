@@ -8,8 +8,10 @@ namespace mas {
 
 // One Parquet file per input day-file: no index, no write-ahead log, no
 // constraint. That is the point — this store exists so the project can measure
-// what those cost in DuckDbEventStore, where persistence is 79.8% of
-// end-to-end wall-clock (docs/bench/results.md).
+// what those cost in DuckDbEventStore, where persistence dominates end-to-end
+// wall-clock. By how much is a property of the box rather than of the code, so
+// the figure is quoted with the machine that produced it in
+// docs/bench/results.md and not here.
 //
 // Idempotency is a property of the filename rather than of a UNIQUE key:
 // reprocessing an input writes the same path and replaces it. Note what this
