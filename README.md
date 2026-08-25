@@ -1237,10 +1237,11 @@ and period gives the same report every time, apart from the generation timestamp
 in the header. Committed examples are under
 [`docs/reports/`](docs/reports/), and every number in them was reconciled
 against a direct DuckDB query in the [validation log](docs/validation-log.md)
-when it was generated. All four are now known-stale: three fixes landed after
-they were last generated, and the store that would regenerate them is not in the
-repo. [`docs/reports/README.md`](docs/reports/README.md) records which, why, and
-what changes when they are rebuilt.
+when it was generated. They are current: all four were regenerated on
+2026-08-19 against a rebuilt store, and re-verified against it since.
+[`docs/reports/README.md`](docs/reports/README.md) is the staleness registry —
+which artifact is invalidated by what, and what changes when it is rebuilt;
+its table is empty exactly when the committed reports match the code.
 
 ### Ask a question
 
@@ -1309,14 +1310,17 @@ the three-month store, most of it narration.
 
 A committed run of the whole loop on this model is in
 [`docs/reports/ask-live-sample/`](docs/reports/ask-live-sample/) (RTX 4070
-Laptop, 2026-08-16): planning tier `plan`, `plan source: llm`, two
-registry-validated steps against the real three-month store, 22 s warm —
-and the narration replaced by the deterministic summary, reason disclosed,
-exactly as measured above. The first, cold call timed out at the 120 s
-default and fell back to the router; the report says so. What that run does
-*not* prove is that the Anthropic flat schema is accepted: Ollama takes a
-`format` grammar, not `output_config`, and no key was used — see the
-validation log, entry 2026-08-16.
+Laptop, 2026-08-19): planning tier `plan`, `plan source: llm`, one
+registry-validated step (`head_correlation`) against the real three-month
+store — and the narration replaced by the deterministic summary, reason
+disclosed, exactly as measured above. The directory carries no figures: one
+step leaves no second series to plot, which
+[`docs/reports/README.md`](docs/reports/README.md) explains rather than hides.
+An earlier two-step run, and a first cold call that timed out into the router,
+are in the validation log. What no run on Ollama proves is that the Anthropic
+flat schema is accepted: Ollama takes a `format` grammar, not `output_config`,
+and no key was used — see the validation log, entries 2026-08-16 and
+2026-08-22.
 
 ### Configuration (WP5)
 

@@ -232,8 +232,8 @@ The two detectors are independent on purpose: a head can drift entirely within
 the configured band (deviation hits, no threshold hits), and a correctly centred
 head can run a product whose band is wrong (threshold hits, no deviation hits).
 
-Measured, February (store fingerprint 55,132,433 rows, reports regenerated
-2026-08-16): 748 rejected, 130 outside the configured band, **162,019** beyond
+Measured, February (store fingerprint 55,132,433 rows; the figures the
+committed 2026-08-19 reports carry): 748 rejected, 130 outside the configured band, **162,019** beyond
 their head's robust band — **≈1.1% of the month's 14,824,304 capping
 operations**. The uncalibrated raw-MAD band reported 1,612,634 (≈10.9%) for
 the same data; the ten-fold difference is the calibration, not the data. The
