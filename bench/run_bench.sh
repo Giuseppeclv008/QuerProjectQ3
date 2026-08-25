@@ -83,9 +83,8 @@ trap cleanup EXIT
 
 # --- oracle cache: expected distinct (head_id, ts) rows per volume -----------
 # python/oracle_union.py (independent Python reference, spec §11). The store
-# identity is (machine_id, head_id, ts); the old cap_seq-key teaching (days
-# 16-24 "replaying" cap_seq ranges, 21.9M events vs 14.4M rows) is retired --
-# oracle_union.py's docstring records why it was false. On this contiguous,
+# identity is (machine_id, head_id, ts); the retired cap_seq key, and why it
+# was false, are oracle_union.py's docstring to tell. On this contiguous,
 # non-overlapping pool the union equals the per-file sum; the union form is
 # kept so an overlapping or re-delivered file still yields the right answer.
 # Plain indexed array, NOT `declare -A`: /usr/bin/env bash resolves to macOS's
@@ -112,10 +111,9 @@ if ! "$PY_DUCKDB" -c "import duckdb" 2>/dev/null; then
 fi
 
 mkdir -p bench
-# Never truncate an existing results file by accident: the documented partial
-# resweep (`--only mas --volumes "1 7"`) once pointed straight at the
-# committed 81-row bench/results.csv, and this `>` would have replaced it
-# with 30 rows, no backup, no prompt. Overwriting is now an explicit choice.
+# Never truncate an existing results file by accident: a partial re-run
+# (`--only mas --volumes "1 7"`) writes a fraction of the committed sweep's
+# rows, and this `>` would replace it with them. Overwriting is explicit.
 if [ -e "$OUT_CSV" ] && [ "$FORCE" != 1 ]; then
     echo "error: $OUT_CSV exists; pass --force to overwrite it," >&2
     echo "       or --out <file.csv> to write elsewhere and splice by hand" >&2
@@ -191,9 +189,8 @@ done
 
 # --- parquet runs -------------------------------------------------------------
 # Same clean path, different persistence: no index, no WAL, no merge. The
-# comparison is against mono-1T's e2e. The 79.8% store share that motivated
-# this was measured on the RTX 4070 host (183.9 s of a 230.45 s run), not on
-# this harness; see docs/bench/results.md for what it measures here.
+# comparison is against mono-1T's e2e. What the store share costs -- on which
+# box, on which date -- is docs/bench/results.md's to state, not this file's.
 #
 # NOTE: the committed bench/results.csv carries NO parquet rows. The
 # month-scale Parquet/DuckDB comparison was taken by the dedicated harness
@@ -202,10 +199,8 @@ done
 # rather than gaining three rows from a different day. Running this script
 # rewrites results.csv from scratch, so it would add them.
 #
-# The block itself is exercised: bench/parquet-comparison/run_bench_smoke.csv
-# is a 1-day --only mono run of it, counts oracle-exact. That run is also what
-# caught the unquoted "$PY_DUCKDB" below -- a block nobody has executed is not
-# evidence of anything, however carefully it reads.
+# The block is exercised, not merely read: bench/parquet-comparison/
+# run_bench_smoke.csv is a 1-day --only mono run of it, counts oracle-exact.
 for v in "${VOLUMES[@]}"; do
     for rep in 1 2 3; do
         R="$T/run" && rm -rf "$R" && mkdir -p "$R/pq"
@@ -251,18 +246,18 @@ for v in "${VOLUMES[@]}"; do
             WPIDS=()
             for ((w = 1; w <= n; w++)); do
                 # "$MACHINE" explicitly: worker_main defaults machine_id to
-                # "MCC", and the 3-char default vs the monolith's 35-char id
-                # made the two architectures write different rows — timing-
-                # neutral on macOS, but the long id doubles the per-row write
-                # cost on Windows (out-of-line vs inlined VARCHAR), so the
-                # comparison was not like-for-like there.
+                # "MCC", and the 3-char default against the monolith's 35-char
+                # id made the two architectures write different rows. That id is
+                # the first column of the UNIQUE key, so the difference is not
+                # free; docs/bench/results.md records what it cost and where.
                 "${TIMEIT[@]}" "$BUILD/mas_worker" "$WORK" "$RES" "$HB" \
                     "$R/w$w.duckdb" "w$w" "$MACHINE" 2>"$R/w$w.log" &
                 WPIDS+=($!); PIDS+=($!)
             done
             # --workers: gate dispatch on all N registering, else ZMQ PUSH
-            # queues every file into the first connected pipe (slow-joiner
-            # capture, found by sweep #1 — MAS was flat across N).
+            # queues every file into the first connected pipe -- the slow-joiner
+            # capture that made MAS flat across N and got the first sweep
+            # discarded (docs/validation-log.md, 2026-07-11).
             "${TIMEIT[@]}" "$BUILD/mas_coordinator" "$WORK" "$RES" "$HB" \
                 --workers "$n" \
                 "${FILES[@]:0:$v}" 2>"$R/coord.log" || { cat "$R/coord.log"; exit 1; }

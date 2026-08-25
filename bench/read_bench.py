@@ -11,12 +11,10 @@ The Parquet-backed `cap_events` view (`analytics.store.connect`) pays a
 DuckDB backend pays once at write time as a UNIQUE index probe. That is the
 comparison.
 
-It used to carry a trailing `ORDER BY machine_id, head_id, ts` as well, and
-every number in earlier revisions of `read_results.csv` has that sort baked in
--- 2.7-3.1x of the Parquet read cost. It was removed once the justification for
-it turned out to be false: the sort runs above the HASH_GROUP_BY, so it cannot
-decide which row of a duplicate group survives, and duplicates are byte-identical
-anyway. See the comment in `python/analytics/store.py`.
+The view carries no trailing `ORDER BY` any more: its justification turned out
+to be false, and every number in earlier revisions of `read_results.csv` has
+that sort baked in. `docs/bench/results.md` records the withdrawal and what it
+cost; `python/analytics/store.py` states the rule.
 
 Before timing anything, this script queries both stores for the row count
 scoped to --machine-id and refuses to run if either is zero, or if the two
@@ -70,8 +68,7 @@ def _row_count(store, machine_id):
     Goes through `analytics.store.connect` itself, not a reimplementation of
     its SQL, so a duckdb-file store and a parquet-directory store are counted
     through exactly the mechanism that gets timed below -- including the
-    parquet side's DISTINCT ON dedup. (It said "and ORDER BY" until the sort was
-    removed, sixty lines under the docstring that explains the removal.)
+    parquet side's DISTINCT ON dedup.
     """
     from analytics.config import Config
     from analytics.store import connect
