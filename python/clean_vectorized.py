@@ -1,9 +1,12 @@
 """Vectorized reference cleaner: same transform as oracle.py, no Python row loop.
 
 oracle.py is the honest naive baseline -- an interpreted loop over 86,399 rows x
-36 heads. Comparing that against C++ mostly measures the interpreter. This is the
-vectorised Python contender (measured 15% slower than py-naive at 28 files -- 85.8 s vs 74.6 s -- the split/loop overhead beats pandas here): pandas parses the CSV, numpy does the transform, and the
-only Python-level loop is over the emitted events.
+36 heads. Comparing that against C++ mostly measures the interpreter. This is
+the vectorised Python contender: pandas parses the CSV, numpy does the
+transform, and the only Python-level loop is over the emitted events. Measured,
+it is slower than the naive loop -- correctly-rounded parsing and tuple
+materialization survive the rewrite -- and the figures, with their box and
+date, are docs/bench/results.md's to state, not this docstring's.
 
 Implements spec 2026-08-10 §3: the transform is element-wise on consecutive row
 pairs, so it is one numpy.diff, not a scan.
