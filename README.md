@@ -570,9 +570,13 @@ contiguous and non-overlapping. Measured on the rebuilt store: **0 duplicate
 
 A store written under the old key is **refused at open** rather than silently
 reused: `CREATE TABLE IF NOT EXISTS` would keep its index and every downstream
-number would stay wrong. A `store_meta` table records the identity in use; if it
-is missing while `cap_events` holds rows, the constructor throws and tells you
-to rebuild.
+number would stay wrong. A `store_meta` tag records the identity in use; a file
+without the tag gets a behavioural probe — two inserts differing only in `ts`,
+inside a rolled-back transaction. The current key accepts both; a
+`cap_seq`-keyed index rejects the second, and the constructor throws and tells
+you to rebuild. A file that passes the probe is stamped as migrated. The
+probe's own limits are documented where it lives, in
+[`DuckDbEventStore.cpp`](core/src/store/DuckDbEventStore.cpp).
 
 ### Write Path (Staging + Merge)
 
