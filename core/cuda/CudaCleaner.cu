@@ -514,9 +514,10 @@ bool cuda_clean_file(const std::string& path, std::vector<CapEvent>& out,
     // ---- S6: download -------------------------------------------------------
     // From here on, std::vector/std::string allocations and push_back can
     // throw; without this frame a bad_alloc (n_events is read out of device
-    // memory) unwound past the manual cleanup and leaked all 14 device
-    // allocations plus the pinned buffer -- and cuda_clean_main has no try,
-    // so it reached std::terminate.
+    // memory) unwinds past the manual cleanup and leaks every device
+    // allocation plus the pinned buffer -- and cuda_clean_main has no try, so
+    // it reaches std::terminate. Counting them here would only go stale again
+    // the next time a buffer is added; cleanup() is the list.
     try {
     std::vector<CapEventDevice> host_ev(n_events);
     std::vector<char> host_ts(static_cast<size_t>(n_rows) * TS_LEN);
