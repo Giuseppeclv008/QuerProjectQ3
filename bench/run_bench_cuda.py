@@ -31,11 +31,10 @@ PY_DIR = os.path.join(ROOT, "python")
 ROWS_PER_DAY = 86399
 REPEATS = 3
 VOLUMES = (1, 7, 28)
-# Measured, not assumed: py-naive cleans one day-file in ~2.7 s, so the full
-# 28-file month is ~75 s per repeat -- cheap enough to measure at every volume.
-# (An earlier estimate of "~2 h for the naive path" was off by two orders of
-# magnitude and justified extrapolating the larger volumes; the extrapolation
-# and its CSV rows are gone with it.)
+# Measured, not assumed: measuring the naive Python path at every volume costs
+# less than extrapolating it, so no row here is projected. The seconds -- with
+# the box and the date attached, which is the only form in which a benchmark
+# figure means anything -- are in docs/bench/results.md.
 PY_NAIVE_MAX_FILES = max(VOLUMES)
 
 RESULTS = os.path.join(ROOT, "bench", "results_cuda.csv")
@@ -89,17 +88,15 @@ def resolve_build_dir():
 
     Decided by bench_cpu, cached, and reused by provenance() so the CSV header
     describes the build that was measured. Only the candidate directories are
-    searched: a stale side build (build-plan once held an unoptimized bench_cpu,
-    CMAKE_BUILD_TYPE empty) must never be silently benchmarked in place of the
-    real one.
+    searched: a stale side build must never be silently benchmarked in place of
+    the real one.
 
-    Ambiguity is refused rather than ranked. Preference by position is what
-    produced the bug this function replaced -- "always build/" simply became
-    "always build-bench/", moving the silent-wrong-binary failure to a different
-    developer. This repo accumulates build directories (.gitignore lists six),
-    so a fresh build/ from the top-level README's instructions sitting beside a
-    months-old build-bench/ is an ordinary state, and either answer is a guess.
-    Set BUILD_DIR to say which.
+    Ambiguity is refused rather than ranked, because ranking only moves the
+    silent-wrong-binary failure to whoever holds the other directory. This repo
+    accumulates build directories (.gitignore names seven, plus a
+    cmake-build-*/ pattern), so a fresh build/ from the top-level README's
+    instructions sitting beside a months-old build-bench/ is an ordinary state,
+    and either answer is a guess. Set BUILD_DIR to say which.
     """
     global _resolved_build
     if _resolved_build is None:
@@ -209,12 +206,10 @@ def provenance():
     except (OSError, subprocess.SubprocessError):
         lines.append("# nvcc: not found")
     # The py-numpy row is attributed in the README to pandas' CSV parser and
-    # float_precision="round_trip"; without the version that claim cannot be
-    # reproduced from the artifact. run_bench.sh has recorded its build type
-    # since it was written and this driver -- the one that produces the headline
-    # CUDA CSV -- recorded neither, so a Debug configure would have yielded a
-    # file indistinguishable from a Release one. Spec 6.5 asks for the compiler
-    # too.
+    # float_precision="round_trip"; without the versions that claim cannot be
+    # reproduced from the artifact. The build type belongs here for the same
+    # reason -- a Debug configure would otherwise yield a CSV indistinguishable
+    # from a Release one. Spec 6.5 asks for the compiler too.
     for mod in ("numpy", "pandas"):
         try:
             lines.append(f"# {mod}: {__import__(mod).__version__}")
@@ -405,10 +400,9 @@ def main():
     # oracle_union counts distinct (head_id, ts) -- the store identity. The
     # day-files are contiguous and non-overlapping, so this EQUALS the sum of
     # per-file event counts: the same number gates both the e2e rows (store
-    # row count) and the store-free clean rows (emitted events). The old
-    # rationale for not gating clean runs ("store-free runs emit more than
-    # the store keeps") was the retired cap_seq-key theory;
-    # python/oracle_union.py's docstring records why it was false.
+    # row count) and the store-free clean rows (emitted events). Clean runs
+    # were once left ungated on the strength of the retired cap_seq key;
+    # python/oracle_union.py's docstring records why that was false.
     print("Row counts every run should land on (oracle_union):")
     oracle = {v: oracle_union(files[:v]) for v in volumes}
     for v, n in oracle.items():
@@ -474,11 +468,13 @@ def main():
                     # total_s is the process wall clock, not the sum of stage
                     # timers: the stage sum used to hide the event
                     # materialization and every cudaMalloc/cudaHostAlloc, and
-                    # at 28 day-files the hidden part cost about as much as the
-                    # reported one. The differential --verify run happens once
-                    # per volume BEFORE the repeats (see below): it used to run
-                    # inside repeat 1's timed wall, making that row's total_s
-                    # 58.9 s against 8.4 s and its derived rates meaningless.
+                    # measured, the hidden part turned out to be the larger of
+                    # the two -- docs/bench/results.md, "What the CUDA speedup
+                    # is worth end to end", carries the split with its box and
+                    # date. The differential --verify run happens once per
+                    # volume BEFORE the repeats (see below): inside repeat 1's
+                    # timed wall it inflated that row's total_s several-fold and
+                    # made every rate derived from it meaningless.
                     emit(w, "cuda", "clean", 1, v, rep, clean_s, wall, events,
                          rss, cpu_s)
                     m = _STAGE.search(blob)
