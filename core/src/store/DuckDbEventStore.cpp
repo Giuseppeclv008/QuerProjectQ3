@@ -29,10 +29,11 @@ DuckDbEventStore::DuckDbEventStore(const std::string& db_path,
     // head 1 alone has 23,851 day-17 closures whose cap_seq was already used on
     // days 1-15, and 18,721 of them carry a *different* torque -- distinct
     // physical closures, not retransmissions. Keying on cap_seq collapsed them
-    // onto the older rows: 21,872,663 February events persisted as 14,372,237
-    // rows, and February inside the three-month store held only 10,450,551 --
-    // 3.9M February closures evicted by March/April rows reusing their counter
-    // values, with which ones survived decided by thread scheduling.
+    // onto the older rows -- 34% of February discarded, 63% of the quarter, and
+    // which side of a collision survived left to thread scheduling, so the same
+    // input gave the same count and different contents. The row counts on both
+    // sides of the rebuild are in docs/validation-log.md, 2026-08-11 "Event
+    // identity"; quoting them here is how they go stale.
     //
     // ts is the physical identity of the observation and needs no bookkeeping:
     // the extractor emits at most one event per head per poll (caps missed

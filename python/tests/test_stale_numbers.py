@@ -9,23 +9,36 @@ entries" -- and two comments did. `config.py` sized `max_anomaly_items` against
 justified its denominator with 7,486 idle head-hours (7,228.1 after the
 idle-gap fix). Both read as current, neither was, and nothing told the reader.
 
-Scope is `python/analytics/` on purpose. Dated entries under `docs/` are the
-record of what was measured when and must keep their figures, and a test
-docstring naming the number a regression produced is that number in its right
-place -- a production comment is the one context where a figure can only mean
-"this is what the code measures today".
+Scope is the production comments of both tiers -- `python/analytics/` and the
+C++ under `core/` and `tests/`. Dated entries under `docs/` are the record of
+what was measured when and must keep their figures, and `python/tests/` is out
+for the same reason: a test docstring naming the number a regression produced
+is that number in its right place (`test_idle.py` quotes the pre-idle-gap
+11,551.3 for exactly that). The C++ tests are in scope because none of them
+narrates a store figure, so the sweep is a tripwire there rather than a
+licence.
 
 Add a row when a rebuild or a method change retires a figure. The message is
 what a reader needs to repair the comment, so name the current value in it.
+Keep an eye on short entries: `383` is four characters of arithmetic away from
+any unrelated constant, and the boundaries are all that keep it honest.
 """
 import re
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[2]
 
+# Files whose comments can only mean "what the code measures today".
+_SCOPES = (
+    ("python/analytics", ("*.py",)),
+    ("core", ("*.cpp", "*.hpp", "*.cu")),
+    ("tests", ("*.cpp", "*.hpp", "*.cu")),
+)
+
 # retired figure -> what it was, and what stands in its place
 _RETIRED = {
     "20,347,822": "rows under the retired cap_seq key; the rebuilt store holds 55,132,433",
+    "383": "February rejected closures on the retired store; rebuilt: 748",
     "10,450,551": "February rows on the retired store; rebuilt: 21,971,506",
     "6,672,649": "February capping operations on the retired store; rebuilt: 14,824,304",
     "678,325": "February deviation hits on the retired store; current: 162,019",
@@ -36,9 +49,19 @@ _RETIRED = {
 }
 
 
+def _scanned():
+    """Every file in scope, so a moved directory fails loudly instead of passing."""
+    for rel, globs in _SCOPES:
+        root = _ROOT / rel
+        assert root.is_dir(), f"{rel} is not a directory; has it moved?"
+        found = [p for g in globs for p in root.rglob(g)]
+        assert found, f"{rel} holds no {'/'.join(globs)}; has it moved?"
+        yield from sorted(found)
+
+
 def test_no_production_source_quotes_a_retired_figure():
     offenders = []
-    for path in sorted((_ROOT / "python" / "analytics").rglob("*.py")):
+    for path in _scanned():
         for line_no, line in enumerate(
                 path.read_text(encoding="utf-8").splitlines(), start=1):
             for figure, why in _RETIRED.items():
