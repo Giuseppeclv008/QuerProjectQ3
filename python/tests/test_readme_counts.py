@@ -7,7 +7,8 @@ check is worse than no number, because the reader believes it.
 
 The C++ side is counted from the sources rather than from ctest, so this runs
 without a build directory: gtest_discover_tests registers one ctest entry per
-TEST/TEST_F macro, so the two agree by construction (verified: 85 and 85).
+TEST/TEST_F macro, so the two agree by construction (spot-checked at 85 == 85
+when this guard landed; the equality is structural, so the value moves freely).
 
 The Python side is the suite's own collection, which equals the whole suite only
 when the whole suite was collected -- so a filtered run skips rather than failing

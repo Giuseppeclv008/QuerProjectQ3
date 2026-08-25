@@ -24,7 +24,7 @@ TEST(ZmqTransport, RecvTimesOutToNullopt) {
     EXPECT_FALSE(source.recv().has_value());
 }
 
-// Coordinator/worker arrangement (Task 7): the sink binds and the source
+// Coordinator/worker arrangement: the sink binds and the source
 // connects to it, with the source blocking indefinitely (timeout_ms = -1,
 // the production default) instead of the reverse arrangement above. Send
 // before recv so the blocking recv() has a message already queued and can
@@ -41,7 +41,7 @@ TEST(ZmqTransport, SinkBindsSourceConnectsBlockingRecvRoundtrips) {
     EXPECT_EQ(m->payload, "hello");
 }
 
-// Final-review fix (Task 8 wave): a PUSH socket with no connected peer is
+// Final-review fix: a PUSH socket with no connected peer is
 // "mute" in ZeroMQ terms - binding gives it an endpoint but not a peer, so
 // send() blocks forever without a timeout. This reproduces the coordinator's
 // zero-workers hang scenario. With send_timeout_ms set, the mute-send EAGAIN

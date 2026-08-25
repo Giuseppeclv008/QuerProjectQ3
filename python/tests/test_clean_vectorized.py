@@ -1,7 +1,7 @@
 """Differential test: the vectorized cleaner must agree with oracle.py exactly.
 
 oracle.py is the correctness reference the C++ core has been locked against
-since Plan 1, so agreeing with it is agreeing with everything.
+since the first cleaning plan, so agreeing with it is agreeing with everything.
 """
 import glob
 import os

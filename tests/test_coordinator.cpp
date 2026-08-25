@@ -849,7 +849,7 @@ TEST(Coordinator, LateResultFromTombstonedWorkerIsDropped) {
     EXPECT_EQ(s.workers_died, 1);
 }
 
-// --- Final-review fix wave (Plan 4) ---
+// --- Fixes from Plan 4's final review ---
 
 TEST(Coordinator, SilentForExactlyDeathThresholdIsNotDeclaredDead) {
     using namespace std::chrono_literals;
