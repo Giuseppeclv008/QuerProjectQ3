@@ -32,6 +32,15 @@
 
 Caveats: measured on an actively-cooled i7-13700H laptop (6P+8E cores, 20 threads — N=16 exceeds the P-cores but not the hardware threads), median-of-3, merge phase reported separately; mono-MT uses a std::thread atomic-counter pool (dynamic load balancing, slightly fairer than PUSH/PULL round-robin).
 
+Three conventions hold for every number in this file. (1) Spread is
+`(max − min) / mean` over the repeats, so it is comparable between rows. (2)
+All repeats after a sweep's first run are **warm-cache** numbers — nothing here
+measures a cold first read except where a repeat-1 caveat says so. (3) The
+committed plots draw **medians only**, so the spreads this document works to
+publish (`merge_s` at MAS N=16 spreads 9.4%, wider than the 4.8% its `total_s`
+reports) live in the tables and CSVs, not in any figure. Ratios quoted to three
+significant figures (3.42×, 3.83×) inherit the spread of both their operands.
+
 ## Provenance of the table above
 
 `bench/results.csv` was written at `442603c` (2026-08-13) from a tree at
@@ -107,7 +116,8 @@ history; the reference numbers are now these.
 - **MAS `clean_s` still includes worker spawn, ZMQ connect, and the
   registration wait** — measurably ~0.5 s here (v=1: MAS 19.0–19.3 s against
   mono-1T's 18.4 s). Initial dispatch stays gated on `--workers N`
-  registrations; the slow-joiner capture that flattened sweep #1 cannot recur.
+  registrations; the slow-joiner capture that flattened the first, discarded
+  sweep (validation log, 2026-07-11) cannot recur.
 - **`rows_per_s` uses a nominal 86,399 rows/day** as before; `events_per_s` is
   the measured throughput (mono-1T 40.7k/s, MAS N=16 155.7k/s at 28 days).
 
@@ -195,29 +205,25 @@ cheaper vehicle at like-for-like N on this box.
   [`docs/validation-log.md`](../validation-log.md), entries 2026-08-11 through
   2026-08-13. The 2.89× like-for-like merge comparison stands as measured — it
   alternated binaries within one session — and its effect is visible here as
-  the 6.2× N=1-fallback delta above.
-- The two series are not a controlled comparison. Same machine and same
-  harness, but the disk was in a different state (2.6 GB freed before this run)
-  and it is a laptop without fan control. Shape — how it scales with N, where
-  the wall sits — is reliable; absolute seconds across the two runs are
-  indicative.
-- The 30 MAS rows at volumes 1 and 7 were re-measured separately: during the
-  first pass `build/` was rebuilt underneath the running sweep while preparing
-  `perf/merge-set-based`, so some of those runs may have exercised the
-  set-based merge. They were re-run through the same harness with the restored
-  binaries (`run_bench.sh --only mas --volumes "1 7"`, added for this purpose)
-  and spliced in. The monolith block finished before any rebuild and the MAS
-  28-day block ran after the binaries were restored; neither was affected.
-  **The pre-splice file was not retained.** An earlier revision of this note
-  claimed it was kept as `bench/results.csv.contaminated`; no such file ever
-  existed in this repository, so the 30 spliced MAS rows cannot be checked
-  against what they replaced — unlike the two withdrawals below, whose
+  the 6.2× N=1-fallback delta above. Two caveats belong to that superseded
+  series and **not** to the table above — they were written for the M2 sweeps
+  and came back into this section through a branch merge after the resweep had
+  removed them. Its two sub-series were not a controlled comparison: same M2
+  and same harness, but the disk was in a different state (2.6 GB freed before
+  the later one) and that chassis has no fan control. And 30 of its MAS rows at
+  volumes 1 and 7 were re-measured and spliced in, because `build/` had been
+  rebuilt underneath the running sweep while `perf/merge-set-based` was being
+  prepared. **The pre-splice file was not retained.** An earlier revision of
+  that note claimed it was kept as `bench/results.csv.contaminated`; no such
+  file ever existed in this repository, so those 30 spliced rows cannot be
+  checked against what they replaced — unlike the two withdrawals below, whose
   contaminated CSVs are committed and recompute.
 
-### merge_all: measured end to end (2026-08-11, branch `perf/merge-set-based`)
+## merge_all: measured end to end (2026-08-11, M2, branch `perf/merge-set-based`)
 
-The table above is this branch's sweep. The comparison is against `main`'s, which
-is the same harness and the same binaries but for `merge_all`.
+The table below is this branch's sweep — the M2 series the resweep at the top
+of this file superseded. The comparison is against `main`'s, which is the same
+harness and the same binaries but for `merge_all`.
 
 **Validity gate first.** `mono-1T` writes straight to the destination and has no
 merge phase, so `merge_all` cannot reach it: 101.0 s → 101.8 s, **+0.8%**. Had it
@@ -288,7 +294,7 @@ same harness (`run_bench.sh --only mas`). The two blocks therefore come from
 different sessions on the same machine — the same limitation already noted for
 the 30 re-measured rows in the previous sweep.
 
-### What the CUDA speedup is worth end to end (Amdahl)
+## What the CUDA speedup is worth end to end (2026-08-16, RTX 4070 box, Amdahl)
 
 The clean-phase numbers are large and the end-to-end number is not, and the gap
 between them is the finding.
@@ -438,7 +444,7 @@ headroom was left in the clean phase? Almost none, and that is now measured
 rather than assumed.**
 
 
-## Parquet vs DuckDB: where the persistence cost actually goes (2026-08-14, branch `feat/parquet-store`)
+## Parquet vs DuckDB: where the persistence cost actually goes (2026-08-14, M2, branch `feat/parquet-store`)
 
 The Parquet backend exists to ask one question: the DuckDB store maintains a
 UNIQUE index per row, a write-ahead log and a checkpoint — is removing them
@@ -448,14 +454,6 @@ persistent format, and Parquet's supported use is `mas_export`.
 One `mas_monolith` invocation per backend over the same 28 day-files of
 February 2026, `machine_id` `MCC`, one thread. Both stores hold **21,872,663
 events**, raw equal to distinct.
-
-Two conventions to read every number above through: (1) all repeats after a
-sweep's first run are **warm-cache** numbers — nothing here measures a cold
-first read except where a repeat-1 caveat says so; (2) the committed plots
-draw **medians only**, so the spreads this document works to publish (the
-N=16 merge alone spreads 9.8%) are visible in the tables and CSVs, not in any
-figure. Ratios quoted to three significant figures (3.42×, 3.83×) inherit the
-spread of both their operands.
 
 Every figure has an artifact in `bench/parquet-comparison/`:
 `write_single.out` and `write_single_duckdbfirst.out` (the two orderings),
@@ -640,10 +638,13 @@ the same trust the withdrawal was meant to stop asking for.
   it, and a one-hour-scoped aggregate measured 0.027 s against 0.122 s for the
   full scan on a 2M-row table. An earlier revision of this file claimed the
   opposite. The reports are whole-month, so the committed numbers are unaffected.
-- **The 79.8% that motivated this work was measured elsewhere.** It is 183.9 s
-  of persistence in a 230.45 s `mono-1T` run on the RTX 4070 host. On this
-  laptop the DuckDB month write is 98.96 s and `mono-1T` at 28 files is
-  101.814 s in the table at the top of this file, which is why the plan's
+- **The 79.8% that motivated this work was measured elsewhere, and is itself
+  superseded.** It is 183.9 s of persistence in a 230.45 s `mono-1T` run on the
+  RTX 4070 host, 2026-08-10, with the 3-char `MCC` id; the same host with the
+  pool's real id reads ~487 s of 533.3 s — about 91% — in the CUDA section
+  above. On this laptop the DuckDB month write is 98.96 s and `mono-1T` at 28
+  files is 101.814 s in the `merge_all` table above (not the table at the top of
+  this file, which is the i7 resweep and reads 537.8 s), which is why the plan's
   "expect DuckDB near 230 s" did not appear. The store's share on this laptop
   was not measured; that needs the null-store build. The comparison itself is
   unaffected — both backends, this laptop, one session, same input.
