@@ -9,8 +9,10 @@ entries" -- and two comments did. `config.py` sized `max_anomaly_items` against
 justified its denominator with 7,486 idle head-hours (7,228.1 after the
 idle-gap fix). Both read as current, neither was, and nothing told the reader.
 
-Scope is the production comments of both tiers -- `python/analytics/` and the
-C++ under `core/` and `tests/`. Dated entries under `docs/` are the record of
+Scope is the production comments of both tiers -- `python/analytics/`, the
+C++ under `core/` and `tests/`, and the benchmark harnesses under `bench/`,
+which quoted the retired pair "21.9M events vs 14.4M rows" until this week.
+Dated entries under `docs/` are the record of
 what was measured when and must keep their figures, and `python/tests/` is out
 for the same reason: a test docstring naming the number a regression produced
 is that number in its right place (`test_idle.py` quotes the pre-idle-gap
@@ -33,6 +35,7 @@ _SCOPES = (
     ("python/analytics", ("*.py",)),
     ("core", ("*.cpp", "*.hpp", "*.cu")),
     ("tests", ("*.cpp", "*.hpp", "*.cu")),
+    ("bench", ("*.py", "*.sh", "*.cpp")),
 )
 
 # retired figure -> what it was, and what stands in its place
