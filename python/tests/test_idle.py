@@ -140,9 +140,9 @@ def test_a_hole_in_the_data_breaks_the_run_instead_of_being_absorbed(tmp_path):
     three more on 2026-02-06 came back as ONE period, cycles=6,
     duration_seconds=432002 -- 120 hours of "idle" from six seconds of cycling.
     The module docstring says the opposite in as many words ("a machine that is
-    switched off produces no rows and no islands"), and February's headline
-    11,551.3 head-hours is 47.7% of the month, with nothing saying how much of
-    it was absorbed downtime.
+    switched off produces no rows and no islands"), and February's headline was
+    11,551.3 head-hours -- 47.7% of the month, with nothing saying how much of
+    it was absorbed downtime. With the gap bound in place it is 7,228.1.
     """
     path = tmp_path / "gap.duckdb"
     con = duckdb.connect(str(path))
