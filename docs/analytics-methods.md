@@ -9,7 +9,9 @@ below the CLI propagates an error, because a report generated unattended must
 still land on disk saying what it could not answer.
 
 All measured figures below come from `events_3mo.duckdb` — 55,132,433 rows,
-machine `MCC`, 36 heads, 2026-02-01 → 2026-04-30.
+machine `MCC`, 36 heads, 2026-01-31 16:00:06 → 2026-04-30 16:59:59 (the store
+fingerprint; the day-files are offset from midnight, so the "three months" of
+February–April begin at 16:00 on January 31).
 
 ---
 

@@ -2,7 +2,8 @@
 
 Every bullet is written to be transcribed onto a slide as-is. Numbers are
 measured on `events_3mo.duckdb` (55,132,433 rows, machine `MCC`, 36 heads,
-2026-02-01 → 2026-04-30) and reconciled in
+2026-01-31 16:00:06 → 2026-04-30 16:59:59 — the store fingerprint; the
+day-files are offset from midnight) and reconciled in
 [`docs/validation-log.md`](../validation-log.md).
 
 ---
