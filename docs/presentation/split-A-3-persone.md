@@ -111,6 +111,10 @@ Slide 1–3 e 13: script condiviso, chiunque le può dire.
 | MAS N=8 | 182,6 s totale (clean 111,9 s + **merge 70,7 s**) |
 | MAS N=16 | 140,4 s (clean 75,6 s + merge 64,8 s) |
 
+*(La tabella riporta il run fisico mediano per `total_s`, le cui componenti
+sommano; il 74,9 del 7,2× qui sotto è la mediana per colonna del resweep —
+stessa misura, convenzione dichiarata in `docs/bench/results.md`.)*
+
 - La **fase clean scala bene**: 537,8 s → 74,9 s = **7,2×**.
 - Il **merge no**: 65–73 s, e a differenza di prima è *piatto* in N. End-to-end il MAS arriva a **3,83×**: è il merge seriale a separare 7,2× da 3,83×, non un difetto di scaling.
 - mono-MT **batte** mono-1T a scala mensile: T=8 fa 3,42×. Resta sotto MAS N=16 (3,83×).
@@ -164,7 +168,7 @@ Slide 1–3 e 13: script condiviso, chiunque le può dire.
 - **Il path agentico live è provato su un modello locale, non su quello hosted** (slide 12): [`docs/reports/ask-live-sample/`](../reports/ask-live-sample/) è un run `ask` committato su qwen2.5:7b sotto Ollama — plan source `llm`, **uno** step validato dal registry (`head_correlation(by='day')`), executor → renderer end-to-end sullo store vero. Resta non verificata solo l'**accettazione dello schema da parte dell'API Anthropic**: nessuna chiave è mai stata usata, e `test_anthropic_schema_live.py` manda gli schemi ed è gated proprio su quella.
 - **Il 7B pianifica ma non narra**: ogni narrazione che ha prodotto è stata respinta dal rilevatore di bullet e sostituita dal riassunto deterministico, col motivo stampato nei limiti — 3 su 3 a luglio, 2 su 2 ad agosto, e nel run committato si legge "it announced findings rather than stating them". La prosa del campione è quella del template.
 - **CSV è solo l'ingestion grezza, non lo store**: `clean --format parquet` scrive uno store Parquet, `mas_export` lo esporta, e gli stessi 8 tool leggono entrambi i backend (`test_backend_parity.py`). Leggere JSON o Parquet *come telemetria grezza* è un fratello del reader, non lavoro d'agente.
-- **I report committati sono stati rigenerati il 2026-08-19** su uno store ricostruito dai tre zip mensili (55.132.433 righe, fingerprint identico a quello registrato). Due numeri si sono mossi e vanno saputi spiegare: un **buco nei dati ora chiude una run di idle** (`6e1b9be`, knob `idle_max_gap_seconds` = 600 s) — febbraio passa da 11.551,3 a 7.228,1 head-hours mentre i periodi *salgono* da 22.459 a 25.046, che è esattamente ciò che implica spezzare le run sui buchi; e il **floor sulla scala di deviazione** (`mad_floor` = 0,01 Nm) porta le anomalie di febbraio da 1.612.634 a 162.019 hit, cioè da una banda robusta che segnalava ~10,9% del mese a ~1,1%.
+- **I report committati sono stati rigenerati il 2026-08-19** su uno store ricostruito dai tre mesi del pool (55.132.433 righe, fingerprint identico a quello registrato). Due numeri si sono mossi e vanno saputi spiegare: un **buco nei dati ora chiude una run di idle** (`6e1b9be`, knob `idle_max_gap_seconds` = 600 s) — febbraio passa da 11.551,3 a 7.228,1 head-hours mentre i periodi *salgono* da 22.459 a 25.046, che è esattamente ciò che implica spezzare le run sui buchi; e il **floor sulla scala di deviazione** (`mad_floor` = 0,01 Nm) porta le anomalie di febbraio da 1.612.634 a 162.019 hit, cioè da una banda robusta che segnalava ~10,9% del mese a ~1,1%.
 - Il campione itemizzato delle anomalie copre **tutto il periodo** e non le sue prime ore; cap a `max_anomaly_items` = 5000, col totale ricalcolato via `COUNT(*)` esatto solo quando il campione si riempie davvero.
 
 ### Domande probabili

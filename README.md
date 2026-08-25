@@ -123,7 +123,7 @@ Shows the MAS system boundary, external actors, and data flows.
 
 ### C4 Container (Level 2)
 
-Shows the C4 containers — the diagram groups the eight executables into five containers — the ZeroMQ fabric (now with 3 endpoints),
+Shows the C4 containers — the diagram groups the eight executables into five containers — the ZeroMQ fabric (3 endpoints),
 database stores, and the testing/validation scripts.
 
 ![C4 Container Diagram](docs/diagrams/C4_Container.png)
@@ -401,8 +401,8 @@ rejection that was not a Bad Closure. Measured on the three-month store:
 | 2026-02..2026-04 | 31,655,161 | 1,071 | **1,096** |
 
 The bitmask reading is confirmed by the data, not assumed: 1,071 closures at
-status 65, plus 24 at status 9 and 1 at status 65 with no torque, is exactly the
-1,096 the odd-status rule returns.
+status 65 with torque, plus 24 at status 9 and 1 at status 65 with no torque,
+is exactly the 1,096 the odd-status rule returns.
 
 A closure that is neither `status == 0` nor a reject carries **no pass/fail
 verdict** — 12,461 No-Load-with-torque rows over three months — and is excluded
@@ -915,7 +915,7 @@ against a ~101 s sequential baseline on the original sweep machine, so the
 whole gain from parallel cleaning went back into the sink — the price of the
 "per-worker single-writer stores, merge at the sink" design, and the finding
 the sweep was worth running for. With the set-based merge the cost is flat
-across source count (65–72 s at month scale, N=2..16 and T=2..8 alike) and is
+across source count (65–73 s at month scale, N=2..16 and T=2..8 alike) and is
 46% of MAS N=16's wall — the same 46% it was on the original machine once both
 are measured with the set-based merge.
 
