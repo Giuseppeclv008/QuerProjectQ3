@@ -5,10 +5,12 @@ that guarded Plans 1-5.
 import glob
 import os
 
+import duckdb
 import pytest
 
 import oracle_kpi
 from analytics.config import Config
+from analytics.status import REJECT_SQL
 from analytics.tools.overview import overview
 from analytics.tools.success import success_rates
 from analytics.tools.torque import torque_stats
@@ -88,3 +90,25 @@ def test_toolkit_agrees_with_the_independent_oracle_on_one_day(cfg):
     assert r.status == "ok"
     assert r.values["capping_operations"] >= expected["capping_operations"]
     assert r.values["no_load_cycles"] >= expected["no_load_cycles"]
+
+
+def test_the_stored_reject_flag_and_the_sql_rule_agree():
+    """Cross-language parity, asserted instead of claimed.
+
+    `is_fault` is written at extraction time by C++ (`CapEvent::is_reject`);
+    REJECT_SQL re-derives the verdict from `status` at query time. README,
+    analytics-methods and status.py all state the two are the same rule --
+    this row-by-row comparison over the real store is the test behind the
+    sentence. Divergence is only reachable off the store's domain (a
+    non-finite status reads reject in C++ and errors in SQL), and the row
+    policy keeps such cells out of the store; if either half moves, this
+    counts the rows that disagree.
+    """
+    con = duckdb.connect(STORE, read_only=True)
+    try:
+        mismatched = con.execute(
+            f"SELECT COUNT(*) FROM cap_events WHERE ({REJECT_SQL}) <> is_fault"
+        ).fetchone()[0]
+    finally:
+        con.close()
+    assert mismatched == 0

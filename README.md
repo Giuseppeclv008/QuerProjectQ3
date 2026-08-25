@@ -1390,17 +1390,17 @@ it, `--pdf` logs how to install it and writes Markdown and HTML as normal.
 
 The project has **203 C++ unit tests** across 21 Google Test files — 192 in the
 default build plus the 11-case GPU/CPU differential behind `-DMAS_ENABLE_CUDA=ON`
-— plus **307
+— plus **310
 Python tests** for the analytics tier. Every test count in this
 README is asserted by `python/tests/test_readme_counts.py`, so adding a test and
 forgetting this paragraph fails the suite rather than quietly dating it.
 
 ```bash
 cd build && ctest -C Release --output-on-failure # 192 C++ tests in the default build; the 11-case GPU/CPU differential is compiled only with -DMAS_ENABLE_CUDA=ON (and skips without a device)
-cd python && ../.venv/bin/python -m pytest -q    # 307 Python tests (see the three gates below)
+cd python && ../.venv/bin/python -m pytest -q    # 310 Python tests (see the three gates below)
 ```
 
-Three gates apply to the Python suite. Two are data gates: **5 tests** need the
+Three gates apply to the Python suite. Two are data gates: **6 tests** need the
 rebuilt 3-month store (`../events_3mo.duckdb`, from `scripts/build_store.sh`)
 and skip without it, and **2 tests** need a real extracted day-file and skip
 without that. The third is a credentials gate: **2 tests** need
@@ -1410,8 +1410,8 @@ account — see
 `python/tests/test_anthropic_schema_live.py`, which is the only test in the
 suite that leaves the machine.
 
-So a fresh clone shows 9 skips; a machine with the pool extracted but no store
-shows 7; and adding a key removes 2 more.
+So a fresh clone shows 10 skips; a machine with the pool extracted but no store
+shows 8; and adding a key removes 2 more.
 
 The C++ side has gates too, and this is the only place that says so: **4 C++
 tests** can skip in the default build. Two are pool-gated — the real-day-file

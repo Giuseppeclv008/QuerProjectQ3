@@ -70,3 +70,32 @@ def test_every_repo_path_named_in_a_bash_block_exists():
                 missing.append(tok)
     assert checked > 0, "the README no longer names any script? check the regex"
     assert not missing, f"README bash blocks name missing files: {sorted(set(missing))}"
+
+
+def test_the_ask_sample_description_matches_the_committed_trace():
+    """The README's account of ask-live-sample must match the artifact.
+
+    It said "two registry-validated steps" for days after the committed
+    directory was regenerated with one -- outline.md and the reports README
+    were current while the README contradicted both. The step count is the
+    part that moves on every regeneration, so it is the part asserted:
+    every step-count claim in the README must equal the committed trace.
+    """
+    import json
+
+    trace = json.loads(
+        (_ROOT / "docs" / "reports" / "ask-live-sample" / "trace.json")
+        .read_text(encoding="utf-8"))
+    committed = len(trace["steps"])
+    words = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5}
+    claims = []
+    # \s+ not a space: the claim wraps ("one\nregistry-validated step").
+    for word in re.findall(r"(\w+)\s+registry-validated steps?\b", _README):
+        n = words.get(word.lower(), int(word) if word.isdigit() else None)
+        if n is not None:
+            claims.append(n)
+    assert claims, "README no longer states the sample's step count"
+    assert set(claims) == {committed}, (
+        f"README claims {sorted(set(claims))} registry-validated step(s); "
+        f"the committed trace.json holds {committed}"
+    )

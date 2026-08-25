@@ -197,7 +197,7 @@ measured on `events_3mo.duckdb` (55,132,433 rows, machine `MCC`, 36 heads,
 
 ## 11. Engineering
 
-- **307 Python tests, 203 C++ tests**, all green; test output pristine. Both
+- **310 Python tests, 203 C++ tests**, all green; test output pristine. Both
   counts are asserted against the sources by `test_readme_counts.py`, so the
   slide cannot drift from the suite.
 - **Golden-report regression**: a fixed store and a fixed plan must render

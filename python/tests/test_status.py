@@ -4,7 +4,9 @@ The table's 14 rows are 7 conditions x reject/no-reject, and bit 0 is the reject
 signal. This is what lets us classify the statuses the three-month store actually
 carries (0, 2, 4, 9, 65) instead of treating 4 and 9 as unknown.
 """
-from analytics.status import CONDITIONS, decode
+import duckdb
+
+from analytics.status import CONDITIONS, REJECT_SQL, decode
 
 
 def test_zero_is_a_clean_closure():
@@ -43,3 +45,23 @@ def test_multiple_conditions_are_all_reported():
     # 2 | 64 | 1 = No Load + Bad Closure, rejected.
     assert decode(67.0) == {"reject": True,
                             "conditions": ["No Load", "Bad Closure"]}
+
+
+def test_reject_sql_is_the_sql_spelling_of_the_reject_bit():
+    """REJECT_SQL and decode() must agree, negative statuses included.
+
+    Several documents state they are one rule ("mirrors mas::is_reject");
+    this is the assertion behind the claim on the Python side. The <> 0
+    form is the part a rewrite would lose: DuckDB truncates division
+    toward zero like C++, so -65 % 2 is -1, and a `% 2 = 1` spelling
+    would read a rejected closure as clean. The pool has never carried a
+    negative status; the failure mode is silent, which is why it is
+    pinned here rather than trusted.
+    """
+    con = duckdb.connect()
+    for status in (0.0, 2.0, 3.0, 4.0, 9.0, 65.0, 67.0, -2.0, -65.0):
+        sql_reject = con.execute(
+            f"SELECT {REJECT_SQL} FROM (SELECT CAST(? AS REAL) AS status)",
+            [status],
+        ).fetchone()[0]
+        assert sql_reject == decode(status)["reject"], status
