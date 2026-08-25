@@ -137,7 +137,7 @@ DispatchSummary run_coordinator(const std::vector<WorkItem>& items,
         }
     };
 
-    // Registration gate (Plan 5): with expected_workers > 0, hold the initial
+    // Registration gate: with expected_workers > 0, hold the initial
     // dispatch until that many workers have said hello, so PUSH round-robins
     // over all their pipes instead of queueing everything into the first one.
     if (cfg.expected_workers > 0) {

@@ -15,7 +15,7 @@ namespace {
 
 // In parquet mode the store CleaningWorker is constructed with is never
 // written to: clean_fn builds and closes its own ParquetEventStore per work
-// item (Task 3 spec §3.1) and ignores the store handed to it. This exists
+// item (parquet-store spec §3.1) and ignores the store handed to it. This exists
 // only so CleaningWorker always has a real IEventStore& to wrap in its own
 // BeatingStore, without opening a DuckDB file at what is, in parquet mode, a
 // directory path.

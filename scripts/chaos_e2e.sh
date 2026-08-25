@@ -98,7 +98,7 @@ grep -q "dead (silent" "$T/coord.log" || { echo "FAIL: no death detected"; exit 
 grep -q "re-dispatch" "$T/coord.log" || { echo "FAIL: no re-dispatch"; exit 1; }
 
 # Merge every store, the written-off one included: intact -> harmless
-# idempotent duplicates; corrupt -> mas_merge skips it loudly (Task 5).
+# idempotent duplicates; corrupt -> mas_merge skips it loudly.
 "$BUILD/mas_merge" "$T/merged.duckdb" "$MACHINE" \
     "$T/w1.duckdb" "$T/w2.duckdb" 2>"$T/merge.log" || { cat "$T/merge.log"; exit 1; }
 cat "$T/merge.log"

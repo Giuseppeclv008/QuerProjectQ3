@@ -19,7 +19,7 @@ int main(int argc, char** argv) {
         const std::string work_ep = argv[1], result_ep = argv[2], hb_ep = argv[3];
 
         // Optional "--workers N" immediately after <hb_endpoint>: gates the
-        // initial dispatch on N workers registering (Plan 5 fix for the PUSH
+        // initial dispatch on N workers registering (the fix for the PUSH
         // slow-joiner capture). Absent -> expected_workers stays 0, the old
         // dispatch-immediately behavior existing callers depend on.
         int next = 4;

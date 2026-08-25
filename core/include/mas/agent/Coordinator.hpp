@@ -29,7 +29,7 @@ struct CoordinatorConfig {
     // (hello heartbeat or result). 0 = dispatch immediately (previous
     // behavior; ZMQ PUSH then queues everything into the first connected
     // pipe — fine for 1 worker or tests, wrong for measuring N-worker
-    // scaling: the slow-joiner capture found by the Plan 5 bench sweep).
+    // scaling: the slow-joiner capture found by the bench sweep).
     int expected_workers = 0;
     // Give up waiting for registrations after this long: proceed degraded
     // if at least one worker showed up, abort the run if none did.
@@ -43,7 +43,7 @@ using ClockFn = std::function<std::chrono::steady_clock::time_point()>;
 // cfg.expected_workers > 0, first gate the initial dispatch on that many
 // workers registering (hello heartbeat or result) — avoids ZMQ PUSH's
 // slow-joiner capture, where sending before any connect lands queues the
-// whole batch into the first pipe (Plan 5 bench sweep) — giving up after
+// whole batch into the first pipe — giving up after
 // registration_timeout (degraded start if some registered, abort if none).
 // Then: PUSH every item, then tick: take one lifecycle frame per tick (a
 // result, a CLAIM naming the item's holder, or a BYE announcing an idle
