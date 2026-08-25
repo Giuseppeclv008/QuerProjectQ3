@@ -1,9 +1,12 @@
 #!/usr/bin/env python
 """Where does the Parquet read penalty come from -- the format, or the dedup?
 
-"Parquet reads 5.2x slower" invites the wrong conclusion, that the columnar
-format is slow. This peels the read view apart one layer at a time on a single
-aggregate over the whole month, so the cost lands where it belongs.
+A whole-view ratio invites the wrong conclusion, that the columnar format is
+slow. This peels the read view apart one layer at a time on a single aggregate
+over the whole month, so the cost lands where it belongs. The 5.2x that
+prompted it was measured through the ORDER BY the last layer below records as
+withdrawn on 2026-08-14; without that sort the penalty is 2.41x.
+docs/bench/results.md carries both, with the box and the date.
 
 usage: decompose.py <duckdb store> <parquet dir> [repeats]
 """
