@@ -35,7 +35,7 @@ namespace mas {
 // version appended to it, which handed every property of the user's name to
 // the temp: glob metacharacters ([xy], *, ?) reached the read_parquet() call
 // that verifies exports, which matched a different file than the one written
-// -- refusing a good export, or worse, verifying a decoy (C1). A basename near
+// -- refusing a good export, or worse, verifying a decoy. A basename near
 // NAME_MAX went over the limit once the suffix landed, failing with an IO
 // error that quoted the temp and never said the name was the problem. And a
 // destination that is a symlink dragged the temp along with wherever it

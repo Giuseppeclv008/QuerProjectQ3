@@ -22,7 +22,8 @@ DuckDbEventStore::DuckDbEventStore(const std::string& db_path,
     } catch (const std::exception& e) {
         throw std::runtime_error("cannot open DuckDB database " + db_path + ": " + e.what());
     }
-    // Spec §6 schema; is_reset added (Plan 1 folded ResetMarker into CapEvent).
+    // Spec §6 schema, plus is_reset: a counter reset is a CapEvent carrying a
+    // marker, not a row type of its own.
     //
     // The identity is (machine_id, head_id, ts), NOT (..., cap_seq). cap_seq is
     // the PLC's Count register, and the register resets. Measured on this pool:
@@ -193,11 +194,11 @@ void DuckDbEventStore::merge_from(const std::string& other_db_path) {
             SELECT machine_id, head_id, ts, cap_seq, app_torque, status, delta, is_fault, aggregated, is_reset
             FROM src.cap_events)sql");
     } catch (...) {
-        // The alias must not survive a failed merge: mas_merge (Task 5) now
-        // skips-and-continues past an unopenable source, so a left-attached
-        // "src" from one corrupt-but-attachable store would poison every
-        // later ATTACH ... AS src in the same loop. Best effort: a DETACH
-        // failure inside the catch must not mask the merge error itself.
+        // The alias must not survive a failed merge: mas_merge skips and
+        // continues past an unopenable source, so a left-attached "src" from
+        // one corrupt-but-attachable store would poison every later
+        // ATTACH ... AS src in the same loop. Best effort: a DETACH failure
+        // inside the catch must not mask the merge error itself.
         auto res = impl_->con.Query("DETACH src");
         (void)res;
         throw;

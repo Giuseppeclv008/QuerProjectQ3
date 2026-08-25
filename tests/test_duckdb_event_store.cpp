@@ -211,7 +211,7 @@ TEST(DuckDbEventStore, MergeFromUnionsStoresIdempotently) {
     removeDb(a); removeDb(b); removeDb(dst);
 }
 
-// --- Deferred from Plan 2's final review ---
+// --- Constructor failure, and a batch larger than the pipeline's ---
 
 TEST(DuckDbEventStore, ConstructorThrowsWhenParentDirectoryMissing) {
     // The ctor's open-failure path was untested. A path inside a directory
@@ -255,7 +255,7 @@ TEST(DuckDbEventStore, WriteHandlesBatchLargerThanPipelineKBatchSize) {
     removeDb(path);
 }
 
-// --- Final-review fix wave (Plan 4) ---
+// --- merge_from's failure path ---
 
 TEST(DuckDbEventStore, MergeFromDetachesSourceOnInsertFailureSoAliasIsNotPoisoned) {
     // merge_from's INSERT can throw after a successful ATTACH (e.g. a source

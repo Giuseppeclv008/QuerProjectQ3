@@ -68,7 +68,7 @@ TEST(AtomicPublish, PublishesThroughATempAndLeavesNone) {
     // one filesystem) but its name owes nothing to the destination's: a name
     // derived from the destination inherits its length and its glob
     // metacharacters, which is how export verification came to read the wrong
-    // file (C1) and how a near-NAME_MAX basename became unpublishable.
+    // file, and how a near-NAME_MAX basename became unpublishable.
     EXPECT_EQ(fs::path(seen_tmp).parent_path(), d) << seen_tmp;
     const auto tmp_base = fs::path(seen_tmp).filename().string();
     EXPECT_TRUE(tmp_base.rfind(".mas-publish.", 0) == 0) << tmp_base;

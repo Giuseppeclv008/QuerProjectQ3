@@ -32,7 +32,7 @@ long long clean_file(const std::string& in_path, IEventStore& store,
 
 long long clean_file(const std::string& in_path, const std::string& out_path,
                      const std::string& machine_id) {
-    {   // preserve Plan-1 semantics: missing input never creates the output file
+    {   // probe first: a missing input must never create the output file
         CsvRawReader probe(in_path);
         if (!probe.is_open()) return -1;
     }

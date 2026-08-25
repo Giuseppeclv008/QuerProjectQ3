@@ -19,7 +19,7 @@ struct CleanFileStats {
 long long clean_file(const std::string& in_path, IEventStore& store,
                      CleanFileStats* stats = nullptr);
 
-// CSV convenience wrapper (Plan-1 behavior): returns the event count;
+// CSV convenience wrapper: returns the event count;
 // -1 if in_path cannot be opened; -2 if out_path cannot be created or a
 // write fails.
 long long clean_file(const std::string& in_path, const std::string& out_path,

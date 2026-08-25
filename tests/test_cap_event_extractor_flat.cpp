@@ -237,9 +237,9 @@ TEST(ExtractorFlat, OverIntJumpSaturatesAndStaysAggregated) {
 
 TEST(DeltaPolicy, SaturatedDeltaBoundaries) {
     // Host-compiled unit test of the exact function delta_kernel executes on
-    // the device -- the divergence C2 flagged (kernel kept the truncating
-    // cast after 9f0f901 fixed both CPU extractors) is now caught on a
-    // machine with no CUDA toolchain.
+    // the device -- the divergence a review found (the kernel kept the
+    // truncating cast after 9f0f901 fixed both CPU extractors) is now caught
+    // on a machine with no CUDA toolchain.
     EXPECT_EQ(mas::saturated_delta(100, 100), 0);                    // held
     EXPECT_EQ(mas::saturated_delta(99, 100), 0);                     // reset
     EXPECT_EQ(mas::saturated_delta(101, 100), 1);                    // single cap
