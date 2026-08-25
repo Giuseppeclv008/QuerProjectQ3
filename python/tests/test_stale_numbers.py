@@ -10,8 +10,10 @@ justified its denominator with 7,486 idle head-hours (7,228.1 after the
 idle-gap fix). Both read as current, neither was, and nothing told the reader.
 
 Scope is the production comments of both tiers -- `python/analytics/`, the
-C++ under `core/` and `tests/`, and the benchmark harnesses under `bench/`,
-which quoted the retired pair "21.9M events vs 14.4M rows" until this week.
+C++ under `core/` and `tests/`, the benchmark harnesses under `bench/`
+(which quoted the retired pair "21.9M events vs 14.4M rows" until this week),
+the top-level `python/` oracles and contenders (where the last unqualified
+benchmark figure lived), `scripts/` and the root `CMakeLists.txt`.
 Dated entries under `docs/` are the record of
 what was measured when and must keep their figures, and `python/tests/` is out
 for the same reason: a test docstring naming the number a regression produced
@@ -31,11 +33,17 @@ from pathlib import Path
 _ROOT = Path(__file__).resolve().parents[2]
 
 # Files whose comments can only mean "what the code measures today".
+# (rel, globs, recurse) -- `python` is scanned non-recursively on purpose:
+# python/analytics has its own entry, and python/tests stays out by the policy
+# above; the top-level oracles and contenders are production comments.
 _SCOPES = (
-    ("python/analytics", ("*.py",)),
-    ("core", ("*.cpp", "*.hpp", "*.cu")),
-    ("tests", ("*.cpp", "*.hpp", "*.cu")),
-    ("bench", ("*.py", "*.sh", "*.cpp")),
+    ("python/analytics", ("*.py",), True),
+    ("core", ("*.cpp", "*.hpp", "*.cu"), True),
+    ("tests", ("*.cpp", "*.hpp", "*.cu"), True),
+    ("bench", ("*.py", "*.sh", "*.cpp"), True),
+    ("python", ("*.py",), False),
+    ("scripts", ("*.sh",), True),
+    (".", ("CMakeLists.txt",), False),
 )
 
 # retired figure -> what it was, and what stands in its place
@@ -49,15 +57,25 @@ _RETIRED = {
                  "idle or deviation run is committed, so quote February or nothing",
     "7,486": "February idle head-hours on the retired store; current: 7,228.1",
     "11,551.3": "February idle head-hours before the idle-gap fix; current: 7,228.1",
+    "14,372,237": "February rows under the retired cap_seq key; the same 28 "
+                  "day-files now persist 21,872,663",
+    "1,612,634": "February deviation hits from the uncalibrated raw-MAD band; "
+                 "current: 162,019",
+    "22,459": "February idle periods before the idle-gap fix; current: 25,046",
 }
+# Not in the table, deliberately: 371/585/600/75 (the retired status==65 and
+# per-head reject counts) are three digits with no separator -- 600 is the live
+# idle_max_gap_seconds default -- so a sweep for them would flag ordinary
+# constants. The boundaries are all that keep the short entries honest.
 
 
 def _scanned():
     """Every file in scope, so a moved directory fails loudly instead of passing."""
-    for rel, globs in _SCOPES:
+    for rel, globs, recurse in _SCOPES:
         root = _ROOT / rel
         assert root.is_dir(), f"{rel} is not a directory; has it moved?"
-        found = [p for g in globs for p in root.rglob(g)]
+        find = root.rglob if recurse else root.glob
+        found = [p for g in globs for p in find(g)]
         assert found, f"{rel} holds no {'/'.join(globs)}; has it moved?"
         yield from sorted(found)
 
