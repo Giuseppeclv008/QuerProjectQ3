@@ -8,11 +8,8 @@ namespace mas {
 
 // DuckDB's C++ API reports failure in the result object rather than by
 // throwing, so every call site has to check `HasError()` -- and a call site
-// that forgets carries on with a result that holds nothing. Three stores each
-// grew their own copy of this check in an anonymous namespace; they are the
-// same three lines, and the next store would have written them a fourth time.
-// Extracted for the same reason SqlQuote.hpp was: before a second user needs
-// it, not after a third.
+// that forgets carries on with a result that holds nothing. One shared copy of
+// that check, so a new store cannot quietly grow its own fourth.
 
 // Run `sql` for its effect. Throws std::runtime_error carrying DuckDB's own
 // message, which names the statement and the position.

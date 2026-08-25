@@ -92,26 +92,14 @@ ExportResult export_store_to_parquet(const std::string& db_path,
     // nothing -- which would silently turn the guard off.
     //
     // The fallback is a real fallback: it is reached, it fires, and where it
-    // fires the guard is weaker. Two previous versions of this comment claimed
-    // otherwise -- first that no input reached it, then that it could never
-    // fire -- and both were wrong by construction, so this one states the
-    // behaviour instead of arguing for a bound.
-    //
-    // What makes weakly_canonical fail while exists() succeeds: exists() stats
-    // relative to the cwd, weakly_canonical goes through the absolute form. In
-    // a cwd longer than PATH_MAX both calls here set their error_code while
-    // both arguments stat cleanly, and the string comparison is what runs.
-    // Measured from a 1259-byte cwd on APFS:
-    //
-    //   mas_export s.duckdb s.duckdb.wal    -> refused, by string equality
-    //   mas_export s.duckdb ./s.duckdb.wal  -> EXPORTED ONTO THE WAL, rc=0
-    //
-    // That second line is the honest limit of this guard: the "./" spelling is
-    // precisely what weakly_canonical was added to catch, and in the state
-    // where canonicalization is unavailable there is nothing left to catch it
-    // with. The fallback still buys the exact spelling, which is the one a
-    // script produces; it does not buy spelling-independence, and no comparison
-    // here can while the paths cannot be resolved.
+    // fires the guard is weaker. exists() stats relative to the cwd while
+    // weakly_canonical goes through the absolute form, so in a cwd past
+    // PATH_MAX both resolutions fail while both arguments stat cleanly, and the
+    // string comparison is what runs. There `s.duckdb.wal` is still refused and
+    // `./s.duckdb.wal` is not -- and the "./" spelling is precisely what
+    // weakly_canonical was added to catch. The fallback buys the exact
+    // spelling, which is the one a script produces; it cannot buy
+    // spelling-independence while the paths will not resolve.
     //
     // Case is a second such limit, on this platform rather than in this code:
     // weakly_canonical does not case-fold, so on a case-insensitive volume

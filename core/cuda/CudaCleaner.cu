@@ -264,9 +264,8 @@ __global__ void delta_kernel(const double* count, const double* torque,
     ev.app_torque = torque[cur];
     ev.status = status[cur];
     ev.row_index = i;
-    // Shared saturation policy (DeltaPolicy.hpp): an over-int jump must not
-    // truncate into a small delta -- and never into <= 1, which would also
-    // clear `aggregated` on the host side.
+    // The same saturation policy the two CPU extractors call; the failure it
+    // prevents is in DeltaPolicy.hpp.
     ev.delta = saturated_delta(c_cur, c_prv);
     ev.head_id = static_cast<short>(h + 1);
     ev.reset = (c_cur < c_prv) ? 1u : 0u;

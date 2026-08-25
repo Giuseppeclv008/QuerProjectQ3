@@ -66,10 +66,10 @@ DuckDbEventStore::DuckDbEventStore(const std::string& db_path,
         auto tagged = query_or_throw(impl_->con,
             "SELECT value FROM store_meta WHERE key = 'event_identity'");
         if (tagged->RowCount() == 0) {
-            // Ask the live index, not the row count. An old file whose first run
-            // died before it wrote anything is still keyed on cap_seq, and a
-            // COUNT(*) test waves it through -- then stamps store_meta as
-            // migrated, so this refusal can never fire on that file again.
+            // Ask the live index, not the row count: an old file whose first
+            // run died before writing anything is still keyed on cap_seq, and
+            // the stamp written below is irreversible, so a wrong answer here
+            // is permanent for that file.
             //
             // The probe is two inserts differing only in ts: the current key
             // accepts both, UNIQUE(..., cap_seq) rejects the second. Doing it by
@@ -80,14 +80,12 @@ DuckDbEventStore::DuckDbEventStore(const std::string& db_path,
             // "this file is not a cap_events store at all": the first insert
             // failing is a schema problem and is reported as itself.
             //
-            // Narrower than it looks, and the stamp it writes is irreversible:
-            // the probe only asks whether the *second* insert is rejected, so a
-            // cap_events table carrying no unique constraint at all accepts
-            // both, passes, and is stamped 'event_identity' as migrated. That
-            // file is not the one this guard was built for -- it is not a store
-            // any version of this code produced -- and the alternative is
-            // reading duckdb_constraints(), whose shape across DuckDB versions
-            // is exactly what the behavioural probe was chosen to avoid.
+            // Narrower than it looks: the probe only asks whether the *second*
+            // insert is rejected, so a cap_events table carrying no unique
+            // constraint at all accepts both, passes, and is stamped as
+            // migrated. That file is not one any version of this code produced,
+            // and the alternative is reading duckdb_constraints(), whose shape
+            // across DuckDB versions is exactly what this probe avoids.
             exec_or_throw(impl_->con, "BEGIN TRANSACTION");
             static constexpr const char* kProbe =
                 "INSERT INTO cap_events VALUES ('__mas_identity_probe__',-1,";

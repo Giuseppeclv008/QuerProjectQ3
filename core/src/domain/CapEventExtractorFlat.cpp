@@ -83,9 +83,8 @@ void extract_flat(const std::vector<std::string>& ts,
             e.cap_seq = c_cur;
             e.app_torque = torque[cur + h];
             e.status = status[cur + h];
-            // Saturating policy shared with the sequential extractor and the
-            // CUDA kernel (DeltaPolicy.hpp): an over-int jump must not
-            // truncate into a small delta, and aggregated stays true.
+            // One saturating policy for this extractor, the sequential one and
+            // the CUDA kernel; the failure it prevents is in DeltaPolicy.hpp.
             e.delta = saturated_delta(c_cur, c_prv);
             e.is_fault = is_reject(status[cur + h]);
             e.aggregated = e.delta > 1;

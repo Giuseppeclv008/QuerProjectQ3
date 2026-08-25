@@ -68,21 +68,17 @@ ParquetEventStore::~ParquetEventStore() {
     // Cleanup only. Publishing a file is an explicit act -- close() -- and this
     // is not it.
     //
-    // The destructor used to call close(), which made every escape between the
-    // first write() and the close() a publication: the rows accepted so far
-    // became a file in the directory the reader globs, with nothing to mark it
-    // as partial. A failure inside write() is only the nearest such escape. The
-    // one that actually happens is a throw *between* writes -- BeatingStore
-    // calls inner_.write() and then beat_(), and beat_() reaches
-    // ZmqPushSink::send, which throws when the coordinator stops draining, the
-    // exact case the resilience design is built around. No latch inside this
-    // class can see that, and the count check cannot either: `n` and `buf`
-    // agree perfectly, because both describe the same truncated set.
+    // The rule is the one that does not need the ways a clean can fail to be
+    // enumerated: an unfinished store writes nothing. Enumerating them does not
+    // work, because the escape that actually happens is a throw *between*
+    // writes -- BeatingStore calls inner_.write() and then beat_(), which
+    // reaches ZmqPushSink::send and throws when the coordinator stops draining.
+    // No latch in this class sees that, and the count check cannot either: `n`
+    // and `buf` agree perfectly, both describing the same truncated set.
     //
-    // So the rule is the one that does not depend on enumerating the ways a
-    // clean can fail: an unfinished store writes nothing. All four call sites
-    // close() on their success path, and abandon() stays for the failure they
-    // detect themselves (a clean that returns < 0 without throwing).
+    // All four call sites close() on their success path, and abandon() stays
+    // for the failure they detect themselves (a clean that returns < 0 without
+    // throwing).
     if (impl_->appender) {
         // Dropping it flushes into buf -- DuckDB's destructor calls Close()
         // unless an exception is unwinding -- which is harmless here only
@@ -105,12 +101,8 @@ void ParquetEventStore::write(std::span<const CapEvent> events) {
     // before the empty-span shortcut, so a published store rejects every write
     // rather than only the non-empty ones.
     //
-    // `failed` deliberately gets no matching check, so that asymmetry stays:
-    // write({}) on a failed store returns quietly, and a non-empty one is
-    // refused only incidentally, because DuckDB's Appender is stuck mid-row --
-    // the next row's machine_id lands in the still-open ts column and fails the
-    // cast there. Nothing rests on either: `failed` is latched and close()
-    // refuses on it.
+    // `failed` deliberately gets no matching check, and nothing rests on the
+    // asymmetry: `failed` is latched, and close() is where it is refused.
     if (impl_->closed)
         throw std::runtime_error(
             "write() after close() or abandon() on " + impl_->path);
@@ -210,12 +202,10 @@ void ParquetEventStore::close() {
     //
     // No test reaches this, and that is a statement about the check rather than
     // a gap to fill: every public route to a disagreement sets `failed` first
-    // and is refused above. It is a backstop against a future change to the
-    // buffering, so the only thing that could exercise it is the bug it exists
-    // to catch. Said here because a test asserting only the exception type
-    // *appeared* to cover it -- both refusals throw runtime_error, so deleting
-    // the latch above left the suite green with this check standing in for it.
-    // The tests now assert on the message for that reason.
+    // and is refused above. Being a backstop, the only thing that could
+    // exercise it is the bug it exists to catch -- which is also why the tests
+    // assert on the refusal message rather than merely on runtime_error, since
+    // both refusals in close() throw that same type.
     const long long in_table = scalar_or_throw(impl_->con, "SELECT COUNT(*) FROM buf");
     if (in_table != impl_->n)
         throw std::runtime_error(

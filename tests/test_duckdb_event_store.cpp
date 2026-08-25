@@ -224,17 +224,11 @@ TEST(DuckDbEventStore, ConstructorThrowsWhenParentDirectoryMissing) {
 }
 
 TEST(DuckDbEventStore, WriteHandlesBatchLargerThanPipelineKBatchSize) {
-    // Deferral note: this was filed as a "kBatch flush-boundary" test on the
-    // premise that DuckDbEventStore.cpp has an internal kBatch constant
-    // whose flush branch is untested. On inspection, no such constant or
-    // branch exists in this file: write() appends the whole input span via
-    // one duckdb::Appender session unconditionally, regardless of size.
-    // kBatch (=8192) actually lives in Pipeline.cpp, where clean_file()
-    // chunks CapEvents before calling store.write() repeatedly — that's a
-    // different component. Kept as a regression test at the same scale: it
-    // exercises write() with kBatch+1 events in a single call (larger than
-    // any existing test), confirming the Appender-based path has no hidden
-    // row-count limitation of its own.
+    // write() appends the whole span through one Appender session whatever its
+    // size, so there is no flush boundary in this class to sit either side of.
+    // kBatch (=8192) lives in Pipeline.cpp, which chunks events before calling
+    // write() repeatedly. This pins the absence: one call, kBatch+1 events, no
+    // row-count limit of its own.
     const std::string path = mas::test::temp_artifact("t_store_large_batch.duckdb");
     removeDb(path);
     mas::DuckDbEventStore store(path, "MCC1");

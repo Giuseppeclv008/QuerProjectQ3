@@ -30,10 +30,8 @@ void CapEventExtractor::process(const RawRow& row, std::vector<CapEvent>& out) {
             continue;
         }
         if (c > *last) {                  // real cap applied
-            // Saturating policy shared with the flat extractor and the CUDA
-            // kernel (DeltaPolicy.hpp): an over-int jump must not truncate
-            // into a small delta (and never into <= 1, which would also
-            // clear `aggregated`).
+            // One saturating policy for this extractor, the flat one and the
+            // CUDA kernel; the failure it prevents is in DeltaPolicy.hpp.
             out.push_back(makeEvent(row, h, c, saturated_delta(c, *last), false));
             last = c;
         }

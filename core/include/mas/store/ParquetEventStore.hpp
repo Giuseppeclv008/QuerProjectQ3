@@ -42,12 +42,10 @@ public:
     // that failed without throwing -- one that returns a negative count -- so
     // the intent is in the call site rather than inferred from a scope exit.
     //
-    // Note what it no longer carries: it used to be what stopped the destructor
-    // from writing a valid, empty Parquet that the reader's glob could not tell
-    // from a day with no events. The destructor writes nothing at all now, so
-    // omitting this call would also produce no file. What it still buys is the
-    // explicit statement and one guard: a close() reached later -- from a
-    // catch-all somebody adds, say -- finds the store already spent.
+    // It is not what keeps a failed day from leaving a file: the destructor
+    // writes nothing regardless. What it buys is the explicit statement, and
+    // one guard -- a close() reached later, from a catch-all somebody adds,
+    // finds the store already spent.
     //
     // The DuckDB backend has no equivalent hazard: a failed run simply lacks
     // the rows, and count() shows the shortfall.
