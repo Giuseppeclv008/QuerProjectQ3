@@ -2,11 +2,11 @@
 
 Two things happen here that happen nowhere else:
 
-1. Every exception a tool can raise becomes a ToolResult.error. Plan 6 left one
-   real gap -- store.period_clause raises ValueError on an unparseable period --
-   and deferred it because a human typed the period. A language model types it
-   now, so the gap is closed here, once, for all eight tools rather than eight
-   times inside them.
+1. Every exception a tool can raise becomes a ToolResult.error. One real gap
+   stayed open while a human typed the period -- store.period_clause raises
+   ValueError on an unparseable one. A language model types it now, so the gap
+   is closed here, once, for all eight tools rather than eight times inside
+   them.
 
 2. Nulls are stripped from the arguments. The plan schema is a closed object that
    requires every key, so the model emits `"by": null` for arguments it does not

@@ -1,4 +1,4 @@
-"""The tool contract. Plan 7's agent consumes exactly this and nothing else.
+"""The tool contract. The report agent consumes exactly this and nothing else.
 
 Two rules make hallucinated statistics structurally impossible downstream:
   1. Every number a tool returns is accompanied by the provenance that justifies

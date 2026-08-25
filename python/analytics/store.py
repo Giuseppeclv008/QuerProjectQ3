@@ -12,12 +12,12 @@ import duckdb
 def store_fingerprint(cfg):
     """Identify the data a run was computed against.
 
-    Nothing beyond a basename used to identify the store, so two stores
-    differing 2.71x in row count (the retired cap_seq-keyed build vs the
-    rebuilt one) were indistinguishable from a report or its trace -- which is
-    exactly how a committed report and a doc came to quote different sigmas
-    for the same measurement. Four numbers make "which store produced this?"
-    a one-line check instead of archaeology.
+    A basename identifies a file, not its contents: two builds of the same
+    machine's events can differ severalfold in row count and still be
+    indistinguishable from a report or its trace, which is how a committed
+    report and a doc come to quote different figures for the same measurement.
+    Four numbers make "which store produced this?" a one-line check instead of
+    archaeology.
     """
     con = connect(cfg)
     n, ts_min, ts_max, heads = con.execute(
@@ -63,45 +63,25 @@ def connect(cfg):
     # moving the dedup to the read side, and the reason bench/read_bench.py
     # exists.
     #
-    # There is deliberately NO trailing ORDER BY, and the reasoning that once
-    # put one here was wrong twice over.
+    # Deliberately no trailing ORDER BY. It could not make "which row of a
+    # duplicate group survives" deterministic -- the sort runs after the group
+    # is collapsed, and every row of a group compares equal on the DISTINCT ON
+    # key -- and no such guarantee is needed: duplicates come from a work item
+    # re-dispatched after a worker was declared dead, so they are byte-identical
+    # by construction (DuckDbEventStore::merge_all, spec §3). It cost 2.7-3.1x
+    # on the read path, measured in bench/parquet-comparison/.
     #
-    # It claimed the sort made "which row of a duplicate group survives"
-    # deterministic. EXPLAIN puts ORDER_BY *above* HASH_GROUP_BY, so it runs
-    # after the group has already been collapsed and cannot influence the
-    # choice. Sorting by the DISTINCT ON key could not break a tie in any case:
-    # every row in a duplicate group compares equal on it. Adding the ORDER BY
-    # did change the surviving row in a two-file experiment (999 -> 111), but
-    # ASC and DESC agreed with each other -- so what moved was the plan, not a
-    # tie-break, and nothing about it is a guarantee.
-    #
-    # And the guarantee was never needed. Duplicates arise only when a work
-    # item is re-dispatched after a worker is declared dead, and those rows are
-    # byte-identical by construction -- same input file, same extraction (see
-    # DuckDbEventStore::merge_all and spec §3). Whichever row survives, the
-    # content is the same.
-    #
-    # It cost 2.7-3.1x on the read path for that: 1.386 s against 0.516 s and
-    # 1.254 s against 0.402 s on the month store, measured in
-    # bench/parquet-comparison/decompose*.out.
-    #
-    # What was true, and still is: float aggregates are NOT bit-identical
-    # against the DuckDB-native backend. STDDEV_SAMP/AVG/... run as a parallel
-    # partial-aggregate/combine once DuckDB parallelises the scan, and combine
-    # order follows neither scan order nor any ORDER BY. The 8-row fixture runs
-    # single-threaded and agrees exactly, which is an artifact of its size, not
-    # a property of this view -- test_backend_parity.py compares floats with a
-    # relative tolerance for that reason.
-    #
-    # Tools that need ordered rows say so themselves (idle.py, anomaly.py,
-    # torque.py all carry their own ORDER BY), so none of them depended on this.
+    # Float aggregates are not bit-identical against the DuckDB-native backend
+    # either way: STDDEV_SAMP/AVG/... run as a parallel partial-aggregate/
+    # combine, and combine order follows neither scan order nor any ORDER BY --
+    # which is why test_backend_parity.py compares floats with a relative
+    # tolerance. Tools that need ordered rows carry their own ORDER BY
+    # (idle.py, anomaly.py, torque.py).
+
     # read_parquet takes the glob as a SQL string literal, so the path is
-    # spliced, not bound -- the plan's Global Constraints require it to go
-    # through the same doubling `mas::sql_quote` applies on the C++ side. The
-    # C++ stores are tested against a path containing an apostrophe; without
-    # this the Python reader raised a ParserException on the identical path the
-    # DuckDB backend opened without complaint, which is a backend asymmetry the
-    # parity suite exists to catch.
+    # spliced, not bound: it goes through the same quote doubling
+    # `mas::sql_quote` applies on the C++ side, which the parity suite checks
+    # against a path containing an apostrophe.
     quoted = glob.replace("'", "''")
     con.execute(
         "CREATE VIEW cap_events AS "

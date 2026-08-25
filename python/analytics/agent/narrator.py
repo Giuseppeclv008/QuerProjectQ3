@@ -45,27 +45,26 @@ _SCHEMA = {
 }
 
 
-# A tool's list-valued results are either an analytic grouping -- bounded by the
-# head count (36 here, 48 on the brief's example machine) or by the days in a
-# period -- or a hit list, which is bounded by nothing. On the rebuilt store a
-# single month is enough to show it: February alone gives `anomalies` 162,019
-# deviation hits and `idle_periods` 25,046 periods, and the three months hold
-# more. Serialising those in full builds a multi-megabyte prompt that
-# no request can carry, so `ask` would fail on every question about real data.
-# The cap (cfg.narrator_max_items) passes every grouping through whole and
-# truncates only the hit lists, which is what the narrator needs: the tools
-# already return their counts alongside, and the narrator is forbidden to compute
-# anything from the items. It is configurable because a local model's context is
-# a fraction of a hosted one's.
 _MAX_STR_CHARS = 4000    # a single error message or free-text field
 
 
 def _bounded(value, limit):
     """`value` with long lists replaced by their length and a sample, and long
-    strings truncated with a note. The cap must cover EVERYTHING that reaches
-    the prompt: values, message, and provenance alike -- a 100,000-element
-    heads list in provenance once produced a 689,200-character prompt, and a
-    500 KB error message went through whole."""
+    strings truncated with a note.
+
+    A tool's list-valued result is either an analytic grouping -- bounded by the
+    head count, or by the days in a period -- or a hit list, bounded by nothing:
+    February alone gives `anomalies` 162,019 deviation hits and `idle_periods`
+    25,046 periods. Serialising those whole builds a prompt no request can
+    carry, so `ask` would fail on every question about real data. The cap
+    (cfg.narrator_max_items, configurable because a local model's context is a
+    fraction of a hosted one's) passes every grouping through whole and
+    truncates only the hit lists: the tools return their counts alongside, and
+    the narrator is forbidden to compute anything from the items.
+
+    The cap must cover EVERYTHING that reaches the prompt -- values, message and
+    provenance alike, long strings included, not just the values dict.
+    """
     if isinstance(value, str) and len(value) > _MAX_STR_CHARS:
         return (value[:_MAX_STR_CHARS] +
                 f" ... [truncated {len(value) - _MAX_STR_CHARS} of "
@@ -120,22 +119,16 @@ def _unsubstantiated(findings):
     """Why these findings are worse than the template, or None if they are not.
 
     Structured outputs guarantee a string arrives in the `findings` field; they
-    guarantee nothing about it saying anything. A local 7B, handed real results,
-    returned exactly this and nothing else:
+    guarantee nothing about it saying anything. Handed real results, a local 7B
+    announced its findings and stopped on the colon, the promised list never
+    arriving (the reply is quoted in docs/validation-log.md, 2026-07-26). The
+    deterministic summary names the drift verdict and the correlation spread, so
+    falling back is a straight improvement, and the limits section says why.
 
-        "The analysis ... reveals several key insights and potential issues.
-         Here's a summary of the findings from both tools:"
-
-    An announcement of findings rather than findings: it ends on a colon and the
-    promised list never arrives. The deterministic summary would have named the
-    drift verdict and the correlation spread, so falling back is a straight
-    improvement, and the limits section says why.
-
-    The test is the bullet, not the number. That reply *does* contain digits
-    ("heads 1 through 36", "2026"), so a digit check would have passed it -- while
-    a perfectly good one-line finding may legitimately carry no number at all.
-    What it lacks is the Markdown bullet the prompt asks for, and every real
-    findings section has at least one.
+    The test is the bullet, not the number: that reply carried digits, so a
+    digit check would have passed it, while a good one-line finding may
+    legitimately carry none. What it lacks is the Markdown bullet the prompt
+    asks for, and every real findings section has at least one.
     """
     if not findings or not findings.strip():
         return "the model returned an empty findings section"

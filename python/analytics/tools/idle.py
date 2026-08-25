@@ -25,12 +25,12 @@ def idle_periods(cfg, period=None, min_seconds=None):
     con = connect(cfg)
     where, params = scope_clause(cfg, period)
 
-    # Two things end a run, and the second one used to be missing. A non-no-load
-    # row ends it (the island key), and so does a hole: consecutive no-load rows
-    # further apart than max_gap are not one sustained run, because the machine
-    # emitted nothing in between. Without that break, duration is MAX - MIN over
-    # a span that includes the downtime -- six no-load cycles either side of a
-    # five-day stop came back as one 120-hour "idle period".
+    # Two things end a run. A non-no-load row ends it (the island key), and so
+    # does a hole: consecutive no-load rows further apart than max_gap are not
+    # one sustained run, because the machine emitted nothing in between.
+    # Without that break, duration is MAX - MIN over a span that includes the
+    # downtime -- six no-load cycles either side of a five-day stop come back
+    # as one 120-hour "idle period".
     rows = con.execute(f"""
         WITH marked AS (
             SELECT head_id, ts, cap_seq,

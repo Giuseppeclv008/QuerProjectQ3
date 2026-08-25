@@ -29,12 +29,11 @@ def capping_speed(cfg, period=None, bucket="hour"):
     where, params = scope_clause(cfg, period)
 
     # The denominator is the number of hours in the bucket that actually saw a
-    # closure, not the bucket's calendar length. With bucket="day" the old code
-    # divided by a fixed 24.0, so the KPI report's headline "pieces/hour" was
-    # really pieces-per-day over 24 -- while idle_periods reported 7,486 idle
-    # head-hours in the same month. Counting active hours makes the number what
-    # its name says, and AROL define production speed as bottles closed per unit
-    # time (material/various.txt), so pieces_per_second is reported too.
+    # closure, not the bucket's calendar length: with bucket="day", dividing by
+    # a fixed 24.0 reports pieces-per-day-over-24 under the name "pieces/hour"
+    # on a machine that spends part of the day idle. AROL define production
+    # speed as bottles closed per unit time (material/various.txt), so
+    # pieces_per_second is reported too.
     rows = con.execute(f"""
         SELECT DATE_TRUNC('{unit}', ts) AS bucket_start,
                COUNT(*) AS caps,

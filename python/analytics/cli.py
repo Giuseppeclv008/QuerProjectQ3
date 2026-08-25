@@ -103,8 +103,8 @@ def main(argv=None):
         slug = args.type
     else:
         plan = planner.plan(cfg, args.question, args.period)
-        # Every ask used to land in reports/ask, so each run overwrote the last
-        # and left stale PNGs from the previous question beside the new report.
+        # One directory per ask, timestamped: a fixed name lets each run
+        # overwrite the last and leaves the previous question's PNGs behind.
         slug = os.path.join(
             "ask", datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
 
@@ -126,12 +126,11 @@ def main(argv=None):
     log.info("%s/%d steps returned data; report written to %s",
              ok, len(execution.results), out_dir)
     print(out_dir)
-    # A run in which EVERY step errored (a missing store makes each tool
-    # raise, and each raise becomes a ToolResult.error) used to print the
-    # output directory and exit 0 -- indistinguishable from success to any
-    # caller, including demo.sh under `set -e`. insufficient_data does not
-    # count against this: "the period holds too little data" is an answer,
-    # not a failure.
+    # A run in which EVERY step errored (a missing store makes each tool raise,
+    # and each raise becomes a ToolResult.error) must not look like success to
+    # an unattended caller, demo.sh under `set -e` included. insufficient_data
+    # does not count against this: "the period holds too little data" is an
+    # answer, not a failure.
     errors = sum(1 for r in execution.results if r.status == "error")
     if execution.results and errors == len(execution.results):
         log.error("every step failed; the report documents the failures")

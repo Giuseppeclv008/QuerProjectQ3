@@ -47,7 +47,7 @@ def _anthropic_call(cfg, client, system, prompt, schema):
     if getattr(response, "stop_reason", None) == "refusal":
         return None, "the model refused the request"
     if getattr(response, "stop_reason", None) == "max_tokens":
-        # Undetected, this surfaced downstream as "the reply was not valid
+        # Undetected, this surfaces downstream as "the reply was not valid
         # JSON" -- blaming the model for a budget the config set.
         return None, (f"the reply was cut off at max_tokens={cfg.max_tokens}; "
                       "raise it in the config")
@@ -120,11 +120,11 @@ def _parse(text):
         payload = json.loads(text)
     except Exception as exc:                       # noqa: BLE001
         return None, f"the reply was not valid JSON ({exc})"
-    # Both callers index the payload as an object, and two of the planner's
-    # three tiers did it without asking -- so `[]`, `42` or a bare string left
-    # this function as a valid payload and arrived as an AttributeError. `null`
-    # was worse: it parsed, and (None, None) read downstream as a failure with
-    # no reason, printing "planning failed: None". One check, one honest reason.
+    # Both callers index the payload as an object, so `[]`, `42` or a bare
+    # string would leave here as a valid payload and arrive as an
+    # AttributeError. `null` is worse: it parses, and (None, None) reads
+    # downstream as a failure with no reason ("planning failed: None"). One
+    # check here, one honest reason.
     if not isinstance(payload, dict):
         kind = "null" if payload is None else type(payload).__name__
         return None, f"the reply was JSON but not an object ({kind})"

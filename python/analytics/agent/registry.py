@@ -319,7 +319,7 @@ def validate_step(step):
     loose so a wobbly model reply still parses, and THIS gate is what keeps a
     mistyped or out-of-range argument from reaching a tool. It checks types,
     minimums, and array bounds against the same fragments the schema is built
-    from -- trend(window=-5) and head_correlation(heads=[0..99999]) used to
+    from: without it, trend(window=-5) and head_correlation(heads=[0..99999])
     walk straight through.
     """
     spec = TOOLS.get(step.tool)

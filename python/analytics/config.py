@@ -21,8 +21,8 @@ class Config:
     # Status semantics. A clean closure is status 0; a No-Load cycle is status 2
     # with zero torque. A *failure* is not a single code -- it is any status whose
     # reject bit is set (analytics.status.REJECT_SQL), per the brief's slide-6
-    # bitmask. `fault_status` was removed in Plan 7: `status == 65` named only one
-    # of the six documented reject codes.
+    # bitmask. A single `fault_status` field was removed: `status == 65` named
+    # only one of the six documented reject codes.
     success_status: float = 0.0    # + torque > 0  -> a real cap
     no_load_status: float = 2.0    # + torque == 0 -> No-Load cycle
 
@@ -79,11 +79,11 @@ class Config:
     # for a large context; drop it to ~20 for a local model.
     narrator_max_items: int = 120
 
-    # Most individual hits any one anomaly category will itemise. The tool used
-    # to build a Python dict per hit with no bound -- 678,325 deviation hits on
-    # February, 1,734,460 across the three months -- and hand all of them to
-    # ax.scatter, which costs hundreds of MB to draw a solid block. The reported
-    # counts stay exact; only the itemised sample is capped.
+    # Most individual hits any one anomaly category will itemise. A hit list is
+    # bounded by nothing: February alone gives 162,019 deviation hits
+    # (docs/reports/anomalies-2026-02/report.md). Building a Python dict per hit
+    # and handing all of them to ax.scatter costs hundreds of MB to draw a solid
+    # block. The reported counts stay exact; only the itemised sample is capped.
     max_anomaly_items: int = 5000
 
     PROVIDERS = ("anthropic", "ollama")
@@ -101,21 +101,13 @@ class Config:
             raise ConfigError(
                 f"idle_max_gap_seconds must be > 0, got {self.idle_max_gap_seconds}")
         # No relation is required between idle_max_gap_seconds and
-        # idle_min_seconds, and an earlier version of this file wrongly demanded
-        # max_gap >= min_seconds. They measure different things: max_gap is a
-        # continuity bound on the *data* (holes longer than it end a run), while
-        # min_seconds is a duration floor on the *result*. Every combination is
-        # coherent, and the rejected direction was the conservative one --
-        # max_gap = 60 with min_seconds = 300 breaks a run at any hole longer than 60 s
-        # and is strictly harder to inflate than the defaults, yet it raised.
-        #
-        # The direction that does warrant care is the one the defaults sit on:
-        # with max_gap (600) above min_seconds (300), a data hole between the
-        # two is absorbed into its surrounding run and can be reported as idle
-        # head-time on its own. That is a disclosed modelling choice, not a
-        # config error -- 600 s is far above the ~1 Hz cycling cadence, the
-        # tool declares the bound in its assumptions, and docs/analytics-methods
-        # states the trade-off -- so it is documented rather than rejected.
+        # idle_min_seconds: max_gap is a continuity bound on the *data* (holes
+        # longer than it end a run), min_seconds a duration floor on the
+        # *result*. Every combination is coherent. The trade-off the defaults
+        # sit on -- a hole between the two is absorbed into its surrounding run
+        # and can be reported as idle head-time -- is a disclosed modelling
+        # choice, stated in the tool's assumptions and in
+        # docs/analytics-methods.md rather than rejected here.
         if self.mad_k <= 0:
             raise ConfigError(
                 f"mad_k must be > 0, got {self.mad_k}; at k <= 0 the deviation band "
@@ -170,10 +162,10 @@ def load_config(path):
         if key not in known:
             raise ConfigError(f"unknown config key {key!r}; known keys: {sorted(known)}")
 
-    # Types checked here, not discovered mid-analysis: {"torque_min": [1, 2]}
-    # used to escape as a raw TypeError and {"mad_k": "three"} died inside
-    # DuckDB three tools deep -- both defeating the documented "exit 2 before
-    # any work starts" contract this function exists to give.
+    # Types checked here, not discovered mid-analysis: unchecked,
+    # {"torque_min": [1, 2]} escapes as a raw TypeError and {"mad_k": "three"}
+    # dies inside DuckDB three tools deep -- both defeating the documented
+    # "exit 2 before any work starts" contract this function exists to give.
     coercible = {float: (int, float), int: (int,), str: (str,), bool: (bool,)}
     for key, value in raw.items():
         expected = coercible.get(known[key])

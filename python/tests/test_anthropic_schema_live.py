@@ -1,9 +1,8 @@
 """Does the Anthropic structured-output API accept the plan schemas we send?
 
-The one gap `docs/validation-log.md` has carried open since 2026-08-16 (I16 of
-that round -- not the I16 that 41f61a6 closed). The flat schema ships JSON
-Schema keywords the structured-output API does not support, and nothing strips
-them: `registry.plan_json_schema` is handed straight to
+The one gap `docs/validation-log.md` has carried open since 2026-08-16. The flat
+schema ships JSON Schema keywords the structured-output API does not support,
+and nothing strips them: `registry.plan_json_schema` is handed straight to
 `output_config["format"]["schema"]`, so it reaches the API verbatim. The SDK's
 constraint-stripping only applies when it builds a schema from a Pydantic
 model, which is not this path.
@@ -68,7 +67,8 @@ def _probe(style):
 
 def test_the_per_tool_schema_is_accepted():
     """The shape every non-Anthropic provider gets, and the fallback if the
-    flat one is unusable. If this fails, the gap is wider than I16 described."""
+    flat one is unusable. If this fails, the gap is wider than the log
+    described: no provider would be getting a usable schema."""
     accepted, detail = _probe("per_tool")
     assert accepted, f"the per-tool schema was rejected: {detail}"
 

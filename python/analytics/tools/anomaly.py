@@ -23,51 +23,36 @@ _METHODS = ("threshold", "deviation", "both")
 def _sample(con, sql, params, limit):
     """Return (rows, exact_total) with at most `limit` rows materialised.
 
-    Every hit used to become a Python dict inside the ToolResult, and plots.py
-    then scattered all of them: 162,019 deviation hits on February alone, and the
-    three months hold more. The counts a report quotes must stay exact, so the
-    total is recomputed with COUNT(*) -- but only when the sample actually
-    filled up, which on a healthy period it does not.
+    A hit list is bounded by nothing -- February alone gives 162,019 deviation
+    hits -- and each one would otherwise become a Python dict in the ToolResult
+    and a point in plots.py. The counts a report quotes must stay exact, so the
+    total is recomputed with COUNT(*), but only when the sample actually filled
+    up, which on a healthy period it does not.
     """
     res = con.execute(f"{sql} LIMIT {limit + 1}", params)
     rows = res.fetchall()
     if len(rows) <= limit:
         return rows, len(rows)
 
-    # The cap binds, so the sample must be representative rather than the first
-    # `limit` rows. Every one of these queries already ends in ORDER BY ts, so a
-    # bare LIMIT returned the EARLIEST hits -- and plots.anomalies_over_time
-    # scatters this list under the title "Flagged closures over time". On
-    # February's 162,019 deviation hits a 5,000-item cap covered about 0.86 of
-    # 28 days: a reader saw the deviations stop three days in.
+    # The cap binds, so the sample must span the period rather than be its first
+    # `limit` rows: these queries end in ORDER BY ts, and plots.py scatters the
+    # list under "Flagged closures over time", so a bare LIMIT draws a figure
+    # whose deviations stop partway through the month.
     #
     # A fixed stride, not USING SAMPLE: the sample has to be identical on every
     # run of the same store, or two regenerations of a committed report differ
-    # for no reason a reader can check.
-    #
-    # The window carries its own ORDER BY. A bare `ROW_NUMBER() OVER ()` inherits
-    # the subquery's ordering only as an implementation detail of the engine --
-    # it held on DuckDB 1.5.4 at 8 threads, but nothing in SQL promises it, and
-    # resting a reproducibility guarantee on unspecified behaviour is the thing
-    # the stride was chosen to avoid. `ts` leads so the sample spans the period;
-    # the remaining projected columns follow as tie-breakers, because up to 36
-    # heads share one poll timestamp and a partial order would leave which row
-    # of a tie group gets picked up to the engine again.
-    #
-    # The column names come from the probe's own cursor rather than from a
-    # second `SELECT ... LIMIT 0`: that extra round trip bound `params` again
-    # and scanned nothing useful.
+    # for no reason a reader can check. The window carries its own ORDER BY for
+    # the same reason -- a bare `ROW_NUMBER() OVER ()` inherits the subquery's
+    # ordering only as an implementation detail of the engine. `ts` leads so the
+    # sample spans the period; the remaining projected columns follow as
+    # tie-breakers, since every head shares one poll timestamp.
     cols = [d[0] for d in res.description]
     order = ", ".join(['"ts"'] + [f'"{c}"' for c in cols if c != "ts"])
     # One scan, not two: the stride is derived from COUNT(*) inside the same
-    # query that applies it, so the ranked set is built once instead of being
-    # rebuilt for the count and again for the sample.
-    #
-    # The ceil stride under-fills the cap just above the boundary -- at
-    # total = limit + 1 it is 2, returning about limit/2 rows. That is the safe
-    # direction against an "at most `limit` rows materialised" contract, and it
-    # is why the test asserts a range rather than equality, but it does mean the
-    # sample can be half the cap for totals barely over it.
+    # query that applies it. The ceil stride under-fills the cap just above the
+    # boundary (at total = limit + 1 it is 2, returning about limit/2 rows) --
+    # the safe direction against the "at most `limit` rows materialised"
+    # contract, and why the test asserts a range rather than equality.
     fetched = con.execute(
         f"""WITH _mas_ranked AS (
                 SELECT *, ROW_NUMBER() OVER (ORDER BY {order}) AS _mas_rn
@@ -128,20 +113,17 @@ def anomalies(cfg, period=None, method="both"):
     deviation_hits, n_deviation, fallbacks = [], 0, {}
     if method in ("deviation", "both"):
         # MEDIAN(|x - median|) per head, then flag |x - median| > k * scale,
-        # where scale is the SIGMA-CONSISTENT spread: 1.4826*MAD. Raw MAD is
-        # ~0.6745*sigma under normality, so "k = 3" against raw MAD was
-        # really ~2.02 sigma -- internally consistent, but a reader seeing
-        # "median +/- 3*MAD" reads three sigma, and the band flagged ~10.9%
-        # of February production with no calibration for the reader. The
-        # floor (cfg.mad_floor, in Nm) keeps a quantised sensor's tiny-but-
-        # nonzero MAD from collapsing the band to sensor noise.
+        # where scale is the sigma-consistent spread 1.4826*MAD: raw MAD is
+        # ~0.6745*sigma under normality, so k against raw MAD is a ~2 sigma band
+        # that a reader of "median +/- k*MAD" takes for k sigma. The floor
+        # (cfg.mad_floor, in Nm) keeps a quantised sensor's tiny-but-nonzero MAD
+        # from collapsing the band to sensor noise.
         #
         # A head whose readings are more than half identical has MAD = 0 --
-        # routine for a quantised sensor and guaranteed for a head stuck at
-        # one value, which is the failure this detector exists to catch.
-        # `WHERE mad > 0` used to drop such heads from the query entirely,
-        # and the report then claimed an exact zero where the statistic was
-        # undefined. Fallbacks, in order:
+        # routine for a quantised sensor, and guaranteed for a head stuck at one
+        # value, which is the failure this detector exists to catch. Dropping
+        # those heads from the query would claim an exact zero where the
+        # statistic is undefined, so the scale falls back, in order:
         #   iqr    scale = 1.4826*(IQR/2) (the same sigma-multiple: under
         #          normality IQR/2 ~ 0.6745*sigma, exactly like MAD)
         #   exact  IQR = 0 too (head hard-stuck at the median): any reading

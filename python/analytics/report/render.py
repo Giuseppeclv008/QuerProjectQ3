@@ -249,10 +249,10 @@ def _figures(execution, out_dir):
         elif result.tool == "anomalies":
             keys = [("anomalies", None)]
         for key in keys:
-            # Two same-signal steps in one plan used to overwrite each other's
-            # PNG (filenames were constants; the 12-step plan tier has no
-            # dedup). First writer keeps the plain name; repeats get a step
-            # suffix so every figure the report references exists.
+            # Plot filenames are constants and the 12-step plan tier has no
+            # dedup, so two same-signal steps would overwrite each other's PNG.
+            # First writer keeps the plain name; repeats get a step suffix, so
+            # every figure the report references exists.
             suffix = "" if key not in seen else f"_step{index}"
             seen.add(key)
             name = _PLOTTERS[key](result, out_dir, suffix)
@@ -287,17 +287,17 @@ def _limits(execution, narrative=None):
 
 def _model_line(cfg, execution, narrative):
     """Who actually wrote the words. In a project whose thesis is that every
-    number carries its provenance, the model was the one contributor with
-    none -- and a mistyped --model quietly fell back to the keyword router
-    with nothing in the report saying so."""
+    number carries its provenance, the model must not be the one contributor
+    without it: a mistyped --model falls back to the keyword router, and the
+    report has to say so rather than quietly claiming a model wrote it."""
     if narrative.source == "llm" or execution.plan.source == "llm":
         return f"{cfg.provider}:{cfg.model}"
     return "none (deterministic template and router)"
 
 
 def render(execution, cfg, out_dir, narrative, generated_at):
-    model_line = _model_line(cfg, execution, narrative)
     """Write report.md, trace.json, and the figures. Returns the Markdown."""
+    model_line = _model_line(cfg, execution, narrative)
     out_dir = str(out_dir)
     figures = _figures(execution, out_dir)
 
@@ -371,11 +371,10 @@ Every call this report is built from, in order. The full record is in
 
     with open(out_dir + "/report.md", "w", encoding="utf-8") as fh:
         fh.write(text)
-    # The store fingerprint travels with the steps: a trace that names its
-    # tool calls but not the data they ran against is the archaeology
+    # The store fingerprint travels with the steps: a trace that names its tool
+    # calls but not the data they ran against is the archaeology
     # store_fingerprint() exists to end. This is the shape the executor's
-    # round-trip test asserts; it used to write the bare step list, so the
-    # fingerprint reached report.md and never this file.
+    # round-trip test asserts.
     with open(out_dir + "/trace.json", "w", encoding="utf-8") as fh:
         json.dump({"store": execution.store, "steps": execution.trace},
                   fh, indent=2, default=str)
