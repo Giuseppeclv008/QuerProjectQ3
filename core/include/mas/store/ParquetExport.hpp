@@ -32,8 +32,10 @@ struct ExportResult {
 // it writes a valid empty Parquet carrying the schema, so a later
 // read_parquet() over a glob including it still works.
 //
-// Rows come out ordered by (head_id, ts) so the file is deterministic --
-// two exports of the same store are byte-comparable.
+// Rows come out ordered by (machine_id, head_id, ts) -- all three key columns,
+// so that a store merged from several machines has no tie left for the scan to
+// break. The file is deterministic: two exports of one store are
+// byte-comparable.
 //
 // After writing, the file is read back and its row count compared with the
 // count the same predicate returns from the store. A mismatch throws rather

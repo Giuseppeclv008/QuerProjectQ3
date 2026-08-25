@@ -16,7 +16,8 @@ struct ParquetEventStore::Impl {
     std::string machine_id;
     // One Appender for the store's life, not one per write(). Constructing it
     // does a catalog lookup and binds the table's types, and write() is called
-    // once per 8,192-event batch -- about 2,670 times per day-file. Held by
+    // once per 8,192-event batch, so a day-file pays that cost scores of times
+    // over (what the hoist cost and bought: docs/bench/results.md). Held by
     // optional because the table has to exist first, so it cannot be built in
     // the member init list.
     std::optional<duckdb::Appender> appender;
