@@ -513,11 +513,14 @@ def main():
                             [mono] + flag + [out_db, machine_id_of(sub[0]), str(th)] + sub)
                         # The oracle is computed for every volume and was only
                         # ever printed; run_bench.sh gates every run and this
-                        # sweep claimed to but did not. Store-backed runs must
-                        # land on the store row count; --no-store runs emit
-                        # raw events (more than the store keeps on multi-day
-                        # volumes) and are covered by the cross-arch `seen`
-                        # check above instead.
+                        # sweep claimed to but did not. What is compared here is
+                        # the summary's EVENT count, not its "store holds N
+                        # rows" field: on this pool raw equals distinct, so the
+                        # two coincide -- a store that dropped rows would pass
+                        # this gate and be caught only by run_bench.sh's, which
+                        # reads the row count. --no-store runs emit raw events
+                        # (more than the store keeps on multi-day volumes) and
+                        # are covered by the cross-arch `seen` check above.
                         if mode == "e2e" and events != oracle[v]:
                             die(f"{arch} [e2e] at {v} day-file(s), repeat "
                                 f"{rep}: {events} events, oracle says "
@@ -527,8 +530,9 @@ def main():
                                 "re-running the sweep")
                         emit(w, arch, mode, th, v, rep, clean_s, wall, events,
                              rss, cpu_s, merge_s=merge_s)
-                        for stale in [out_db] + [
-                                f"{out_db}.t{t}.duckdb" for t in range(th)]:
+                        stores = [out_db] + [
+                            f"{out_db}.t{t}.duckdb" for t in range(th)]
+                        for stale in stores + [s + ".wal" for s in stores]:
                             if os.path.exists(stale):
                                 os.remove(stale)
                         print(f"done: {arch} [{mode}] v={v}d rep={rep} clean={clean_s:.3f}s")

@@ -75,6 +75,17 @@ while IFS= read -r f; do FILES+=("$f"); done \
 VOLUMES=(1 7 28)
 [ "$QUICK" = 1 ] && VOLUMES=(1)
 [ -n "$VOLUMES_ARG" ] && VOLUMES=($VOLUMES_ARG)
+# A volume is a day count, and "${FILES[@]:0:$v}" silently yields fewer files
+# than asked for. --volumes 56 on a 28-file pool would clean 28 days while
+# emit_row divides rows_per_s by 56, and the oracle -- taken from the same
+# slice -- would agree with the short run. run_bench_cuda.py filters the same
+# way; a row nobody can spot as wrong is worse than a refusal.
+for v in "${VOLUMES[@]}"; do
+    case "$v" in (*[!0-9]*|"") echo "--volumes takes day counts, got '$v'" >&2; exit 2;; esac
+    [ "$v" -ge 1 ] && [ "$v" -le "${#FILES[@]}" ] \
+        || { echo "ABORT: --volumes $v is not a day count this pool can serve" \
+                  "(1..${#FILES[@]})" >&2; exit 2; }
+done
 
 T="$(mktemp -d /tmp/mas_bench.XXXXXX)"
 PIDS=()
