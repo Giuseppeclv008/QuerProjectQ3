@@ -1,15 +1,63 @@
 # Divisione A — 3 persone, per tier tecnologico
 
 Riferimento slide: [`outline.md`](outline.md) (13 slide).
-Assegnazione: **P1 = 4, 6, 10 · P2 = 5, 11 · P3 = 7, 8, 9, 12 · corali = 1, 2, 3, 13.**
+Assegnazione: **P1 = 1, 2, 4, 6, 10 · P2 = 3, 5, 9, 11 · P3 = 7, 8, 12 · 13 = P3 voce, P2 terminale.**
 
-| | Ruolo | Slide | Minuti indicativi |
-|---|---|---|---|
-| P1 | Ingestion core + semantica del dato | 4, 6, 10 | ~7 |
-| P2 | Runtime distribuito, performance, evidenza sperimentale | 5, 11 | ~5 |
-| P3 | Analytics, agente, BOT, limiti | 7, 8, 9, 12 | ~8 |
+Le quattro slide corali (1, 2, 3, 13) restano contenuto di tutti — chiunque deve reggerle in
+Q&A — ma hanno una voce assegnata, così il turno non resta indeciso davanti allo schermo.
+Chi prepara non è sempre chi parla: vedi [§ Slide corali](#slide-corali--chi-prepara-chi-parla).
 
-Demo (slide 13): parla P3, guida il terminale P2.
+| | Ruolo | Slide proprie | Anche a voce | Parlato |
+|---|---|---|---|---|
+| P1 | Ingestion core + semantica del dato | 4, 6, 10 | 1, 2 | **6:25** |
+| P2 | Runtime distribuito, performance, evidenza sperimentale | 5, 11 | 3, 9 (testo di P3), primo bullet della 13 | **6:05** |
+| P3 | Analytics, agente, BOT, limiti | 7, 8, 12 | 13 | **6:10** |
+
+## Budget — il tetto è 20 minuti
+
+Non è una stima nostra: i deliverable del track chiedono le slide "for a 20-minute oral
+presentation" (`material/project track.pdf`). Il piano parlato sta in **18:40**, e il margine
+di 1:20 serve al rallentamento naturale davanti alla commissione. I tempi qui sotto
+**includono la frase di passaggio** a chi viene dopo.
+
+| Slide | Voce | Tempo |
+|---|---|---:|
+| 1. Titolo | P1 | 0:20 |
+| 2. Il problema | P1 | 1:25 |
+| 3. Architettura | P2 | 1:10 |
+| 4. WP1 — ingestion | P1 | 1:45 |
+| 5. Performance | P2 | 1:40 |
+| 6. I dati, misurati | P1 | 1:20 |
+| 7. WP2 — il toolkit | P3 | 1:20 |
+| 8. WP3 — l'agente | P3 | 1:50 |
+| 9. WP4 — il BOT | P2 (testo di P3) | 1:25 |
+| 10. Un risultato | P1 | 1:35 |
+| 11. Ingegneria | P2 | 1:25 |
+| 12. Limiti | P3 | 1:15 |
+| 13. Demo | P3, primo bullet P2 | 2:10 |
+| | | **18:40** |
+
+Se si sfora, si taglia dalla **4** e dalla **8**: sono le due che si allargano da sole. Non
+dalla 13, che è l'unica parte non recuperabile a voce.
+
+I 15 secondi in più sulla 11 vengono dalla 5, dentro il turno di P2: la 11 è la slide più densa
+del deck (138 parole, nessuna figura — a 1:10 la diresti leggendo senza respirare), mentre la 5
+ha una figura che porta da sola metà del discorso. Il totale e i tempi per persona non cambiano.
+
+**Perché la 9 la dice P2 e non P3.** Senza spostarla il parlato sarebbe 6:25 / 4:40 / 7:35, e
+la 9 è l'unica che si sposta senza forzare: la sua tesi è la **riproducibilità** — i tre verbi
+`report` non contengono modello, stesso store e stesso periodo danno lo stesso report — che è il
+linguaggio di P2 ed è il presupposto esatto della demo che guida lui. Il precedente è già nel
+piano: la 11 gli fa già dire i conteggi dei test Python, il golden report e il modello finto,
+che sono codice di P3.
+**Il testo della 9 resta scritto da P3** (è già in bozza nel deck) e le domande di dettaglio su
+`cli.py`, `render.py`, exit code e rendering **tornano a P3**: P2 la presenta, non la possiede.
+Costa un cambio di voce in più (8 → 9 → 10), che è il prezzo di 1:25 di riequilibrio.
+
+Demo (slide 13): **parla P3, guida il terminale P2**, con una eccezione — il primo bullet
+(`scripts/demo.sh`, 55,1 M righe, 12/12 step, ~23 s) lo dice **P2 mentre digita**. È la sua
+evidenza misurata, è lui a rimisurare quel tempo sulla macchina della presentazione, e così i
+~23 s di attesa non sono silenzio. P3 prende i bullet 2–5 e la frase di chiusura.
 
 ---
 
@@ -27,7 +75,23 @@ Da sapere a memoria, indipendentemente dal ruolo. Chiunque deve poter rispondere
 | 55.132.433 eventi su 3 mesi · 1.096 reject · head 29 = 117 reject | outline slide 6, 10 |
 | Invariante finale: **il modello sceglie le analisi, l'SQL produce ogni numero** | `docs/agent-decision-flow.md` |
 
-Slide 1–3 e 13: script condiviso, chiunque le può dire.
+### Slide corali — chi prepara, chi parla
+
+Contenuto di tutti, voce di uno. Dove la slide tocca materiale altrui, il testo lo scrive chi
+lo possiede e lo dice chi ha il turno.
+
+| Slide | Prepara | Parla | Perché |
+|---|---|---|---|
+| 1. Titolo | P3 (tiene il contenuto del deck e la sua build) | **P1** | 20 s, nessun contenuto tecnico. P1 apre e prosegue dritto sulla 2: un handoff in meno e una voce sola, come vuole la nota del deck ("non presentarsi uno per uno"). |
+| 2. Il problema | **P1**; l'ultimo bullet ("far rispondere un agente") lo scrive P3 | **P1** | Ogni bullet è suo: 36 teste @1 Hz, 89 file, stato-non-eventi, 24,5% di duplicati, chiusura dal delta del contatore. È la frase-modello del suo ruolo. |
+| 3. Architettura | **P2**; livelli 3–4 e la riga WP5 li scrive P3, i livelli 1–2 li valida P1 | **P2** | Il C4 container è una vista di processo: casa sua. E deve piantare *clean* contro *merge* e lo store per-worker **prima** della slide 5, altrimenti 7,2× contro 3,83× non si capisce. Evita anche a P1 il blocco 1-2-3-4 di fila. |
+| 13. Demo | **P2** (macchina, `demo.sh`, tempo rimisurato) + **P3** (sequenza `ask`, ripiego) | **P3** voce, **P2** terminale | Vedi la nota in testa al documento: il primo bullet lo dice P2 mentre digita. |
+
+Figura obbligatoria della 3: [`docs/diagrams/C4_Container.png`](../diagrams/C4_Container.png).
+
+**Q&A sulle corali.** La base comune qui sopra resta obbligatoria per tutti e tre, ma il turno
+di risposta ha un default, per non lasciare due secondi di silenzio: dato, semantica e bitmask
+→ P1 · architettura, performance, resilienza e suite di test → P2 · agente, report e limiti → P3.
 
 ---
 
@@ -75,6 +139,7 @@ Slide 1–3 e 13: script condiviso, chiunque le può dire.
 ## P2 — Runtime distribuito, performance, evidenza
 
 **Possiede:** agenti, ZeroMQ, protocollo di liveness, monolith multithread, sweep di benchmark, chaos E2E, suite di test.
+**Presenta anche** la slide 3 e la slide 9 — testo di P3, voce tua, domande di dettaglio a P3.
 
 ### File in ordine di lettura
 
@@ -138,6 +203,7 @@ stessa misura, convenzione dichiarata in `docs/bench/results.md`.)*
 ## P3 — Analytics, agente, BOT, limiti
 
 **Possiede:** gli 8 tool, `ToolResult` e provenance, planner/registry/router/narrator, CLI `arol`, rendering report, i report committati e i limiti onesti (slide 12).
+**La slide 9 la scrivi tu ma la dice P2**: resta tua in Q&A, non a voce.
 
 ### File in ordine di lettura
 
@@ -193,6 +259,14 @@ stessa misura, convenzione dichiarata in `docs/bench/results.md`.)*
 
 **Handoff da provare a voce** (sono i punti dove si inciampa):
 
-- P1 → P2: "…ricostruito l'evento. Ora: quanto costa farlo su 89 file, e cosa succede se un processo muore."
-- P2 → P3: "…lo store è unico e affidabile. Cosa ci si chiede sopra."
+- P1 → P2, fine 2: "…la chiusura va ricostruita. Ecco dove vive quella ricostruzione."
+- P2 → P1, fine 3: "…quattro livelli separati. Il primo: come si ricostruisce l'evento."
+- P1 → P2, fine 4: "…ricostruito l'evento. Ora: quanto costa farlo su 89 file, e cosa succede se un processo muore."
+- P2 → P1, fine 5: "…il costo lo conosciamo. Torniamo a cosa dice davvero il dato."
+- P1 → P3, fine 6: "…lo store è unico e affidabile. Cosa ci si chiede sopra."
+- P3 → P2, fine 8: "…il modello sceglie il piano. Ecco cosa ci si comanda da riga di comando."
+- P2 → P1, fine 9: "…lo stesso report ogni volta. E il report ha trovato una cosa."
+- P1 → P2, fine 10: "…una testa sola. Perché potete crederci."
+- P2 → P3, fine 11: "…verificato. Adesso cosa **non** copriamo."
+- P2 → P3, dentro la 13: "12 su 12, senza modello. Ora con il modello."
 - P3 → chiusura: "il modello ha scelto le analisi; l'SQL ha prodotto ogni numero."
