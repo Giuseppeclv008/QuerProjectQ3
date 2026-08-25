@@ -1774,3 +1774,23 @@ actually carry.
 non-regression step was written as `git diff docs/reports -- '*.md'`, which git
 reads as a revision named `docs/reports` and refuses. The form that works is
 `git diff -- 'docs/reports/*.md'`.
+
+## 2026-08-25 — Correction: the resweep's M2 merge-share comparison used the pre-merge_all baseline
+
+The 2026-08-13 resweep entry above says the M2 "spent 70% of MAS's wall in the
+merge, this box 46%", and that "the set-based merge costs the same (64.8 s vs
+the M2's 64.0 s — DuckDB's internal pass is close to platform-neutral)". The
+64.0 s it compares against is the M2's *per-row* merge — the "merge before"
+column of the 2026-08-11 merge_all table — not its set-based cost, so both
+readings compare across algorithms while presenting the difference as a
+machine property.
+
+Like for like, with `merge_all` on both machines: the M2's MAS N=16 merge is
+25.4 s of a 55.4 s wall — 45.8%, the same ~46% share as the i7's 64.8 s of
+140.4 — and the set-based pass is not platform-neutral either: it scales
+between the two machines by the same ~2.56x as the clean phase.
+`docs/bench/results.md` has carried the corrected reading since the resweep
+landed ("The merge is 46% of MAS N=16's wall, and that is unchanged from the
+M2"); this entry records the correction in the log the original sentence
+lives in. The resweep's measured numbers are untouched — only the M2
+comparison drawn beside them was wrong.
