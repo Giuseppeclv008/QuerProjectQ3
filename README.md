@@ -443,7 +443,7 @@ nothing is what lets the benchmark build on a machine with no DuckDB at all.
 
 | Component | File(s) | Description |
 |-----------|---------|-------------|
-| `CapEvent` / `RawRow` | [`CapEvent.hpp`](core/include/mas/domain/CapEvent.hpp) | Domain value types. `NUM_HEADS=36`; a failure is any status with the reject bit set (`is_reject`), not a single code — `FAULT_STATUS=65` was removed in Plan 7. |
+| `CapEvent` / `RawRow` | [`CapEvent.hpp`](core/include/mas/domain/CapEvent.hpp) | Domain value types. `NUM_HEADS=36`; a failure is any status with the reject bit set (`is_reject`), not a single code (the old `FAULT_STATUS=65` constant is gone). |
 | `CapEventExtractor` | [`CapEventExtractor.hpp`](core/include/mas/domain/CapEventExtractor.hpp) · [`.cpp`](core/src/domain/CapEventExtractor.cpp) | Stateful per-head dedup. Maintains `last_count_[36]`. Not thread-safe. |
 | `extract_flat()` / `RawColumns` / `load_columns()` | [`CapEventExtractorFlat.hpp`](core/include/mas/domain/CapEventExtractorFlat.hpp) · [`.cpp`](core/src/domain/CapEventExtractorFlat.cpp) | Element-wise form of the same transform, plus a whole-file CSV→columns loader. Stdlib only, no state across rows. Tolerates CRLF; validates the 109-column header. |
 | `clean_file()` | [`Pipeline.hpp`](core/include/mas/domain/Pipeline.hpp) · [`.cpp`](core/src/domain/Pipeline.cpp) | Orchestrator: CsvRawReader → CapEventExtractor → IEventStore in ≥8192-event batches (8192 is a floor: the flush check runs per row, which appends up to 36 events). |
@@ -518,15 +518,11 @@ Design notes:
   each doing two loads and a compare.
 
 > **Compiled and measured** on the Windows target box (RTX 4070 Laptop, CUDA
-> Toolkit 13.3, MSVC 14.41) on 2026-08-10 — three real build breaks from CUDA
-> 13's CCCL later. `--verify` earned its keep on the first run: it caught the
-> GPU parse one ulp under the CPU on the pool's 17-digit torque cells, bitwise.
-> Re-measured on 2026-08-13 with the corrected timers (an eighth
-> `materialize_s` stage, process wall clock recorded as `total_s`), and again
-> on 2026-08-16 on the kernel that ships — the review's parser edits had
-> never met a compiler until then, and the first compile found the GPU
-> accepting cells the CPU readers had started to reject. The numbers below
-> are measurements, not estimates. See
+> Toolkit 13.3, MSVC 14.41). `--verify` earned its keep on the first run: it
+> caught the GPU parse one ulp under the CPU on the pool's 17-digit torque
+> cells, bitwise. The numbers below are from the 2026-08-16 sweep of the
+> kernel that ships, with the corrected timers — measurements, not estimates.
+> The earlier sweeps and what each correction moved are in
 > [`docs/validation-log.md`](docs/validation-log.md), entries 2026-08-10,
 > 2026-08-13 and 2026-08-16.
 
@@ -1496,7 +1492,7 @@ a number.
 - [x] **CUDA cleaning pipeline and the three-way benchmark** — the transform is element-wise, proved by test, so it ports to the GPU; the portable driver measures Python, C++ and CUDA on one machine. See [CUDA cleaning benchmark](#cuda-cleaning-benchmark).
 - [x] **Run the CUDA sweep on real hardware** — done on an RTX 4070 Laptop (CUDA 13.3, Windows 11): first sweep 2026-08-10, re-measured 2026-08-13 with the corrected timers and 2026-08-16 on the post-review kernel with the pool's real machine id in the store rows. `--verify` caught a real 1-ulp GPU parse defect on the first run. Clean phase measured 1.08× the 8-thread C++ and 6.6× the single-thread; 1.08× end to end because the store dominates — see [docs/bench/results.md](docs/bench/results.md).
 - [x] **Attack the merge bottleneck** — the benchmark's headline finding. `DuckDbEventStore::merge_all()` replaces the per-row `INSERT OR IGNORE` probes with one set-based dedup over the union: 65.9 s → 22.8 s in isolation (2.89×), ~2.1× across the M2 sweep, same rows; end to end on actively-cooled hardware the design lands at **3.83×** the sequential baseline (537.8 s → 140.4 s, MAS N=16, resweep 2026-08-13). Partitioned Parquet output or a concurrent-writer store remain the larger redesigns
-- [x] **Worker registration gate** — `--workers N` holds the initial dispatch until N workers say hello (Plan 5), fixing the PUSH slow-joiner capture; implemented over the existing heartbeat channel rather than a REQ/REP pair
+- [x] **Worker registration gate** — `--workers N` holds the initial dispatch until N workers say hello, fixing the PUSH slow-joiner capture; implemented over the existing heartbeat channel rather than a REQ/REP pair
 - [ ] **PUB/SUB fan-out (and REQ/REP as such)** — the two ZeroMQ socket patterns from the spec that the 3-endpoint PUSH/PULL fabric still does not use
 - [ ] **TRY_CAST + quarantine** — gracefully handle malformed timestamps (currently strict-CAST aborts the day-file)
 - [ ] **Monitoring dashboard** — live view of processing progress and per-head statistics

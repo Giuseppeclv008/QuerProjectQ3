@@ -3,8 +3,8 @@
 The table is a bitmask, not an enum: its 14 rows are 7 error conditions crossed
 with a reject signal. Bit 0 is that reject signal, which is why every "Reject
 Signal = YES" row has an odd status. Reading it as a flat enum is what left
-statuses 4 and 9 unexplained in the three-month store (spec §12, open
-question OQ4).
+statuses 4 and 9 unexplained in the three-month store
+(spec 2026-07-11-agentic-analytics-reporting-design.md §12, OQ#4).
 
     bit 0 (1)  reject signal
     bit 1 (2)  No Load          - first torque threshold not reached (SlowTorque);
