@@ -25,8 +25,10 @@ public:
     // must not delay process teardown: a CONNECT-mode PUSH creates its pipe
     // immediately and queues sends below HWM even if the peer never appears
     // (SNDTIMEO cannot fire), and zmq_ctx_term then waits out ZMQ_LINGER on
-    // the undeliverable backlog (chaos E2E: the orphan worker outlived its
-    // ~65 s exit budget, 61 s idle exit + 60 s linger = 121 s).
+    // the undeliverable backlog, holding the process far past its exit
+    // budget -- the orphan-worker teardown the chaos E2E caught. The
+    // measurement is in docs/validation-log.md (2026-07-09), and
+    // test_zmq_transport.cpp pins both directions of this knob.
     // linger_ms == -1: explicit infinite linger, regardless of
     // send_timeout_ms.
     // All options are applied before bind/connect (mirroring how
