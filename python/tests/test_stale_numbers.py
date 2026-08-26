@@ -86,8 +86,12 @@ def test_no_production_source_quotes_a_retired_figure():
         for line_no, line in enumerate(
                 path.read_text(encoding="utf-8").splitlines(), start=1):
             for figure, why in _RETIRED.items():
-                # Bounded, so a figure is not matched inside a longer number.
-                if re.search(rf"(?<![\d,.]){re.escape(figure)}(?![\d,.])", line):
+                # Bounded, so a figure is not matched inside a longer number --
+                # but a trailing separator only extends a number when a digit
+                # follows it. Excluding "." and "," outright made the guard blind
+                # to a figure at the end of a sentence or clause, which in prose
+                # is where most of them sit.
+                if re.search(rf"(?<![\d,.]){re.escape(figure)}(?![.,]?\d)", line):
                     offenders.append(f"{path.relative_to(_ROOT)}:{line_no} "
                                      f"quotes {figure} -- {why}")
     assert not offenders, (
