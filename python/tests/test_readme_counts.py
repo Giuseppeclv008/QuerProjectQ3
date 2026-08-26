@@ -106,10 +106,11 @@ def test_presentation_cpp_test_counts_match_the_sources():
 
     outline.md told its reader "both counts are asserted against the sources by
     test_readme_counts.py, so the slide cannot drift from the suite" -- and this
-    file only ever read README.md. The deck was two generations behind while
-    saying so (232 Python / 85 C++ against 282 / 187), which is the false safety
-    signal this suite exists to prevent, relocated into the one document the
-    project is defended from.
+    file only ever read README.md. The deck was saying so while its counts sat a
+    correction behind the sources; `git log -p docs/presentation/outline.md` has
+    the figures, which is where a reader can check them. That is the false
+    safety signal this suite exists to prevent, relocated into the one document
+    the project is defended from.
     """
     actual, per_file = _cpp_counts()
     deck = _deck()
