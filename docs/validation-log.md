@@ -1794,3 +1794,23 @@ landed ("The merge is 46% of MAS N=16's wall, and that is unchanged from the
 M2"); this entry records the correction in the log the original sentence
 lives in. The resweep's measured numbers are untouched — only the M2
 comparison drawn beside them was wrong.
+
+## 2026-08-28 — Correction: the committed ask sample is the 2026-08-19 one-step run
+
+The 2026-08-16 entry above says **Committed:** `docs/reports/ask-live-sample/`
+"= the warm run's directory (`report.md`, `report.html`, `trace.json`, two
+PNGs)" and summarises it as "plan source `llm`, **2 steps, all
+registry-validated**". That described the directory as committed that day. It
+no longer does: the directory was regenerated on 2026-08-19 against the rebuilt
+store, the model planned **one** step (`head_correlation(by='day')`) on that
+run, and a single step leaves no second series to plot — the committed
+`trace.json` carries `steps` of length 1 and the directory holds no PNGs.
+
+The committed trace is the authority; the two-step figures in the entry above
+describe the 2026-08-16 run only, which survives here in the log and nowhere
+else. `docs/reports/README.md` has said this since the regeneration ("The model
+planned one step where the previous run planned two … re-rolling until it
+produced a prettier artifact would have made this directory evidence of
+nothing"); this entry records it in the log the original sentence lives in.
+What the run proves is unchanged either way: live agentic path on a local
+model, plan source `llm`, registry-validated, executor → renderer end to end.
