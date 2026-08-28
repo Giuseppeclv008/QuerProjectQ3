@@ -57,11 +57,13 @@ def success_rate_per_head(result, out_dir, suffix=""):
     ax.set_ylim(y0, 100.0)
     if y0 > 0.0:
         ax.set_title(f"Success rate per capping head (y-axis zoomed: {y0:.3f}\u2013100%)")
-        ax.annotate(
-            f"note: axis starts at {y0:.3f}%, not 0 \u2014 "
-            f"full spread is {max(rates) - low:.3f}pp",
-            xy=(0.5, 0.02), xycoords="axes fraction", ha="center",
-            fontsize=7, color="#555555")
+        # Under the axis, not inside it: the bars fill the frame from the bottom
+        # edge to within a hundredth of the top, so an in-axes annotation sits
+        # behind them and is unreadable on a projector -- which is the one place
+        # this caveat has to survive.
+        ax.set_xlabel(
+            f"head\nnote: axis starts at {y0:.3f}%, not 0 \u2014 "
+            f"full spread is {max(rates) - low:.3f} pp")
     ax.grid(axis="y", alpha=0.3)
     return _save(fig, out_dir, f"success_rate_per_head{suffix}.png")
 
