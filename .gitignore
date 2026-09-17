@@ -69,3 +69,5 @@ pers_*
 .env.*
 !.env.example
 *.pem
+
+.cache/*

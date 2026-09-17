@@ -63,7 +63,7 @@ inline bool is_valid_real(double v) {
 }
 
 // A capping operation is a closure WITH load. No-load cycles are excluded from
-// every success denominator (spec §3.2).
+// every success denominator.
 inline bool is_successful_cap(double status, double torque) {
   return status == 0.0 && torque > 0.0;
 }
