@@ -20,7 +20,7 @@ this system. No graph measurement is reported because none exists.
 
 ![Container diagram](docs/diagrams/C4_Container_Short.png)
 
-*Figure 1 - C4 (Context, Containers, Components, Code) container diagram (source: `docs/diagrams/structurizr/workspace.dsl`).*
+*Figure 1 - C4 (Context, Containers, Components, Code) container diagram (source: `docs/diagrams/C4_Container_Short.svg`).*
 
 The C++ code is built as four libraries. `mas_clean_core` holds the cleaning transform, the
 row parsing and the CSV reader, and uses only the C++ standard library. `mas_store` adds
