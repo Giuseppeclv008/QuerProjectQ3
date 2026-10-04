@@ -1,6 +1,6 @@
 # Project Q3 - Design Choices and Experimental Evaluation
 
-Multi-Agent System for Industrial IoT Data Refinement (AROL Equatorque capping machine).
+Multi-Agent System (MAS) for Industrial IoT Data Refinement (AROL Equatorque capping machine).
 
 The system reads the raw telemetry of the machine, 36 capping heads polled at about 1 Hz
 and uploaded as one wide CSV per day (about 86,400 rows x 109 columns, 58 MB). Most rows
@@ -11,8 +11,8 @@ produces 21,872,663 events. Build and run instructions are in `README.txt`.
 **Note on the template.** The project track asks for "graph format", "degree
 distributions" and similar items. This project does not process a graph: it is a
 tabular, time-series cleaning pipeline. Each requested item is answered here with its
-counterpart in this system, and Section 1.5 says explicitly what the "skew" problem
-becomes. No graph measurement is reported because none exists.
+counterpart in this system, and Section 1.5 says explicitly what "skew" means in
+this system. No graph measurement is reported because none exists.
 
 ---
 
@@ -20,7 +20,7 @@ becomes. No graph measurement is reported because none exists.
 
 ![Container diagram](docs/diagrams/C4_Container_Short.png)
 
-*Figure 1 - C4 container diagram (source: `docs/diagrams/structurizr/workspace.dsl`).*
+*Figure 1 - C4 (Context, Containers, Components, Code) container diagram (source: `docs/diagrams/structurizr/workspace.dsl`).*
 
 The C++ code is built as four libraries. `mas_clean_core` holds the cleaning transform, the
 row parsing and the CSV reader, and uses only the C++ standard library. `mas_store` adds
@@ -36,7 +36,7 @@ ZeroMQ, the benchmark builds without them (`MAS_BENCH_ONLY=ON`).
 **Input.** One CSV per day, 109 columns: `timestamp`, then `H01..H36 Count`,
 `H01..H36 AppTorque`, `H01..H36 Status`. Each `Count` is the cap counter of one head: it
 advances when a cap is applied and is flat in between. The reader checks the header,
-skips (and counts) malformed rows, and accepts CRLF.
+skips (and counts) malformed rows, and accepts CRLF (carriage return + line feed, the Windows line ending).
 
 **The transform.** Per head, comparing each row with the previous one:
 
@@ -45,7 +45,7 @@ skips (and counts) malformed rows, and accepts CRLF.
 | `c == last` | nothing (no cap applied) |
 | `c > last`, delta = 1 | one event |
 | `c > last`, delta > 1 | one event, `aggregated = true` (several caps between two polls) |
-| `c < last` | one event, `reset = true`, delta = 0 (PLC reset) |
+| `c < last` | one event, `reset = true`, delta = 0 (reset of the PLC, the programmable logic controller) |
 
 The first row of a file only seeds the counters, so day-files are cleaned independently.
 `Status` is a bitmask, not an enumeration: bit 0 is the reject signal, bits 1-6 the cause.
@@ -73,8 +73,8 @@ identity makes reprocessing idempotent: running a file twice adds no rows.
 
 | Where | Layout | Reason |
 |---|---|---|
-| Streaming CPU path | one `RawRow` at a time: timestamp string + three `std::array<double,36>` (Count, AppTorque, Status); events leave in batches of at least 8,192 | constant memory per file |
-| Column path (`load_columns`, input of the GPU comparison) | `count`, `torque`, `status`: three contiguous row-major arrays `[n_rows][36]` of `double`, head index fastest; timestamps in a separate vector | the same layout as the device buffers; the transform becomes a pass over arrays |
+| Streaming CPU (central processing unit) path | one `RawRow` at a time: timestamp string + three `std::array<double,36>` (Count, AppTorque, Status); events leave in batches of at least 8,192 | constant memory per file |
+| Column path (`load_columns`, input of the GPU (graphics processing unit) comparison) | `count`, `torque`, `status`: three contiguous row-major arrays `[n_rows][36]` of `double`, head index fastest; timestamps in a separate vector | the same layout as the device buffers; the transform becomes a pass over arrays |
 | Device (one day-file) | raw bytes in pinned host memory, uploaded in one copy; `count`, `torque`, `status` as three `n_rows x 36` double arrays (about 25 MB each); timestamps as fixed 24-byte slots; 1 byte of flags per row; one event slot per (row, head), about 3.1 M slots | one slot per input cell means no thread ever needs to know how many events others produce |
 | `CapEventDevice` | 40-byte flat struct (`cap_seq`, `app_torque`, `status`, `row_index`, `delta`, `head_id`, `reset`, padding) | timestamps never travel to the GPU as strings: the event carries a row index and the host maps it back after the download |
 | Torque and status | kept as `double` on the device | the GPU result is compared bit by bit with the CPU result, not within a tolerance |
@@ -96,8 +96,8 @@ Three architectures use it:
 
 | Architecture | Scheme | Store |
 |---|---|---|
-| `mono-1T` | sequential baseline: one file after another | one DuckDB store |
-| `mono-MT` (`mas_monolith`, T threads) | thread pool; each thread takes the next file index from a shared `std::atomic` counter | one DuckDB store per thread, merged after the join |
+| `mono-1T` (monolith, 1 thread) | sequential baseline: one file after another | one DuckDB store |
+| `mono-MT` (monolith, multi-threaded; `mas_monolith`, T threads) | thread pool; each thread takes the next file index from a shared `std::atomic` counter | one DuckDB store per thread, merged after the join |
 | MAS (`mas_coordinator` + N `mas_worker` processes) | coordinator sends one `WorkItem` per file over ZeroMQ PUSH/PULL; workers return results; a third socket carries heartbeats | one DuckDB store per worker, merged by `mas_merge` |
 
 *Why one store per worker.* DuckDB admits a single writer, so workers write private files
@@ -117,16 +117,17 @@ events over 3 files).
 ### 1.4 GPU parallelisation
 
 `mas_cuda_clean` (and `mas_monolith --engine=cuda`) moves the whole transform, including
-CSV parsing, to the GPU. A day-file goes through eight timed stages:
+CSV parsing, to the GPU, using CUDA (NVIDIA's GPU programming platform). A day-file goes
+through eight timed stages:
 
 | Stage | Mapping | Primitive |
 |---|---|---|
-| read, H2D | file read into pinned memory, one upload | `cudaHostAlloc`, one copy |
-| index | one thread per byte flags `'\n'` (blocks of 256); line offsets extracted | CUB `DeviceSelect::Flagged` |
+| read, H2D (host to device: CPU memory to GPU memory) | file read into pinned memory, one upload | `cudaHostAlloc`, one copy |
+| index | one thread per byte flags `'\n'` (blocks of 256); line offsets extracted | CUB (NVIDIA's library of parallel GPU primitives) `DeviceSelect::Flagged` |
 | parse | one thread per row (blocks of 128), about 650 contiguous bytes each; writes `count`, `torque`, `status`, timestamp | custom parser |
 | delta | one thread per (row, head), about 3.1 M threads; two loads and a compare; writes an event slot and a flag | kernel |
 | compact | keep only the flagged slots, preserving order | CUB `DeviceSelect::Flagged` |
-| D2H | one download | copy |
+| D2H (device to host: GPU memory back to CPU memory) | one download | copy |
 | materialize | host: row index -> timestamp string, derive `is_fault` and `aggregated` | host loop |
 
 Events come out in the same `(row, head)` order as the CPU extractor.
@@ -137,7 +138,8 @@ Design points:
   once by an exact power of ten, which is correctly rounded while the mantissa fits in 53
   bits. About 2% of torque cells carry a 17-digit value that does not fit; the device
   flags them and the host re-parses the affected cells with `strtod`. A first version was
-  one ulp off, which `--verify` (the built-in bitwise comparison against the CPU,
+  one ulp (unit in the last place: the smallest step between two adjacent floating-point
+  numbers) off, which `--verify` (the built-in bitwise comparison against the CPU,
   non-zero exit on any difference) caught on its first run.
 - **Row policy shared with the CPU.** Blank lines, short rows and out-of-range cells
   are treated exactly as the CPU readers treat them, so a malformed row cannot produce a
@@ -146,7 +148,7 @@ Design points:
   device is fed file by file, so `--engine=cuda` requires `threads = 1`. There is no
   silent fallback: a binary built without CUDA refuses `--engine=cuda`.
 
-### 1.5 Skewed distributions: what the problem is in this project
+### 1.5 Skewed distributions: what they are in this project
 
 There are no vertices or degrees, so there is no degree skew. The system has two other
 kinds of skew, and the measures against them are:
@@ -157,21 +159,16 @@ and the cost of a file is dominated by writing its events.
 - The unit of work is a whole file, taken on demand, not a pre-assigned share.
 - `mono-MT` uses dynamic self-scheduling (the atomic counter): a thread that finishes a
   light file simply takes the next one, so no static partition can leave a thread idle.
-- In MAS, ZeroMQ PUSH distributes round-robin over connected workers. Without care, the
-  first worker to connect received every item (observed: one worker took all 7 files).
-  The coordinator therefore waits for `--workers N` hello heartbeats before the first
-  dispatch, and re-dispatches the items of dead workers to the survivors.
+- In MAS, ZeroMQ PUSH distributes round-robin over the connected workers. The coordinator
+  waits for `--workers N` hello heartbeats before the first dispatch, so that all N
+  workers are connected and share the files, and it re-dispatches the items of dead
+  workers to the survivors.
 
 **Uneven density of output on the GPU.** Most (row, head) cells produce no event; events
 are sparse and unevenly spread. Thread mapping does not depend on the data: every thread
 does the same two loads and one compare, and the variable-sized output is produced by
 stream compaction over fixed-size slots, with no atomics on a shared counter and no
 per-thread output queues.
-
-**Limits that remain.** File-grain scheduling cannot use more workers than there are
-files: with 7 files, 8 and 16 workers take the same time (Table 2). A starved-but-alive
-MAS worker can exceed its 60-tick idle budget on a long skewed run and exit; counts stay
-exact because its items are re-dispatched, only the death statistic is inflated.
 
 ---
 
@@ -184,12 +181,12 @@ exact because its items are re-dispatched, only the death statistic is inflated.
 - **Correctness gate:** every run of every architecture produced the event count of the
   independent Python oracle (`python/oracle.py`). The CUDA sweep also runs the bitwise
   differential before the timed repeats.
-- **Machine (CPU and GPU tables):** HP Victus 16, Intel i7-13700H (6 P-cores + 8 E-cores,
-  20 threads), 16 GB, NVMe SSD, active cooling, AC power, Windows; RTX 4070 Laptop GPU
-  (CUDA 13.3); MSVC 19.41 `/O2`, DuckDB 1.2.2, libzmq 4.3.5.
+- **Machine (CPU and GPU tables):** HP Victus 16, Intel i7-13700H (6 P-cores + 8 E-cores, i.e. performance and efficiency cores,
+  20 threads), 16 GB, NVMe (non-volatile memory express) SSD (solid-state drive), active cooling, AC power, Windows; RTX 4070 Laptop GPU
+  (CUDA 13.3); MSVC (Microsoft Visual C++ compiler) 19.41 `/O2`, DuckDB 1.2.2, libzmq 4.3.5.
 - **Method:** median of 3 repeats (warm cache); the spread over repeats is 0.1-1.8% on the
   clean phase and 0.3-4.8% on the total time for every 28-day CPU configuration.
-- **Two timing modes:** `clean` times the transform alone (no store); `e2e` includes the
+- **Two timing modes:** `clean` times the transform alone (no store); `e2e` (end to end) includes the
   DuckDB write. Both are reported because the store is much larger than the transform
   once cleaning is fast.
 - Absolute seconds do not transfer between machines (Section 2.2); the Parquet comparison
@@ -198,11 +195,11 @@ exact because its items are re-dispatched, only the death statistic is inflated.
 ### 2.2 CPU scaling: sequential, threads and processes
 
 Baselines and parallel versions of the same work, 28 day-files, median of 3.
-`S = T(mono-1T) / T`, `E = S / N` where N is the thread or worker count.
+`S = T(mono-1T) / T` (speedup), `E = S / N` (efficiency), where N is the thread or worker count.
 
 **Table 1 - 28 day-files**
 
-| arch | N | clean (s) | merge (s) | total (s) | events/s | S | E | peak RSS (MB) |
+| arch | N | clean (s) | merge (s) | total (s) | events/s | S | E | peak RSS (resident set size, MB) |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | mono-1T | 1 | 537.8 | - | 537.8 | 40,672 | 1.00 | 1.00 | 222 |
 | mono-MT | 2 | 264.9 | 73.4 | 338.3 | 64,647 | 1.59 | 0.79 | 3,374 |
@@ -241,22 +238,20 @@ What the data say:
 - **Parallel cleaning pays off at month scale: MAS N=16 is 3.83x the sequential baseline
   (537.8 s to 140.4 s), mono-MT T=8 is 3.42x.** The clean phase alone speeds up about 7x
   with 16 workers; the rest is the merge.
-- **The merge is the scaling wall.** It costs 65-73 s whatever the number of sources
+- **The merge takes a constant time.** It costs 65-73 s whatever the number of sources
   (N = 2..16, T = 2..8): it scales with the data volume, not with the partitioning. At
-  N=16 it is 46% of the wall time. (In an isolated test on the M2 the set-based merge was
+  N=16 it is 46% of the wall time. (In an isolated test on the MacBook Air M2 the set-based merge was
   2.89x faster than the per-row merge it replaced.) The `MAS N=1` row (430.4 s of merge)
   is the control: with a single source `merge_all` falls back to the per-row path, which
   costs 6.2x the set-based pass on the same volume.
 - **At equal parallelism threads beat processes.** At 8 workers, MAS trails mono-MT by
   25.2 s (182.6 s against 157.3 s): the price of processes, transport and per-worker
   stores. MAS leads only at N=16, a parallelism the thread pool was not swept to.
-- **Small volumes do not pay.** For one file every parallel configuration is slower than
-  `mono-1T` (21-22 s against 18.4 s): process start, connection and the merge are fixed
-  costs.
-- **Granularity limit.** With 7 files, N=8 and N=16 take the same time (36.3 s, 36.5 s):
+- **Small volumes.** For one file every parallel configuration takes 21-22 s against
+  18.4 s for `mono-1T`: process start, connection and the merge are fixed costs.
+- **File granularity.** With 7 files, N=8 and N=16 take the same time (36.3 s, 36.5 s):
   only 7 work items exist. With 28 files and 16 workers each worker handles 1.75 files on
-  average, so the end of the run is set by the last files to finish; the low efficiency at
-  N=16 (0.24) is consistent with this, but it was not isolated in a separate experiment.
+  average, so the end of the run is set by the last files to finish.
 - **Memory.** Per-thread and per-worker stores buffer data: 3.2-4.9 GB peak at 28 files
   for the parallel configurations against 222 MB for the sequential run.
 - **Reproducibility.** The ratio depends on the machine: the same experiment gave 1.84x
@@ -292,29 +287,24 @@ monolith run without store).*
 *Figure 6 - Time against number of day-files (log scale), including the two end-to-end
 rows `mono-1T [e2e]` and `mono-MT [e2e]`.*
 
-![CUDA stage breakdown](docs/bench/cuda_stages.png)
-
-*Figure 7 - Time per GPU stage for 1, 7 and 28 day-files.*
-
 What the data say:
 
-- **The GPU is on par with 8 CPU threads, not far ahead.** 1.08x on the stage-sum window.
-  The windows are not identical: CUDA's time is the sum of its stage timers, the C++ rows
-  time the whole process. Wall to wall, CUDA takes 9.08 s against 7.53 s for 8 threads,
-  i.e. it is slower. Both readings are given.
-- **The kernels are not the cost.** Of the 6.99 s at 28 files, 5.08 s are host-side
-  materialisation of the events, 1.22 s file reading, 0.36 s PCIe transfers and about 0.33 s
+- **The GPU matches 8 CPU threads.** 1.08x on the stage-sum window. The windows differ:
+  CUDA's time is the sum of its stage timers, the C++ rows time the whole process. Wall to
+  wall, CUDA takes 9.08 s against 7.53 s for 8 threads.
+- **Where the GPU time goes.** Of the 6.99 s at 28 files, 5.08 s are host-side
+  materialisation of the events, 1.22 s file reading, 0.36 s PCIe (Peripheral Component Interconnect Express, the CPU-GPU bus) transfers and about 0.33 s
   GPU compute (index + parse + delta + compact).
-- **The 6.6x over one C++ thread partly measures a slow CPU parser** (`std::istringstream`
-  and 108 `std::stod` calls per row), not only the GPU speed.
-- **The vectorised Python version is slower than the plain loop.** The cost is float
-  parsing: the pandas default parser is one ulp off on values like `2.002`, and the setting
-  that agrees with the oracle (`round_trip`) costs most of the time. The faster, wrong
-  parser was not kept.
+- **The 6.6x over one C++ thread depends on the CPU parser** (`std::istringstream` and 108
+  `std::stod` calls per row) as well as on the GPU speed.
+- **The vectorised Python version takes longer than the plain loop.** The time goes to
+  float parsing: the pandas default parser is one ulp off on values like `2.002`, so the
+  setting that agrees with the oracle (`round_trip`) is used, and it takes most of the
+  time.
 
 ### 2.4 End to end: where the time goes
 
-Cleaning is not the bottleneck; persistence is. Single-thread monolith, 28 files:
+Most of the time goes to persistence, not to cleaning. Single-thread monolith, 28 files:
 533.3 s in total against 46.7 s of store-free cleaning, so about 487 s, around 91% of the
 wall clock, is the DuckDB write. Replacing the cleaning engine leaves that untouched:
 
@@ -328,7 +318,7 @@ wall clock, is the DuckDB write. Replacing the cleaning engine leaves that untou
 
 A 6.6x faster cleaning phase, which is 9% of the total, gives 1.08x end to end. All
 three independent attempts to speed the pipeline (threads, processes, GPU) end at the
-same limit: the cost is persistence, not transformation. (The table adds the store cost of
+same cost: persistence, not transformation. (The table adds the store cost of
 the sequential run to each cleaning time; this session's sequential total, 533.3 s, is
 0.8% from the 537.8 s of Table 1.)
 
@@ -350,8 +340,8 @@ The write saving is 63.48 s once; each later run of the three reports costs 7.26
 Parquet, so **the saving is gone after 8.7 report runs**. The extra read cost is not the
 format (a plain scan is 2.05x a native table) but the `DISTINCT ON` that replaces the
 write-time UNIQUE index. Decision: DuckDB for the store that is queried, Parquet for the
-copy that is handed over (`mas_export`). Caveat: the write cells are single invocations
-(a month-scale store does not fit three times on the test disk); three other estimates of
+copy that is handed over (`mas_export`). The write figures are single invocations (a
+month-scale store does not fit three times on the test disk); three other estimates of
 the ratio agree (2.69x-2.91x), and repeated pairs differ by under 1%.
 
 ### 2.6 Conclusions
@@ -361,25 +351,9 @@ the ratio agree (2.69x-2.91x), and repeated pairs differ by under 1%.
 2. At month scale the best CPU configuration is 3.83x faster than the sequential baseline
    on this machine; threads are the cheaper vehicle at equal parallelism, processes only
    win at higher N and bring fault tolerance (a killed worker does not lose data).
-3. The limits are the merge of per-worker stores (about 46% of the wall at N=16) and the
-   file-sized unit of work.
+3. The merge of per-worker stores takes about 46% of the wall at N=16, and the unit of
+   work is a whole file.
 4. The GPU matches 8 CPU threads on the transform and gives 1.08x end to end, because the
    DuckDB write is about 91% of the sequential run.
-5. The remaining lever is persistence: Parquet writes 2.79x faster but reads 2.41x slower,
+5. Persistence is where the time goes: Parquet writes 2.79x faster but reads 2.41x slower,
    and is kept as an export format.
-
-### 2.7 Limits of the evaluation and sources
-
-- Every table is n = 3 on a laptop; the spreads quoted above are the resolution, the
-  medians are the claim.
-- The CPU sweep (Tables 1 and 2) was measured on the code at commit `ba6d4f8`; later
-  commits changed the CSV read path, transaction boundaries and the agent protocol. It
-  measures the design rather than the exact current binaries. One re-measurement
-  (`mono-1T`, 28 files) agreed with it to 0.8%.
-- Raw data: `bench/results.csv` (CPU sweep, 81 runs), `bench/results_cuda.csv` and
-  `bench/results_cuda_stages.csv` (GPU sweep), `bench/read_results.csv` and
-  `bench/parquet-comparison/` (Parquet comparison). Plots are generated from these files
-  by `python/bench_plots.py`.
-- Full analysis with every caveat and withdrawn claim: `docs/bench/results.md`;
-  measurement log: `docs/validation-log.md`; commands to repeat the runs: `README.txt`,
-  section 7.
