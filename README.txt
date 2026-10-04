@@ -1,221 +1,330 @@
-PROJECT Q3 - MULTI-AGENT SYSTEM FOR INDUSTRIAL IOT DATA REFINEMENT
-==================================================================
+Q3 - AROL capping machine: telemetry cleaning and reports
+=========================================================
 
-The programs read the raw 1 Hz telemetry day-files of an AROL Equatorque
-capping machine (36 capping heads), remove the duplicate polls and write one
-row per real cap event. A Python layer then builds reports from the cleaned
-data. Design and measurements: DOCUMENTATION.md.
+The capping machine logs one row per second, so the same cap appears many
+times in the raw data. These programs keep one row per cap actually applied,
+and a Python tool then builds reports from the cleaned data.
+
+Design and measurements: DOCUMENTATION.md.
 
 
-1. REQUIREMENTS
+1. BUILD (once)
 ---------------
 
-  - CMake >= 3.16 and a C++20 compiler (gcc 12+, clang 14+, MSVC 2022)
-  - Internet access at the first configure: CMake downloads DuckDB 1.2.2,
-    libzmq 4.3.5 and GoogleTest 1.14.0
-  - Optional: CUDA Toolkit (GPU cleaning engine)
-  - Optional: Python 3 (validation oracle, benchmarks, analytics)
-
-
-2. COMPILE
-----------
+You need CMake 3.16+, a C++20 compiler (gcc 12+, clang 14+ or Visual Studio
+2022) and an internet connection: the first run downloads DuckDB, libzmq and
+GoogleTest.
 
   cmake -B build -DCMAKE_BUILD_TYPE=Release
   cmake --build build --parallel
 
-Binaries are created in build/ (build/Release/ with the MSVC generator).
+Visual Studio on Windows: add --config Release to the second command.
 
-CMake options (ON/OFF, defaults in brackets):
+The programs appear in build/ (Windows: build/Release/). In the rest of this
+file, "build/" means that folder.
 
-  MAS_ENABLE_CUDA  [OFF]  build mas_cuda_clean and the --engine=cuda path
-  MAS_ENABLE_ZMQ   [ON]   build mas_coordinator and mas_worker
-  MAS_BUILD_TESTS  [ON]   build the unit tests (needs GoogleTest)
-  MAS_BENCH_ONLY   [OFF]  build only clean core + bench binaries; downloads
-                          nothing, builds no tests
+Optional switches, added to the first command:
 
-Run the unit tests:
+  -DMAS_ENABLE_CUDA=ON    GPU cleaning (needs the CUDA Toolkit)       [OFF]
+  -DMAS_ENABLE_ZMQ=OFF    do not build mas_worker / mas_coordinator   [ON]
+  -DMAS_BUILD_TESTS=OFF   do not build the unit tests                 [ON]
 
-  cd build && ctest -C Release --output-on-failure
-
-
-3. DATASET FORMAT
------------------
-
-Input: one CSV file per day, taken from the month archives
-telemetry_<machine_id>_<YYYY-MM>.zip. The data is not part of the repository.
-
-  - comma separated, one header line, LF or CRLF line ends
-  - exactly 109 columns, in this order:
-        timestamp
-        H01 Count ... H36 Count            (cap counter of each head)
-        H01 AppTorque ... H36 AppTorque    (applied torque)
-        H01 Status ... H36 Status          (closure status, bitmask;
-                                            bit 0 set = cap rejected)
-  - one row per second (about 86,400 rows, 58 MB per day)
-  - timestamp is text, e.g. 2026-02-01T00:00:00.000
-  - a header that differs from the one above is an error; a row with a wrong
-    number of fields or an unreadable/out-of-range number is skipped and
-    counted
-
-Output: one row per cap event.
-
-  machine_id, head_id, ts, cap_seq, app_torque, status, delta,
-  is_fault, aggregated, reset
-
-  cap_seq     counter value of the head at that cap
-  delta       caps since the previous row (> 1 means aggregated = true)
-  reset       the counter went down (PLC reset); delta is 0
-  is_fault    the reject bit of status is set
-
-A row is produced when a head's counter changes between two consecutive
-rows; unchanged counters produce nothing.
-
-Output formats:
-  .csv      header as above
-  .duckdb   table cap_events, same columns ("reset" is called is_reset);
-            (machine_id, head_id, ts) is unique, so running the same file
-            twice adds no rows
-  Parquet   same columns as the DuckDB table (see --format below)
+Check the build (optional):  cd build && ctest -C Release --output-on-failure
 
 
-4. RUN
+2. THE PROGRAMS
+---------------
+
+  clean            cleans ONE day-file
+  mas_monolith     cleans MANY day-files in one process (start here for a month)
+  mas_worker       with mas_coordinator: many day-files, many processes
+  mas_coordinator    (optional, see 3.4)
+  mas_merge        joins several .duckdb stores into one
+  mas_export       writes a store out as one Parquet file
+
+Run everything from the repository folder. Every program prints its messages
+on stderr, and prints its usage line if you run it with no arguments.
+
+<machine_id> is a label stored in every row (for example MCC). It is always
+required: the programs never guess it. Use the same label later in the reports.
+
+
+3. RUN
 ------
 
-machine_id is a label for the machine, stored in every event. It is
-required. The examples use MCC and the data files telemetry_*/*2026-02-01.csv.
+3.1  One day
 
-4.1 clean - one day-file
+  build/clean telemetry_MCC_2026-02-01.csv events.csv MCC
 
-  build/clean [--format duckdb|parquet] <raw_in.csv> <out> <machine_id>
+  prints, for example:  wrote 765711 cap events
 
-  <out>   *.duckdb -> DuckDB store; any other name -> CSV file;
-          with --format parquet <out> is a directory and the file
-          <out>/<input name>.parquet is written
+  The output type follows its name:
+    events.csv       a CSV file (overwritten if it exists)
+    events.duckdb    a DuckDB store; running the same file again adds nothing
+    --format parquet <folder>   one Parquet file per input, named after it
 
-  build/clean telemetry_*/*2026-02-01.csv events.csv MCC
-  build/clean telemetry_*/*2026-02-01.csv events.duckdb MCC
+    build/clean --format parquet telemetry_MCC_2026-02-01.csv out_parquet MCC
 
-4.2 mas_monolith - several files, threads in one process
+  Options go BEFORE the file names.
 
-  build/mas_monolith [--no-store] [--engine=cpu|cuda] [--format duckdb|parquet]
-                     <out.duckdb|out_dir> <machine_id> <threads>
-                     <day1.csv> [day2.csv ...]
+3.2  Many days
 
-  <threads>     1 = sequential; > 1 = one day-file per thread, one private
-                store per thread, merged into <out> at the end
-  --no-store    count the events and discard them (needs threads = 1)
-  --engine      cleaning engine, default cpu; cuda needs a build with
-                MAS_ENABLE_CUDA=ON and threads = 1; no fallback to cpu
-  --format      parquet writes Parquet files into the directory <out_dir>
+  build/mas_monolith unified.duckdb MCC 4 telemetry_MCC_2026-02-*.csv
+                     ^output        ^id ^threads ^day-files
 
-  build/mas_monolith unified.duckdb MCC 4 telemetry_*/*.csv
+  <threads>  1 = one file after another, N = N files at the same time.
+  The store keeps growing: new days are added, days already in it are not
+  duplicated. To start from scratch, delete the .duckdb file first.
 
-4.3 mas_worker + mas_coordinator - several processes (ZeroMQ)
+  At the end it prints two lines, for example:
+    monolith: 28 files, 21872663 events, clean 12.3 s, merge 1.2 s, total 13.5 s,
+              store holds 21872663 rows, engine cpu
 
-  build/mas_worker [--format duckdb|parquet] <work_endpoint> <result_endpoint>
-                   <hb_endpoint> <out.duckdb|out_dir> <worker_id> <machine_id>
+  The * is expanded by the shell: fine in Git Bash, macOS and Linux. In cmd or
+  PowerShell, list the files by name.
 
-  build/mas_coordinator <work_endpoint> <result_endpoint> <hb_endpoint>
-                        [--workers N] <day1.csv> [day2.csv ...]
+  Straight from the month archives (unzips them, then cleans with 4 threads,
+  label MCC; an existing output file is deleted first):
 
-  The three endpoints are the same for all processes, e.g. tcp://127.0.0.1:5591,
-  5592 and 5593. Start the workers first (each one writes its own store),
-  then the coordinator; --workers N makes it wait for N workers before it
-  dispatches. A worker that stays silent for 30 s is declared dead and its
-  files are given to the others. Afterwards merge the worker stores:
+  scripts/build_store.sh events_3mo.duckdb telemetry_*.zip
+
+3.3  Join stores, export
+
+  build/mas_merge unified.duckdb MCC march.duckdb
+      adds the rows of march.duckdb to unified.duckdb. Rows keep the label
+      they already had. A source that cannot be read is skipped with a warning.
+
+  build/mas_export unified.duckdb events.parquet --since 2026-02-03 --until 2026-02-03
+      reads the store (never changes it) and writes events.parquet.
+      --since / --until are optional and inclusive; a bare date as --until
+      covers that whole day.
+
+3.4  Many processes (optional)
+
+  Start the workers first, then the coordinator, then merge their stores:
 
   EP="tcp://127.0.0.1:5591 tcp://127.0.0.1:5592 tcp://127.0.0.1:5593"
   build/mas_worker $EP w1.duckdb w1 MCC &
   build/mas_worker $EP w2.duckdb w2 MCC &
-  build/mas_coordinator $EP --workers 2 \
-      telemetry_*/*2026-02-01.csv telemetry_*/*2026-02-02.csv
+  build/mas_coordinator $EP --workers 2 telemetry_MCC_2026-02-01.csv telemetry_MCC_2026-02-02.csv
   build/mas_merge unified.duckdb MCC w1.duckdb w2.duckdb
 
-4.4 mas_merge and mas_export
+  The three endpoints must be identical in every command. Each worker needs
+  its own name (w1, w2, ...) and its own store. --workers N makes the
+  coordinator wait for N workers before it hands out files. A worker silent
+  for 30 s is declared dead and its files go to the others.
 
-  build/mas_merge <dst.duckdb> <machine_id> <src1.duckdb> [src2.duckdb ...]
-      merges stores into dst; a corrupt source is skipped with a warning
+  You see: dispatched 2 files: 2 ok, 0 failed, <N> events, 0 workers died
 
-  build/mas_export <store.duckdb> <out.parquet> [--since TS] [--until TS]
-      writes cap_events to Parquet; the store is opened read-only; a bare
-      date as --until covers the whole day
+3.5  Check a result (optional; plain Python 3, no extra packages)
 
-4.5 Benchmark programs
-
-  build/bench_cpu <threads> <day1.csv> [day2.csv ...]
-      cleaning only, no store (CPU contender of the CUDA benchmark)
-  build/mas_cuda_clean [--verify] <day1.csv> [day2.csv ...]
-      GPU cleaning (MAS_ENABLE_CUDA=ON); --verify compares the result with
-      the CPU code and exits non-zero on any difference
-
-mas_monolith, bench_cpu and mas_cuda_clean also print a "metrics:" line on
-stderr with wall time, CPU time and peak memory. A usage error exits with
-code 2.
+  python3 python/oracle.py telemetry_MCC_2026-02-01.csv
+      event count found by an independent Python version: it must match.
+  python3 python/validate_real.py telemetry_MCC_2026-02-01.csv events.csv
+      compares every field of every event with the Python version.
 
 
-5. CHECK AGAINST THE PYTHON ORACLE
-----------------------------------
+4. REPORTS
+----------
 
-  python3 python/oracle.py telemetry_*/*2026-02-01.csv
-      prints the number of events found by the independent Python version
-
-  python3 python/validate_real.py telemetry_*/*2026-02-01.csv events.csv
-      compares every field of every event of events.csv with the oracle
-
-
-6. ANALYTICS AND REPORTS (Python)
----------------------------------
+Set up once. The scripts need bash: on Windows use Git Bash.
 
   python3 -m venv .venv
-  .venv/bin/pip install -r python/requirements.txt
+  .venv/bin/pip install -r python/requirements.txt      (Windows: .venv/Scripts/pip)
 
-  scripts/build_store.sh <out.duckdb> [month.zip ...]
-      unzips the month archives and cleans all day-files into one store
-      (uses build/mas_monolith with 4 threads, machine_id MCC)
+(The pinned versions in python/requirements.txt were tested on Python 3.14.)
 
-Write a configuration file, for example arol.json:
+Tell the tool where the store is. Save this as arol.json:
 
-  { "store_path": "events_3mo.duckdb", "machine_id": "MCC" }
+  { "store_path": "unified.duckdb", "machine_id": "MCC" }
 
-  scripts/arol report kpi       --period 2026-02          --config arol.json
-  scripts/arol report drift     --period 2026-02..2026-04 --config arol.json
-  scripts/arol report anomalies --period 2026-02          --config arol.json
-  scripts/arol ask "<question>" --period 2026-02          --config arol.json
+Then:
 
-  --config FILE   JSON configuration (store_path, machine_id, torque_min,
-                  torque_max, mad_k, idle_min_seconds, idle_max_gap_seconds,
-                  provider, model, planning)
-  --out DIR       output directory (default: reports)
-  --period P      YYYY-MM or YYYY-MM..YYYY-MM (default: whole store)
-  --pdf           also export a PDF (needs WeasyPrint)
-  --provider P    anthropic or ollama      (ask only)
-  --model NAME    model name               (ask only)
-  --planning T    plan, select or classify (ask only)
+  scripts/arol report kpi       --period 2026-02            --config arol.json
+  scripts/arol report drift     --period 2026-02..2026-04   --config arol.json
+  scripts/arol report anomalies --period 2026-02            --config arol.json
 
-The three "report" commands use no model and need no network. "ask" uses
-Claude (set ANTHROPIC_API_KEY) or a local Ollama model (--provider ollama);
-without a model it falls back to keyword routing.
-Each report is a directory with report.md, report.html, trace.json and PNGs.
+  kpi        success rate, production speed, idle time, per head
+  drift      how torque and success rate move over time, head by head
+  anomalies  readings outside the torque band, unusual heads, rejected caps
 
-Python tests: cd python && ../.venv/bin/python -m pytest -q
+Each command prints a folder (reports/kpi, reports/drift, ...) containing:
+  report.md      the report (source of truth)
+  report.html    the same, one portable file with the plots inside
+  trace.json     every analysis that was run, with its arguments
+  *.png          the plots
+
+The three report commands use no model: same store and period, same report.
+
+Ask a question in plain English (a model picks which analyses to run):
+
+  scripts/arol ask "which head behaves differently, and why?" --period 2026-02 --config arol.json
+
+  Hosted model:  export ANTHROPIC_API_KEY=...
+  Local model:   ollama pull qwen2.5:7b
+                 add   --provider ollama --model qwen2.5:7b
+  The numbers always come from the analyses, never from the model. With no key
+  or no model reachable, ask falls back to a keyword router and the report
+  says so. Answers go to reports/ask/<timestamp>/.
 
 
-7. REPRODUCE THE MEASUREMENTS
------------------------------
+5. PARAMETERS
+-------------
 
-  bench/run_bench.sh [--quick]
-      CPU sweep: monolith 1/2/4/8 threads, MAS 1/2/4/8/16 workers, volumes
-      of 1, 7 and 28 day-files, 3 repeats. Expects the February 2026 archive
-      named in the script, and macOS or Windows (it needs BSD time or
-      win_time). Writes bench/results.csv. --quick runs 1 day only.
+clean [--format duckdb|parquet] <input.csv> <output> <machine_id>
 
-  python bench/run_bench_cuda.py --data <month.zip or extracted dir> [--quick]
-      Python vs C++ vs CUDA cleaning. Build first with:
-        cmake -S . -B build-bench -DMAS_BENCH_ONLY=ON -DMAS_ENABLE_CUDA=ON
-        cmake --build build-bench --config Release
-        pip install -r bench/requirements-bench.txt
-      Writes bench/results_cuda.csv and bench/results_cuda_stages.csv.
-      Details: bench/README.md.
+  input        one raw day-file
+  output       *.duckdb = store; any other name = CSV file;
+               with --format parquet = folder
+  --format     duckdb (default) or parquet
 
-  python python/bench_plots.py [--cuda]
-      redraws the plots in docs/bench/ from the CSV files
+mas_monolith [options] <output> <machine_id> <threads> <day1.csv> [day2.csv ...]
+
+  output       .duckdb file, or a folder with --format parquet
+  threads      1 or more
+  --format     duckdb (default) or parquet
+  --engine     --engine=cpu (default) or --engine=cuda (CUDA build only)
+  --no-store   count the events and write nothing (<output> is still required)
+
+  Refused (exit 2):
+    --no-store or --engine=cuda with threads above 1
+    --no-store together with --format parquet
+    an option placed after the file names
+    --format parquet when two input files have the same name
+
+mas_worker [--format duckdb|parquet] <work_ep> <result_ep> <hb_ep> <output> <worker_id> <machine_id>
+mas_coordinator <work_ep> <result_ep> <hb_ep> [--workers N] <day1.csv> [day2.csv ...]
+
+  *_ep         the three ZeroMQ endpoints, e.g. tcp://127.0.0.1:5591 (same everywhere)
+  worker_id    unique name of this worker
+  output       the worker's own .duckdb file (a folder with --format parquet)
+
+mas_merge <dst.duckdb> <machine_id> <src1.duckdb> [src2.duckdb ...]
+
+mas_export <store.duckdb> <out.parquet> [--since TS] [--until TS]
+
+arol report <kpi|drift|anomalies> [options]
+arol ask "<question>" [options]
+
+  --config FILE   JSON settings (below). Without it: store events.duckdb in
+                  the current folder and the default values
+  --period P      YYYY-MM or YYYY-MM..YYYY-MM. Without it: the whole store
+  --out DIR       where report folders are written [reports]
+  --pdf           also write a PDF (needs WeasyPrint)
+  -v              more detail on screen
+  Only used by ask:
+  --provider      anthropic (default) or ollama
+  --model         model name, e.g. qwen2.5:7b
+  --planning      plan (the model composes the analyses, default),
+                  select (it only picks tools) or classify (it picks one report)
+
+arol.json (all keys are optional; defaults in brackets)
+
+  store_path            the .duckdb store                         [events.duckdb]
+  machine_id            the label used when cleaning              [MCC]
+  torque_min/torque_max expected torque band, Nm                  [1.5 / 2.5]
+  mad_k                 a reading this many robust sigmas from
+                        the head's median counts as unusual       [3.0]
+  idle_min_seconds      no-load for longer than this = idle       [300]
+  idle_max_gap_seconds  a hole in the data longer than this ends
+                        an idle period                            [600]
+  provider, model       model used by ask       [anthropic, claude-opus-5]
+  ollama_host, num_ctx  local model address and context size
+                                              [http://localhost:11434, 8192]
+
+  An unknown key, or a value of the wrong type, is an error (exit 2) before
+  any work starts.
+
+
+6. DATA FORMATS
+---------------
+
+INPUT: raw day-file
+  one CSV per day, e.g. telemetry_MCC_2026-02-01.csv, taken from the month
+  archive telemetry_<machine>_<YYYY-MM>.zip. The data is not in the repository.
+
+  - comma separated, one header line, LF or CRLF line ends
+  - 109 columns, in this order, with exactly these names:
+        timestamp
+        H01 Count ... H36 Count            cap counter of each head
+        H01 AppTorque ... H36 AppTorque    applied torque, Nm
+        H01 Status ... H36 Status          closure status; bit 0 set (an odd
+                                           number, e.g. 65) = cap rejected
+  - one row per second, about 86,400 per day
+  - timestamp is text like 2026-02-01T00:00:00.000. Keep this form: row order
+    is checked on the text
+
+  What happens with bad input:
+    a different header      the file is refused
+    a bad row               skipped and counted: "skipped N malformed rows"
+                            (wrong number of fields, or a value that is not a
+                            number or is out of range)
+    time going backwards    the row is kept but counted: "N out-of-order
+                            timestamps"
+
+OUTPUT: one row per cap event
+  A row is written when a head's counter changes between two consecutive rows.
+
+  machine_id   the label you gave
+  head_id      1..36
+  ts           timestamp of the row where the change was seen
+  cap_seq      the head's counter value at that cap
+  app_torque   applied torque in that row
+  status       closure status in that row
+  delta        caps since the previous row (normally 1)
+  is_fault     1 if the cap was rejected (status odd)
+  aggregated   1 if delta is above 1: several caps fell between two rows
+  reset        1 if the counter went down (PLC reset). delta is 0 then
+
+  Three file types, same columns:
+    .csv       header as above; booleans written as 0 / 1
+    .duckdb    table cap_events. "reset" is called is_reset. Types: head_id
+               small integer, ts TIMESTAMP, the three flags BOOLEAN.
+               (machine_id, head_id, ts) is unique, which is why running the
+               same file twice adds no rows
+    Parquet    the columns of the DuckDB table, one file per day-file in a
+               folder, named after the input (telemetry_MCC_2026-02-01.parquet)
+
+EXAMPLE
+  Input, heads 1 and 2 only (the real file has 36 heads in each group):
+
+  timestamp                H01 Count  H02 Count  H01 AppTorque  H02 AppTorque  H01 Status  H02 Status
+  2026-02-01T00:00:00.000  100        50         2.5            2.25           0           0
+  2026-02-01T00:00:01.000  100        50         2.5            2.25           0           0
+  2026-02-01T00:00:02.000  101        50         2.5            2.25           0           0
+  2026-02-01T00:00:03.000  101        53         2.5            2.25           0           65
+  2026-02-01T00:00:04.000  0          53         2.5            2.25           0           65
+
+  Output of  build/clean <that file> events.csv MCC :
+
+  machine_id,head_id,ts,cap_seq,app_torque,status,delta,is_fault,aggregated,reset
+  MCC,1,2026-02-01T00:00:02.000,101,2.5,0,1,0,0,0
+  MCC,2,2026-02-01T00:00:03.000,53,2.25,65,3,1,1,0
+  MCC,1,2026-02-01T00:00:04.000,0,2.5,0,0,0,0,1
+
+  Five rows, three events:
+    00:00:00  first row of the file: counters are only remembered. No event
+    00:00:01  nothing changed (a repeated poll). No event
+    00:00:02  head 1: 100 -> 101. One cap
+    00:00:03  head 2: 50 -> 53. Three caps in one row: delta 3, aggregated 1.
+              Status 65 is odd, so is_fault 1
+    00:00:04  head 1: 101 -> 0. PLC reset: reset 1, delta 0
+
+
+7. WHEN SOMETHING GOES WRONG
+----------------------------
+
+Exit codes of the C++ programs:
+  0   done
+  1   cleaning or writing failed
+  2   the command line is wrong; the usage line is printed.
+      mas_monolith also uses 2 when an input file cannot be opened or has a
+      wrong header
+
+scripts/arol:
+  0   done. A period with no data is not an error: the report says so
+  1   every analysis step failed (for example --period February)
+  2   bad option or bad arol.json, found before any work starts
+
+Two slips behind most "usage" errors: a missing <machine_id>, and an option
+placed after the file names (options go before them).
