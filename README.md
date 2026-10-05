@@ -215,6 +215,8 @@ the chaos test and the benchmark sweeps: [Build & Run](#build--run).
 - [Benchmarking](#benchmarking)
   - [CUDA cleaning benchmark](#cuda-cleaning-benchmark)
 - [Chaos E2E Testing](#chaos-e2e-testing)
+  - [Direction 1 — kill -9 a worker mid-run](#direction-1--kill--9-a-worker-mid-run)
+  - [Direction 2 — kill -9 the coordinator mid-run](#direction-2--kill--9-the-coordinator-mid-run)
 - [Build & Run](#build--run)
   - [Prerequisites](#prerequisites)
   - [Build](#build)
@@ -231,6 +233,7 @@ the chaos test and the benchmark sweeps: [Build & Run](#build--run).
   - [Build the analytics environment](#build-the-analytics-environment)
   - [Generate a report](#generate-a-report)
   - [Ask a question](#ask-a-question)
+  - [Running the model on the Anthropic API](#running-the-model-on-the-anthropic-api)
   - [Running the model locally](#running-the-model-locally)
   - [Configuration (WP5)](#configuration-wp5)
   - [Reproduce the demo](#reproduce-the-demo)
@@ -1207,17 +1210,56 @@ re-measured the kernel that actually ships.
 
 ## Chaos E2E Testing
 
-[`scripts/chaos_e2e.sh`](scripts/chaos_e2e.sh) validates resilience under
-real failure conditions:
+[`scripts/chaos_e2e.sh`](scripts/chaos_e2e.sh) kills real processes in a real
+distributed run and asserts the survivors behave. It covers **both directions**
+of resilience spec §10 — a dead worker and a dead coordinator — in one
+invocation, on real day-files, with no mocks anywhere.
 
-1. Starts a coordinator + 2 workers on real day-files
-2. **`kill -9`** worker 1 after 2 seconds (mid-processing)
-3. Waits for the coordinator to detect the death (30 s threshold), re-dispatch items, and complete
-4. Merges both worker stores (dead worker's store is harmlessly skipped or idempotently absorbed)
-5. Asserts merged row count matches the oracle
+**Prerequisites.** `mas_coordinator`, `mas_worker` and `mas_merge` must already
+be built (the script exits `2` naming the missing one), `python3` must be on
+`PATH` for the oracle, and at least **two** day-files must be passed. The
+binaries are looked up in `build/`, overridable with `BUILD_DIR`. The machine
+id is derived from the first filename's `telemetry_<id>_<date>.csv` shape, not
+defaulted — a hardcoded `MCC` once produced a store that no machine-scoped
+query could find, and the count-only assertion did not notice.
 
-**Result:** PASS — 2,290,233 events across 3 day-files, even with one worker
-killed mid-run. Wall clock ~57 s (30 s death threshold dominates).
+**The oracle is computed first**, before any C++ binary starts:
+[`python/oracle_union.py`](python/oracle_union.py) counts the distinct
+`(head_id, ts)` pairs across the input files — exactly what the store should
+hold — and shares no code with the system under test.
+
+### Direction 1 — `kill -9` a worker mid-run
+
+1. Coordinator + 2 workers start on `tcp://127.0.0.1:5571-5573`, the
+   coordinator gated with `--workers 2` so dispatch waits for both to register
+   (this is the registration gate's only end-to-end exercise; unit tests fake
+   the transport).
+2. Worker `w1` is killed **1 second after both workers have registered**, read
+   from the coordinator's `worker wN joined` lines — not after a fixed sleep.
+   The fixed sleep was a real-time race: on a fast machine the first file was
+   already done, the killed worker held nothing, and the re-dispatch assertion
+   failed for a reason with nothing to do with resilience.
+3. The coordinator must finish **on its own**, under a 300 s watchdog.
+4. Four assertions, any of which fails the run: coordinator exit status `0`,
+   `dead (silent` in its log (death actually detected), `re-dispatch` in its
+   log (the dead worker's item actually reassigned), and finally
+5. `mas_merge` over **both** stores — the written-off one included, where an
+   intact store contributes harmless idempotent duplicates and a corrupt one is
+   skipped loudly — with the merged row count compared against the oracle.
+
+### Direction 2 — `kill -9` the coordinator mid-run
+
+A second pair of workers is started, the coordinator is killed 1 second after
+registration, and the workers must notice unaided: 60 empty 1-second ticks,
+then a voluntary idle exit. Both must be gone within a 90 s budget, or the
+script names the surviving pid and fails. **No orphans** is the whole
+criterion — a worker that outlives its coordinator holds its store open and
+its port bound.
+
+**Result:** PASS on both directions — 2,290,233 events across 3 day-files with
+one worker killed mid-run. Direction 1 takes ~57 s, dominated by the 30 s death
+threshold; direction 2 adds the workers' 60-tick idle exit, so budget a couple
+of minutes for the whole script.
 
 **Defect found:** Chaos testing exposed a 121 s teardown bug in orphan workers — connect-mode PUSH sockets with 60 s linger held undeliverable heartbeats. Fixed with `linger_ms=0`, regression-guarded by a unit test.
 
@@ -1333,9 +1375,20 @@ python3 python/validate_real.py telemetry_*/*2026-02-01.csv events.csv
 
 ### Chaos E2E Test
 
+Needs at least two day-files and a build that includes the ZeroMQ binaries
+(the default `MAS_ENABLE_ZMQ=ON`):
+
 ```bash
 scripts/chaos_e2e.sh telemetry_*/*2026-02-01.csv telemetry_*/*2026-02-02.csv telemetry_*/*2026-02-03.csv
+
+# Binaries somewhere other than build/
+BUILD_DIR=build-full scripts/chaos_e2e.sh telemetry_*/*2026-02-0[12].csv
 ```
+
+It prints the oracle total, every process log, and one `PASS`/`FAIL` line per
+direction; exit `2` means a missing binary or bad arguments, exit `1` a real
+resilience failure. Full breakdown of what each direction asserts:
+[Chaos E2E Testing](#chaos-e2e-testing).
 
 ### Performance Benchmark
 
@@ -1429,6 +1482,63 @@ model's words can appear").
 With no API key, no network, a refusal, or a malformed plan, `ask` falls back to
 a keyword router and the report's *Confidence and limits* section names the
 reason. A model failure costs readability, never correctness.
+
+### Running the model on the Anthropic API
+
+`provider: anthropic` is the default, so `ask` already talks to the hosted API
+and the only thing missing on a fresh clone is a credential. The client is
+constructed with no key argument
+([`agent/llm.py`](python/analytics/agent/llm.py)), so the SDK resolves
+credentials itself — first match wins:
+
+```bash
+# Option A — an API key in the environment
+export ANTHROPIC_API_KEY=sk-ant-...
+
+# Option B — a stored profile, no env var at all
+ant auth login
+ant auth status     # says which credential source is active
+
+scripts/arol ask "which head behaves differently?" --period 2026-02
+```
+
+The `anthropic` package is already pinned in
+[`python/requirements.txt`](python/requirements.txt), so the venv built above
+needs nothing extra.
+
+**Choosing the model.** The default is `claude-opus-5`; `--model` overrides it
+without touching the config:
+
+```bash
+scripts/arol ask "any anomalies in February?" --period 2026-02 \
+  --model claude-sonnet-5
+```
+
+| field | default | what it does |
+|---|---|---|
+| `provider` | `anthropic` | `anthropic` or `ollama`; the only field that has to change to move between hosted and local |
+| `model` | `claude-opus-5` | any current model id — `claude-sonnet-5` and `claude-haiku-4-5` are the cheaper tiers |
+| `effort` | `high` | `low`..`max`; Anthropic-only, and deliberately never sent to Ollama, which rejects it |
+| `max_tokens` | `16000` | a reply cut off here is reported as exactly that, not as malformed JSON |
+| `api_timeout_s` | `120.0` | passed straight to the client |
+
+**What the request looks like.** One call per planner or narrator step:
+adaptive thinking, and `output_config.format` pinned to the JSON schema the
+caller needs — so a plan comes back schema-valid or not at all. Sampling knobs
+(`temperature`, `top_p`, `top_k`) and `budget_tokens` are never sent; the
+current models reject them with a 400.
+
+**Failures degrade, they do not raise.** A refusal, a `max_tokens` cut-off, a
+reply that is not valid JSON — each returns a reason rather than a traceback,
+the deterministic fallback runs, and the reason is printed in the report's
+limits section. A hosted-model outage changes what the report says about
+itself; it does not lose the analysis, because no figure or number was ever
+the model's to compute.
+
+**Cost.** The planner prompt is ~1,850 tokens at `--planning plan` and ~16 at
+`classify` (table below), so a single `ask` is cents at Opus list pricing
+($5/$25 per million input/output tokens) and less on Sonnet or Haiku. Drop to
+`--planning classify` if you are running many questions.
 
 ### Running the model locally
 
