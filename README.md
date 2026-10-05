@@ -23,8 +23,162 @@ Chaos E2E resilience testing · Benchmark sweep harness
 
 ---
 
+## Quick Start
+
+**No GPU required.** CUDA is opt-in (`MAS_ENABLE_CUDA=OFF` by default), so the
+build below is the CPU build on every platform. The first configure needs
+network: CMake fetches DuckDB, libzmq and GoogleTest.
+
+**macOS and Linux** — needs CMake ≥ 3.16 and a C++20 compiler (clang 14+ or
+gcc 12+; on macOS `xcode-select --install` supplies clang):
+
+```bash
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+cd build && ctest --output-on-failure        # the C++ suite
+```
+
+**Windows** — Visual Studio 2022, from a Developer PowerShell:
+
+```powershell
+cmake -B build
+cmake --build build --config Release
+cd build; ctest -C Release --output-on-failure
+```
+
+Binaries land in `build/` (`build/Release/` on Visual Studio). Clean one
+day-file into a DuckDB store, where `MCC` is the machine id to tag the events
+with:
+
+```bash
+./build/clean telemetry_*/*2026-02-01.csv events.duckdb MCC
+```
+
+| Platform | Status | What to know |
+|---|---|---|
+| macOS 12+, Intel **or** Apple Silicon | works as above | DuckDB ships a universal binary, so no Rosetta and no arch flag |
+| Linux **x86-64** | works as above | The rpath to the fetched `libduckdb.so` is baked into each binary. The DuckDB asset is amd64, so this is the supported Linux arch |
+| Windows 10/11 x64 | works as above | `duckdb.dll` and the ZeroMQ DLL are copied beside each `.exe` automatically |
+
+**Running without CUDA** is the default path, not a degraded one. The cleaning
+transform, the stores, the agent runtime, the whole test suite and the analytics
+tier never touch the GPU. Concretely, on a machine with no NVIDIA card:
+
+- `mas_cuda_clean` is simply not built, and `mas_monolith` defaults to
+  `--engine=cpu`. Passing `--engine=cuda` to a binary built without it exits
+  with `-DMAS_ENABLE_CUDA=ON and rebuild to use --engine=cuda` rather than
+  silently falling back — an engine is never guessed.
+- The CPU benchmark contender `bench_cpu` builds everywhere; only the
+  [CUDA benchmark](#cuda-benchmark-python-vs-c-vs-cuda) needs the Toolkit.
+
+> **Have an NVIDIA GPU?** Everything needed to build and run the GPU path —
+> toolkit install commands included — is in
+> [Build with an NVIDIA GPU (CUDA)](#build-with-an-nvidia-gpu-cuda), directly
+> below.
+
+### Build with an NVIDIA GPU (CUDA)
+
+Available on **Linux and Windows** only; macOS has no CUDA Toolkit, so the GPU
+path cannot be built there whatever the hardware. Three steps: install the
+toolkit, verify it, then configure with one extra flag.
+
+**1. Install the driver and the CUDA Toolkit.** The kernels compile as C++20,
+which `nvcc` only supports from **CUDA 12.0** onwards — an older toolkit fails
+the configure step, because `CMAKE_CUDA_STANDARD 20` is set `REQUIRED`.
+
+```bash
+# Ubuntu 24.04+ / Debian 13+ — the distro package is CUDA 12.x here
+sudo apt update
+sudo apt install nvidia-cuda-toolkit
+
+# Ubuntu 22.04 and older ship CUDA 11.x under that name, which has no C++20
+# nvcc. Use NVIDIA's own repo instead: https://developer.nvidia.com/cuda-downloads
+
+# Fedora / RHEL
+sudo dnf install cuda-toolkit
+
+# Arch
+sudo pacman -S cuda
+
+# Driver, if nvidia-smi is missing (Ubuntu)
+sudo ubuntu-drivers install
+```
+
+On Windows, install the CUDA Toolkit alongside the VS 2022 C++ workload:
+
+```powershell
+winget install --id Nvidia.CUDA -e
+
+# Or let the repo script install BOTH the VS 2022 C++ workload and the
+# Toolkit in one elevated run (~6 GB of downloads, one UAC prompt):
+powershell -ExecutionPolicy Bypass -File scripts\setup_windows_toolchain.ps1
+```
+
+Open a **new shell** afterwards so `nvcc` lands on `PATH`.
+
+**2. Verify before building** — these two commands answer "driver OK?" and
+"toolkit new enough?", which are the two ways the GPU build fails:
+
+```bash
+nvidia-smi        # lists the device and the driver version
+nvcc --version    # must report release 12.0 or newer
+```
+
+If `nvcc` is not found but the toolkit is installed, it is usually outside
+`PATH`:
+
+```bash
+export PATH=/usr/local/cuda/bin:$PATH
+```
+
+**3. Configure and build with the flag.** One addition to the Quick Start
+command above:
+
+```bash
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DMAS_ENABLE_CUDA=ON
+cmake --build build --parallel
+```
+
+That adds the `mas_cuda_clean` binary and compiles the GPU cleaner into
+`mas_monolith`. Clean a day-file on the GPU, checking the result against the
+CPU as you go:
+
+```bash
+# GPU cleaning contender; prints the eight per-stage timings.
+# --verify runs the bitwise differential against the CPU extractor
+# and exits non-zero on any disagreement.
+./build/mas_cuda_clean --verify telemetry_*/*2026-02-01.csv
+
+# Same transform through the full pipeline, writing to a store.
+# --engine=cuda requires the thread count to be 1: the pool parallelizes
+# CPU cleaning, while the GPU path feeds one device file by file.
+./build/mas_monolith --engine=cuda unified.duckdb MCC 1 telemetry_*/*.csv
+```
+
+Two things worth knowing before you read the numbers:
+
+- **Nothing falls back.** If the binary lacks CUDA, or the device fails
+  mid-run, the run aborts and names the reason. The summary line ends in
+  `engine cpu` or `engine cuda`, and that stamp is only trustworthy because it
+  cannot be reached by accident.
+- **Target architecture.** With CMake ≥ 3.24 the kernels compile for your own
+  card (`CUDA_ARCHITECTURES native`); on older CMake they build for a fixed
+  Pascal-through-Ada list (`60;70;75;80;86;89`), so a card outside that range
+  needs the list widened in `CMakeLists.txt`.
+
+The sweep this project reports was measured on an RTX 4070 Laptop with CUDA
+13.3 on Windows 11; see [CUDA Benchmark](#cuda-benchmark-python-vs-c-vs-cuda)
+to reproduce it.
+
+Every build option, each executable's full argument list, the distributed run,
+the chaos test and the benchmark sweeps: [Build & Run](#build--run).
+
+---
+
 ## Table of Contents
 
+- [Quick Start](#quick-start)
+  - [Build with an NVIDIA GPU (CUDA)](#build-with-an-nvidia-gpu-cuda)
 - [Problem Statement](#problem-statement)
 - [Architecture Overview](#architecture-overview)
   - [C4 Context (Level 1)](#c4-context-level-1)
@@ -126,7 +280,7 @@ Shows the MAS system boundary, external actors, and data flows.
 Shows the C4 containers — the diagram groups the eight executables into five containers — the ZeroMQ fabric (3 endpoints),
 database stores, and the testing/validation scripts.
 
-![C4 Container Diagram](docs/diagrams/C4_Container.png)
+![C4 Container Diagram](docs/diagrams/C4_Container_short.png)
 
 **Containers:**
 | Container | Type | Purpose |
@@ -337,7 +491,18 @@ organized by layer.
 ## Core Domain: The Dedup Transform
 
 `CapEventExtractor` is the heart of the system. It scans each of the 36 heads'
-`Count` column and emits one `CapEvent` per counter transition:
+`Count` column and emits one `CapEvent` per counter transition.
+
+**`delta` is how far a head's `Count` moved since the previous row**, measured
+in caps: `delta = llround(count[i][h]) - llround(count[i-1][h])` when that
+difference is positive, and `0` otherwise — a held counter and a backward one
+both give `0`. A positive jump wider than `INT_MAX` saturates there instead of
+wrapping. The rule is one `__host__ __device__` function,
+[`saturated_delta()`](core/include/mas/domain/DeltaPolicy.hpp), shared by the
+extractor, `extract_flat()` and the CUDA kernel, so the three cannot drift
+apart; `aggregated` is then just `delta > 1`.
+
+The transitions it produces:
 
 | Transition | Condition | Emitted Event |
 |-----------|-----------|---------------|
