@@ -4,13 +4,13 @@
 LAYOUT_WITH_LEGEND()
 title System Context Diagram — IIoT Data Refinement MAS
 
-Person(operator, "Machine Operator / Data Engineer", "Launches processing, inspects refined events, runs analytics and benchmarks")
+Person(operator, "Operator / Data Engineer", "Starts runs, inspects results")
 
-System(mas, "IIoT Data Refinement MAS", "Multi-agent C++ system that ingests raw 1 Hz PLC telemetry CSV day-files, extracts real cap events, persists them into DuckDB, and recovers from worker crashes via heartbeat-driven liveness")
+System(mas, "IIoT Data Refinement MAS", "Turns raw PLC telemetry into cap events in DuckDB")
 
-System_Ext(plc, "AROL Capping Machine PLC", "Polls 36 capping heads at ~1 Hz; uploads wide CSV day-files (~86 400 rows × 109 columns)")
-System_Ext(fs, "File System", "Local or networked storage holding raw CSV day-files and output databases/CSVs/Parquet")
-System_Ext(oracle, "Python Validation Oracle", "Independent Python re-implementation for cross-checking C++ dedup correctness")
+System_Ext(plc, "AROL Capping Machine PLC", "Logs 36 heads at 1 Hz into CSV day-files")
+System_Ext(fs, "File System", "Holds raw CSVs and output databases")
+System(oracle, "Python Validation Oracle", "Cross-checks the C++ output")
 
 Rel(plc, fs, "Uploads raw CSV day-files")
 Rel(operator, mas, "Provides raw day-file paths, starts coordinator/workers or monolith")
