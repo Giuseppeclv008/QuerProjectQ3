@@ -235,6 +235,7 @@ the chaos test and the benchmark sweeps: [Build & Run](#build--run).
   - [Ask a question](#ask-a-question)
   - [Running the model on the Anthropic API](#running-the-model-on-the-anthropic-api)
   - [Running the model locally](#running-the-model-locally)
+  - [Using another provider](#using-another-provider)
   - [Configuration (WP5)](#configuration-wp5)
   - [Reproduce the demo](#reproduce-the-demo)
 - [Testing](#testing)
@@ -1422,8 +1423,7 @@ appear too. See [`bench/README.md`](bench/README.md) for the Windows path.
 ---
 
 ## Analytics CLI and Reports
-
-WP2–WP5. The C++ MAS above refines raw telemetry into a DuckDB store; this layer
+ The C++ MAS above refines raw telemetry into a DuckDB store; this layer
 answers questions about it and writes reports a human can hand over.
 
 ### Build the analytics environment
@@ -1596,6 +1596,45 @@ are in the validation log. What no run on Ollama proves is that the Anthropic
 flat schema is accepted: Ollama takes a `format` grammar, not `output_config`,
 and no key was used — see the validation log, entries 2026-08-16 and
 2026-08-22.
+
+### Using another provider
+
+Two providers ship: `anthropic` and `ollama`
+([`config.py`](python/analytics/config.py)), and the choice is validated twice
+— argparse rejects an unknown `--provider`, and `Config.__post_init__` raises
+`ConfigError` for one that reaches it from a config file. There is no
+OpenAI-compatible path: the Ollama branch speaks Ollama's own `/api/chat`
+shape, not the OpenAI one.
+
+**Two routes need no code change:**
+
+| route | how | the server must |
+|---|---|---|
+| An Anthropic-compatible gateway | keep `--provider anthropic`, set `ANTHROPIC_BASE_URL` — the client is constructed zero-arg, so the SDK reads it | serve `/v1/messages` |
+| Anything emulating Ollama | `--provider ollama`, point `ollama_host` at it | answer `/api/version` (preflighted once at startup, so a wrong host fails there instead of twice mid-run) and `/api/chat` returning `message.content`, honouring `format: <json schema>`, `stream: false` and `options.num_ctx` |
+
+**Anything else is a small change**, and it is small on purpose:
+[`agent/llm.py`](python/analytics/agent/llm.py) is the only file in the project
+that talks to a model.
+
+1. Add the name to `Config.PROVIDERS`.
+2. Write `_x_client(cfg)` and
+   `_x_call(cfg, client, system, prompt, schema)` returning the same
+   `(payload, reason)` pair as the two that exist — failures *returned*, never
+   raised.
+3. Register both in the `_CLIENTS` and `_CALLS` dicts.
+
+Nothing downstream changes: the planner and the narrator cannot tell which
+provider answered, and the executor, the renderer and every number are
+untouched by the choice.
+
+**One hard requirement: the provider must constrain output to a JSON schema.**
+Anthropic does it with `output_config.format`, Ollama with a grammar. A
+provider that can only be asked nicely for JSON will return prose where a plan
+belongs, `_parse` will reject it, and every question will quietly fall back to
+the deterministic path — still correct numbers, but the model has stopped
+contributing. That is a disclosed degradation, not a silent one: the reason
+lands in the report's limits section.
 
 ### Configuration (WP5)
 
