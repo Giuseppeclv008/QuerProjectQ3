@@ -23,8 +23,162 @@ Chaos E2E resilience testing · Benchmark sweep harness
 
 ---
 
+## Quick Start
+
+**No GPU required.** CUDA is opt-in (`MAS_ENABLE_CUDA=OFF` by default), so the
+build below is the CPU build on every platform. The first configure needs
+network: CMake fetches DuckDB, libzmq and GoogleTest.
+
+**macOS and Linux** — needs CMake ≥ 3.16 and a C++20 compiler (clang 14+ or
+gcc 12+; on macOS `xcode-select --install` supplies clang):
+
+```bash
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+cd build && ctest --output-on-failure        # the C++ suite
+```
+
+**Windows** — Visual Studio 2022, from a Developer PowerShell:
+
+```powershell
+cmake -B build
+cmake --build build --config Release
+cd build; ctest -C Release --output-on-failure
+```
+
+Binaries land in `build/` (`build/Release/` on Visual Studio). Clean one
+day-file into a DuckDB store, where `MCC` is the machine id to tag the events
+with:
+
+```bash
+./build/clean telemetry_*/*2026-02-01.csv events.duckdb MCC
+```
+
+| Platform | Status | What to know |
+|---|---|---|
+| macOS 12+, Intel **or** Apple Silicon | works as above | DuckDB ships a universal binary, so no Rosetta and no arch flag |
+| Linux **x86-64** | works as above | The rpath to the fetched `libduckdb.so` is baked into each binary. The DuckDB asset is amd64, so this is the supported Linux arch |
+| Windows 10/11 x64 | works as above | `duckdb.dll` and the ZeroMQ DLL are copied beside each `.exe` automatically |
+
+**Running without CUDA** is the default path, not a degraded one. The cleaning
+transform, the stores, the agent runtime, the whole test suite and the analytics
+tier never touch the GPU. Concretely, on a machine with no NVIDIA card:
+
+- `mas_cuda_clean` is simply not built, and `mas_monolith` defaults to
+  `--engine=cpu`. Passing `--engine=cuda` to a binary built without it exits
+  with `-DMAS_ENABLE_CUDA=ON and rebuild to use --engine=cuda` rather than
+  silently falling back — an engine is never guessed.
+- The CPU benchmark contender `bench_cpu` builds everywhere; only the
+  [CUDA benchmark](#cuda-benchmark-python-vs-c-vs-cuda) needs the Toolkit.
+
+> **Have an NVIDIA GPU?** Everything needed to build and run the GPU path —
+> toolkit install commands included — is in
+> [Build with an NVIDIA GPU (CUDA)](#build-with-an-nvidia-gpu-cuda), directly
+> below.
+
+### Build with an NVIDIA GPU (CUDA)
+
+Available on **Linux and Windows** only; macOS has no CUDA Toolkit, so the GPU
+path cannot be built there whatever the hardware. Three steps: install the
+toolkit, verify it, then configure with one extra flag.
+
+**1. Install the driver and the CUDA Toolkit.** The kernels compile as C++20,
+which `nvcc` only supports from **CUDA 12.0** onwards — an older toolkit fails
+the configure step, because `CMAKE_CUDA_STANDARD 20` is set `REQUIRED`.
+
+```bash
+# Ubuntu 24.04+ / Debian 13+ — the distro package is CUDA 12.x here
+sudo apt update
+sudo apt install nvidia-cuda-toolkit
+
+# Ubuntu 22.04 and older ship CUDA 11.x under that name, which has no C++20
+# nvcc. Use NVIDIA's own repo instead: https://developer.nvidia.com/cuda-downloads
+
+# Fedora / RHEL
+sudo dnf install cuda-toolkit
+
+# Arch
+sudo pacman -S cuda
+
+# Driver, if nvidia-smi is missing (Ubuntu)
+sudo ubuntu-drivers install
+```
+
+On Windows, install the CUDA Toolkit alongside the VS 2022 C++ workload:
+
+```powershell
+winget install --id Nvidia.CUDA -e
+
+# Or let the repo script install BOTH the VS 2022 C++ workload and the
+# Toolkit in one elevated run (~6 GB of downloads, one UAC prompt):
+powershell -ExecutionPolicy Bypass -File scripts\setup_windows_toolchain.ps1
+```
+
+Open a **new shell** afterwards so `nvcc` lands on `PATH`.
+
+**2. Verify before building** — these two commands answer "driver OK?" and
+"toolkit new enough?", which are the two ways the GPU build fails:
+
+```bash
+nvidia-smi        # lists the device and the driver version
+nvcc --version    # must report release 12.0 or newer
+```
+
+If `nvcc` is not found but the toolkit is installed, it is usually outside
+`PATH`:
+
+```bash
+export PATH=/usr/local/cuda/bin:$PATH
+```
+
+**3. Configure and build with the flag.** One addition to the Quick Start
+command above:
+
+```bash
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DMAS_ENABLE_CUDA=ON
+cmake --build build --parallel
+```
+
+That adds the `mas_cuda_clean` binary and compiles the GPU cleaner into
+`mas_monolith`. Clean a day-file on the GPU, checking the result against the
+CPU as you go:
+
+```bash
+# GPU cleaning contender; prints the eight per-stage timings.
+# --verify runs the bitwise differential against the CPU extractor
+# and exits non-zero on any disagreement.
+./build/mas_cuda_clean --verify telemetry_*/*2026-02-01.csv
+
+# Same transform through the full pipeline, writing to a store.
+# --engine=cuda requires the thread count to be 1: the pool parallelizes
+# CPU cleaning, while the GPU path feeds one device file by file.
+./build/mas_monolith --engine=cuda unified.duckdb MCC 1 telemetry_*/*.csv
+```
+
+Two things worth knowing before you read the numbers:
+
+- **Nothing falls back.** If the binary lacks CUDA, or the device fails
+  mid-run, the run aborts and names the reason. The summary line ends in
+  `engine cpu` or `engine cuda`, and that stamp is only trustworthy because it
+  cannot be reached by accident.
+- **Target architecture.** With CMake ≥ 3.24 the kernels compile for your own
+  card (`CUDA_ARCHITECTURES native`); on older CMake they build for a fixed
+  Pascal-through-Ada list (`60;70;75;80;86;89`), so a card outside that range
+  needs the list widened in `CMakeLists.txt`.
+
+The sweep this project reports was measured on an RTX 4070 Laptop with CUDA
+13.3 on Windows 11; see [CUDA Benchmark](#cuda-benchmark-python-vs-c-vs-cuda)
+to reproduce it.
+
+Every build option, each executable's full argument list, the distributed run,
+the chaos test and the benchmark sweeps: [Build & Run](#build--run).
+
+---
+
 ## Table of Contents
 
+- [Quick Start](#quick-start)
+  - [Build with an NVIDIA GPU (CUDA)](#build-with-an-nvidia-gpu-cuda)
 - [Problem Statement](#problem-statement)
 - [Architecture Overview](#architecture-overview)
   - [C4 Context (Level 1)](#c4-context-level-1)
@@ -61,6 +215,8 @@ Chaos E2E resilience testing · Benchmark sweep harness
 - [Benchmarking](#benchmarking)
   - [CUDA cleaning benchmark](#cuda-cleaning-benchmark)
 - [Chaos E2E Testing](#chaos-e2e-testing)
+  - [Direction 1 — kill -9 a worker mid-run](#direction-1--kill--9-a-worker-mid-run)
+  - [Direction 2 — kill -9 the coordinator mid-run](#direction-2--kill--9-the-coordinator-mid-run)
 - [Build & Run](#build--run)
   - [Prerequisites](#prerequisites)
   - [Build](#build)
@@ -77,7 +233,9 @@ Chaos E2E resilience testing · Benchmark sweep harness
   - [Build the analytics environment](#build-the-analytics-environment)
   - [Generate a report](#generate-a-report)
   - [Ask a question](#ask-a-question)
+  - [Running the model on the Anthropic API](#running-the-model-on-the-anthropic-api)
   - [Running the model locally](#running-the-model-locally)
+  - [Using another provider](#using-another-provider)
   - [Configuration (WP5)](#configuration-wp5)
   - [Reproduce the demo](#reproduce-the-demo)
 - [Testing](#testing)
@@ -126,7 +284,7 @@ Shows the MAS system boundary, external actors, and data flows.
 Shows the C4 containers — the diagram groups the eight executables into five containers — the ZeroMQ fabric (3 endpoints),
 database stores, and the testing/validation scripts.
 
-![C4 Container Diagram](docs/diagrams/C4_Container.png)
+![C4 Container Diagram](docs/diagrams/C4_Container_short.png)
 
 **Containers:**
 | Container | Type | Purpose |
@@ -337,7 +495,18 @@ organized by layer.
 ## Core Domain: The Dedup Transform
 
 `CapEventExtractor` is the heart of the system. It scans each of the 36 heads'
-`Count` column and emits one `CapEvent` per counter transition:
+`Count` column and emits one `CapEvent` per counter transition.
+
+**`delta` is how far a head's `Count` moved since the previous row**, measured
+in caps: `delta = llround(count[i][h]) - llround(count[i-1][h])` when that
+difference is positive, and `0` otherwise — a held counter and a backward one
+both give `0`. A positive jump wider than `INT_MAX` saturates there instead of
+wrapping. The rule is one `__host__ __device__` function,
+[`saturated_delta()`](core/include/mas/domain/DeltaPolicy.hpp), shared by the
+extractor, `extract_flat()` and the CUDA kernel, so the three cannot drift
+apart; `aggregated` is then just `delta > 1`.
+
+The transitions it produces:
 
 | Transition | Condition | Emitted Event |
 |-----------|-----------|---------------|
@@ -1042,17 +1211,56 @@ re-measured the kernel that actually ships.
 
 ## Chaos E2E Testing
 
-[`scripts/chaos_e2e.sh`](scripts/chaos_e2e.sh) validates resilience under
-real failure conditions:
+[`scripts/chaos_e2e.sh`](scripts/chaos_e2e.sh) kills real processes in a real
+distributed run and asserts the survivors behave. It covers **both directions**
+of resilience spec §10 — a dead worker and a dead coordinator — in one
+invocation, on real day-files, with no mocks anywhere.
 
-1. Starts a coordinator + 2 workers on real day-files
-2. **`kill -9`** worker 1 after 2 seconds (mid-processing)
-3. Waits for the coordinator to detect the death (30 s threshold), re-dispatch items, and complete
-4. Merges both worker stores (dead worker's store is harmlessly skipped or idempotently absorbed)
-5. Asserts merged row count matches the oracle
+**Prerequisites.** `mas_coordinator`, `mas_worker` and `mas_merge` must already
+be built (the script exits `2` naming the missing one), `python3` must be on
+`PATH` for the oracle, and at least **two** day-files must be passed. The
+binaries are looked up in `build/`, overridable with `BUILD_DIR`. The machine
+id is derived from the first filename's `telemetry_<id>_<date>.csv` shape, not
+defaulted — a hardcoded `MCC` once produced a store that no machine-scoped
+query could find, and the count-only assertion did not notice.
 
-**Result:** PASS — 2,290,233 events across 3 day-files, even with one worker
-killed mid-run. Wall clock ~57 s (30 s death threshold dominates).
+**The oracle is computed first**, before any C++ binary starts:
+[`python/oracle_union.py`](python/oracle_union.py) counts the distinct
+`(head_id, ts)` pairs across the input files — exactly what the store should
+hold — and shares no code with the system under test.
+
+### Direction 1 — `kill -9` a worker mid-run
+
+1. Coordinator + 2 workers start on `tcp://127.0.0.1:5571-5573`, the
+   coordinator gated with `--workers 2` so dispatch waits for both to register
+   (this is the registration gate's only end-to-end exercise; unit tests fake
+   the transport).
+2. Worker `w1` is killed **1 second after both workers have registered**, read
+   from the coordinator's `worker wN joined` lines — not after a fixed sleep.
+   The fixed sleep was a real-time race: on a fast machine the first file was
+   already done, the killed worker held nothing, and the re-dispatch assertion
+   failed for a reason with nothing to do with resilience.
+3. The coordinator must finish **on its own**, under a 300 s watchdog.
+4. Four assertions, any of which fails the run: coordinator exit status `0`,
+   `dead (silent` in its log (death actually detected), `re-dispatch` in its
+   log (the dead worker's item actually reassigned), and finally
+5. `mas_merge` over **both** stores — the written-off one included, where an
+   intact store contributes harmless idempotent duplicates and a corrupt one is
+   skipped loudly — with the merged row count compared against the oracle.
+
+### Direction 2 — `kill -9` the coordinator mid-run
+
+A second pair of workers is started, the coordinator is killed 1 second after
+registration, and the workers must notice unaided: 60 empty 1-second ticks,
+then a voluntary idle exit. Both must be gone within a 90 s budget, or the
+script names the surviving pid and fails. **No orphans** is the whole
+criterion — a worker that outlives its coordinator holds its store open and
+its port bound.
+
+**Result:** PASS on both directions — 2,290,233 events across 3 day-files with
+one worker killed mid-run. Direction 1 takes ~57 s, dominated by the 30 s death
+threshold; direction 2 adds the workers' 60-tick idle exit, so budget a couple
+of minutes for the whole script.
 
 **Defect found:** Chaos testing exposed a 121 s teardown bug in orphan workers — connect-mode PUSH sockets with 60 s linger held undeliverable heartbeats. Fixed with `linger_ms=0`, regression-guarded by a unit test.
 
@@ -1168,9 +1376,20 @@ python3 python/validate_real.py telemetry_*/*2026-02-01.csv events.csv
 
 ### Chaos E2E Test
 
+Needs at least two day-files and a build that includes the ZeroMQ binaries
+(the default `MAS_ENABLE_ZMQ=ON`):
+
 ```bash
 scripts/chaos_e2e.sh telemetry_*/*2026-02-01.csv telemetry_*/*2026-02-02.csv telemetry_*/*2026-02-03.csv
+
+# Binaries somewhere other than build/
+BUILD_DIR=build-full scripts/chaos_e2e.sh telemetry_*/*2026-02-0[12].csv
 ```
+
+It prints the oracle total, every process log, and one `PASS`/`FAIL` line per
+direction; exit `2` means a missing binary or bad arguments, exit `1` a real
+resilience failure. Full breakdown of what each direction asserts:
+[Chaos E2E Testing](#chaos-e2e-testing).
 
 ### Performance Benchmark
 
@@ -1204,8 +1423,7 @@ appear too. See [`bench/README.md`](bench/README.md) for the Windows path.
 ---
 
 ## Analytics CLI and Reports
-
-WP2–WP5. The C++ MAS above refines raw telemetry into a DuckDB store; this layer
+ The C++ MAS above refines raw telemetry into a DuckDB store; this layer
 answers questions about it and writes reports a human can hand over.
 
 ### Build the analytics environment
@@ -1265,6 +1483,63 @@ With no API key, no network, a refusal, or a malformed plan, `ask` falls back to
 a keyword router and the report's *Confidence and limits* section names the
 reason. A model failure costs readability, never correctness.
 
+### Running the model on the Anthropic API
+
+`provider: anthropic` is the default, so `ask` already talks to the hosted API
+and the only thing missing on a fresh clone is a credential. The client is
+constructed with no key argument
+([`agent/llm.py`](python/analytics/agent/llm.py)), so the SDK resolves
+credentials itself — first match wins:
+
+```bash
+# Option A — an API key in the environment
+export ANTHROPIC_API_KEY=sk-ant-...
+
+# Option B — a stored profile, no env var at all
+ant auth login
+ant auth status     # says which credential source is active
+
+scripts/arol ask "which head behaves differently?" --period 2026-02
+```
+
+The `anthropic` package is already pinned in
+[`python/requirements.txt`](python/requirements.txt), so the venv built above
+needs nothing extra.
+
+**Choosing the model.** The default is `claude-opus-5`; `--model` overrides it
+without touching the config:
+
+```bash
+scripts/arol ask "any anomalies in February?" --period 2026-02 \
+  --model claude-sonnet-5
+```
+
+| field | default | what it does |
+|---|---|---|
+| `provider` | `anthropic` | `anthropic` or `ollama`; the only field that has to change to move between hosted and local |
+| `model` | `claude-opus-5` | any current model id — `claude-sonnet-5` and `claude-haiku-4-5` are the cheaper tiers |
+| `effort` | `high` | `low`..`max`; Anthropic-only, and deliberately never sent to Ollama, which rejects it |
+| `max_tokens` | `16000` | a reply cut off here is reported as exactly that, not as malformed JSON |
+| `api_timeout_s` | `120.0` | passed straight to the client |
+
+**What the request looks like.** One call per planner or narrator step:
+adaptive thinking, and `output_config.format` pinned to the JSON schema the
+caller needs — so a plan comes back schema-valid or not at all. Sampling knobs
+(`temperature`, `top_p`, `top_k`) and `budget_tokens` are never sent; the
+current models reject them with a 400.
+
+**Failures degrade, they do not raise.** A refusal, a `max_tokens` cut-off, a
+reply that is not valid JSON — each returns a reason rather than a traceback,
+the deterministic fallback runs, and the reason is printed in the report's
+limits section. A hosted-model outage changes what the report says about
+itself; it does not lose the analysis, because no figure or number was ever
+the model's to compute.
+
+**Cost.** The planner prompt is ~1,850 tokens at `--planning plan` and ~16 at
+`classify` (table below), so a single `ask` is cents at Opus list pricing
+($5/$25 per million input/output tokens) and less on Sonnet or Haiku. Drop to
+`--planning classify` if you are running many questions.
+
 ### Running the model locally
 
 `ask` works against a hosted model or one running on your machine. The only
@@ -1321,6 +1596,45 @@ are in the validation log. What no run on Ollama proves is that the Anthropic
 flat schema is accepted: Ollama takes a `format` grammar, not `output_config`,
 and no key was used — see the validation log, entries 2026-08-16 and
 2026-08-22.
+
+### Using another provider
+
+Two providers ship: `anthropic` and `ollama`
+([`config.py`](python/analytics/config.py)), and the choice is validated twice
+— argparse rejects an unknown `--provider`, and `Config.__post_init__` raises
+`ConfigError` for one that reaches it from a config file. There is no
+OpenAI-compatible path: the Ollama branch speaks Ollama's own `/api/chat`
+shape, not the OpenAI one.
+
+**Two routes need no code change:**
+
+| route | how | the server must |
+|---|---|---|
+| An Anthropic-compatible gateway | keep `--provider anthropic`, set `ANTHROPIC_BASE_URL` — the client is constructed zero-arg, so the SDK reads it | serve `/v1/messages` |
+| Anything emulating Ollama | `--provider ollama`, point `ollama_host` at it | answer `/api/version` (preflighted once at startup, so a wrong host fails there instead of twice mid-run) and `/api/chat` returning `message.content`, honouring `format: <json schema>`, `stream: false` and `options.num_ctx` |
+
+**Anything else is a small change**, and it is small on purpose:
+[`agent/llm.py`](python/analytics/agent/llm.py) is the only file in the project
+that talks to a model.
+
+1. Add the name to `Config.PROVIDERS`.
+2. Write `_x_client(cfg)` and
+   `_x_call(cfg, client, system, prompt, schema)` returning the same
+   `(payload, reason)` pair as the two that exist — failures *returned*, never
+   raised.
+3. Register both in the `_CLIENTS` and `_CALLS` dicts.
+
+Nothing downstream changes: the planner and the narrator cannot tell which
+provider answered, and the executor, the renderer and every number are
+untouched by the choice.
+
+**One hard requirement: the provider must constrain output to a JSON schema.**
+Anthropic does it with `output_config.format`, Ollama with a grammar. A
+provider that can only be asked nicely for JSON will return prose where a plan
+belongs, `_parse` will reject it, and every question will quietly fall back to
+the deterministic path — still correct numbers, but the model has stopped
+contributing. That is a disclosed degradation, not a silent one: the reason
+lands in the report's limits section.
 
 ### Configuration (WP5)
 

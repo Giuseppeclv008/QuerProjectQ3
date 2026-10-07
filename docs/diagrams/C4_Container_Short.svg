@@ -1,0 +1,153 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1640" height="900" viewBox="0 0 1640 900" font-family="Helvetica Neue, Helvetica, Arial, sans-serif">
+  <title>Container diagram - IIoT Data Refinement MAS (short)</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#444"/>
+    </marker>
+    <style>
+      .name  { font-size: 20px; font-weight: 700; fill: #fff; text-anchor: middle; }
+      .tech  { font-size: 14px; font-style: italic; fill: #fff; text-anchor: middle; }
+      .desc  { font-size: 17px; fill: #fff; text-anchor: middle; }
+      .box   { fill: #438DD5; stroke: #3C7FC0; stroke-width: 1.5; }
+      .ext   { fill: #999999; stroke: #8A8A8A; stroke-width: 1.5; }
+      .person{ fill: #08427B; stroke: #073B6F; stroke-width: 1.5; }
+      .edge  { fill: none; stroke: #444; stroke-width: 1.6; }
+      .label { font-size: 16px; font-weight: 600; fill: #333; paint-order: stroke; stroke: #fff; stroke-width: 5px; stroke-linejoin: round; }
+      .end   { text-anchor: end; }
+      .bound { fill: none; stroke: #444; stroke-width: 1.5; stroke-dasharray: 7 5; }
+      .btitle{ font-size: 18px; font-weight: 700; fill: #333; }
+      .bsub  { font-size: 14px; fill: #333; }
+    </style>
+  </defs>
+
+  <rect width="1640" height="900" fill="#fff"/>
+
+  <!-- boundaries -->
+  <rect class="bound" x="20" y="250" width="1190" height="470"/>
+  <text class="btitle" x="36" y="694">IIoT Data Refinement MAS</text>
+  <text class="bsub" x="36" y="711">[system]</text>
+
+  <rect class="bound" x="1250" y="250" width="360" height="620"/>
+  <text class="btitle" x="1266" y="845">Validation &amp; testing</text>
+  <text class="bsub" x="1266" y="862">[system]</text>
+
+  <!-- edges: PLC and Operator -->
+  <path class="edge" d="M110,126 V298" marker-end="url(#arrow)"/>
+  <text class="label" x="120" y="170">raw CSV day-files</text>
+
+  <path class="edge" d="M680,140 V200"/>
+  <path class="edge" d="M200,200 H1070"/>
+  <path class="edge" d="M200,200 V298" marker-end="url(#arrow)"/>
+  <path class="edge" d="M380,200 V298" marker-end="url(#arrow)"/>
+  <path class="edge" d="M610,200 V298" marker-end="url(#arrow)"/>
+  <path class="edge" d="M840,200 V298" marker-end="url(#arrow)"/>
+  <path class="edge" d="M1070,200 V298" marker-end="url(#arrow)"/>
+  <text class="label" x="208" y="238">run</text>
+  <text class="label" x="388" y="238">run</text>
+  <text class="label" x="618" y="238">merge</text>
+  <text class="label" x="848" y="238">start &#215;N</text>
+  <text class="label" x="1078" y="238">start</text>
+
+  <path class="edge" d="M800,80 H1232 V765"/>
+  <path class="edge" d="M1232,345 H1328" marker-end="url(#arrow)"/>
+  <path class="edge" d="M1232,625 H1328" marker-end="url(#arrow)"/>
+  <path class="edge" d="M1232,765 H1328" marker-end="url(#arrow)"/>
+  <text class="label" x="1262" y="336">check</text>
+  <text class="label" x="1262" y="616">test</text>
+  <text class="label" x="1262" y="756">bench</text>
+
+  <!-- edges: containers -->
+  <path class="edge" d="M150,390 V530" marker-end="url(#arrow)"/>
+  <text class="label end" x="142" y="470">CSV mode</text>
+  <path class="edge" d="M230,390 C230,520 300,625 410,625" marker-end="url(#arrow)"/>
+  <text class="label" x="276" y="478">DuckDB mode</text>
+  <path class="edge" d="M410,390 C410,470 480,480 490,532" marker-end="url(#arrow)"/>
+  <text class="label" x="426" y="440">thread stores</text>
+  <path class="edge" d="M600,390 C600,470 580,490 570,532" marker-end="url(#arrow)"/>
+  <text class="label" x="612" y="428">merge</text>
+  <path class="edge" d="M760,390 C760,520 700,625 650,625" marker-end="url(#arrow)"/>
+  <text class="label end" x="736" y="486">own store</text>
+  <path class="edge" d="M870,390 V545" marker-end="url(#arrow)"/>
+  <text class="label" x="878" y="470">work, results</text>
+  <path class="edge" d="M1070,390 V545" marker-end="url(#arrow)"/>
+  <text class="label" x="1078" y="470">work, results</text>
+
+  <path class="edge" d="M1455,390 V438" marker-end="url(#arrow)"/>
+  <text class="label" x="1463" y="420">calls</text>
+
+  <!-- external system and person -->
+  <rect class="ext" x="50" y="30" width="200" height="96"/>
+  <text class="name" x="150" y="68">AROL PLC</text>
+  <text class="desc" x="150" y="96">uploads day-files</text>
+
+  <rect class="person" x="560" y="16" width="240" height="124"/>
+  <circle cx="680" cy="44" r="11" fill="#fff"/>
+  <path d="M660,76 Q660,58 680,58 Q700,58 700,76 Z" fill="#fff"/>
+  <text class="name" x="680" y="102">Operator</text>
+  <text class="desc" x="680" y="126">runs programs, reads results</text>
+
+  <!-- containers, MAS -->
+  <rect class="box" x="50" y="300" width="200" height="90"/>
+  <text class="name" x="150" y="330">clean</text>
+  <text class="tech" x="150" y="351">[C++ CLI]</text>
+  <text class="desc" x="150" y="375">one day-file</text>
+
+  <rect class="box" x="280" y="300" width="200" height="90"/>
+  <text class="name" x="380" y="330">mas_monolith</text>
+  <text class="tech" x="380" y="351">[C++ CLI]</text>
+  <text class="desc" x="380" y="375">T threads</text>
+
+  <rect class="box" x="510" y="300" width="200" height="90"/>
+  <text class="name" x="610" y="330">mas_merge</text>
+  <text class="tech" x="610" y="351">[C++ CLI]</text>
+  <text class="desc" x="610" y="375">joins stores</text>
+
+  <rect class="box" x="740" y="300" width="200" height="90"/>
+  <text class="name" x="840" y="330">mas_worker</text>
+  <text class="tech" x="840" y="351">[C++ CLI]</text>
+  <text class="desc" x="840" y="375">cleaning agent, 1..N</text>
+
+  <rect class="box" x="970" y="300" width="200" height="90"/>
+  <text class="name" x="1070" y="330">mas_coordinator</text>
+  <text class="tech" x="1070" y="351">[C++ CLI]</text>
+  <text class="desc" x="1070" y="375">dispatch, liveness</text>
+
+  <!-- stores -->
+  <path class="box" d="M50,544 a100,14 0 0 1 200,0 v82 a100,14 0 0 1 -200,0 z"/>
+  <path d="M50,544 a100,14 0 0 0 200,0" fill="none" stroke="#3C7FC0" stroke-width="1.5"/>
+  <text class="name" x="150" y="582">CSV event output</text>
+  <text class="tech" x="150" y="603">[CSV file]</text>
+  <text class="desc" x="150" y="627">one row per cap</text>
+
+  <path class="box" d="M410,544 a120,14 0 0 1 240,0 v82 a120,14 0 0 1 -240,0 z"/>
+  <path d="M410,544 a120,14 0 0 0 240,0" fill="none" stroke="#3C7FC0" stroke-width="1.5"/>
+  <text class="name" x="530" y="582">DuckDB store</text>
+  <text class="tech" x="530" y="603">[DuckDB file]</text>
+  <text class="desc" x="530" y="627">cap_events table</text>
+
+  <rect class="box" x="790" y="545" width="360" height="90"/>
+  <text class="name" x="970" y="575">ZeroMQ fabric</text>
+  <text class="tech" x="970" y="596">[libzmq]</text>
+  <text class="desc" x="970" y="620">work, results, heartbeats</text>
+
+  <!-- validation -->
+  <rect class="box" x="1330" y="300" width="250" height="90"/>
+  <text class="name" x="1455" y="330">validate_real.py</text>
+  <text class="tech" x="1455" y="351">[Python 3]</text>
+  <text class="desc" x="1455" y="375">checks event counts</text>
+
+  <rect class="box" x="1330" y="440" width="250" height="90"/>
+  <text class="name" x="1455" y="470">oracle.py</text>
+  <text class="tech" x="1455" y="491">[Python 3]</text>
+  <text class="desc" x="1455" y="515">independent reference</text>
+
+  <rect class="box" x="1330" y="580" width="250" height="90"/>
+  <text class="name" x="1455" y="610">chaos_e2e.sh</text>
+  <text class="tech" x="1455" y="631">[Bash]</text>
+  <text class="desc" x="1455" y="655">kills a worker, checks recovery</text>
+
+  <rect class="box" x="1330" y="720" width="250" height="90"/>
+  <text class="name" x="1455" y="750">run_bench.sh</text>
+  <text class="tech" x="1455" y="771">[Bash]</text>
+  <text class="desc" x="1455" y="795">performance sweep</text>
+</svg>
