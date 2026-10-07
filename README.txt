@@ -138,11 +138,11 @@ Tell the tool where the store is. Save this as arol.json:
 
   { "store_path": "unified.duckdb", "machine_id": "MCC" }
 
-Then:
+Then (./arol.json is read automatically; --config FILE picks another):
 
-  scripts/arol report kpi       --period 2026-02            --config arol.json
-  scripts/arol report drift     --period 2026-02..2026-04   --config arol.json
-  scripts/arol report anomalies --period 2026-02            --config arol.json
+  scripts/arol report kpi       --period 2026-02
+  scripts/arol report drift     --period 2026-02..2026-04
+  scripts/arol report anomalies --period 2026-02
 
   kpi        success rate, production speed, idle time, per head
   drift      how torque and success rate move over time, head by head
@@ -158,7 +158,7 @@ The three report commands use no model: same store and period, same report.
 
 Ask a question in plain English (a model picks which analyses to run):
 
-  scripts/arol ask "which head behaves differently, and why?" --period 2026-02 --config arol.json
+  scripts/arol ask "which head behaves differently, and why?" --period 2026-02
 
   Local model (default): ollama serve && ollama pull qwen2.5:7b
   Hosted model:  export ANTHROPIC_API_KEY=...
@@ -206,8 +206,9 @@ mas_export <store.duckdb> <out.parquet> [--since TS] [--until TS]
 arol report <kpi|drift|anomalies> [options]
 arol ask "<question>" [options]
 
-  --config FILE   JSON settings (below). Without it: store events.duckdb in
-                  the current folder and the default values
+  --config FILE   JSON settings (below). Without it: ./arol.json if present,
+                  else store events.duckdb in the current folder and the
+                  default values
   --period P      YYYY-MM or YYYY-MM..YYYY-MM. Without it: the whole store
   --out DIR       where report folders are written [reports]
   --pdf           also write a PDF (needs WeasyPrint)

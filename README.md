@@ -1436,14 +1436,15 @@ python3 -m venv .venv
 ### Generate a report
 
 ```bash
-# First write a config naming your store (the repo ships no arol.json;
-# a missing --config file exits 2 with the message naming it):
+# First write a config naming your store (the repo ships no arol.json).
+# ./arol.json is read automatically; --config FILE points elsewhere, and a
+# missing --config file exits 2 with the message naming it:
 cat > arol.json <<'JSON'
 { "store_path": "events_3mo.duckdb", "machine_id": "MCC" }
 JSON
-scripts/arol report kpi       --period 2026-02          --config arol.json
-scripts/arol report drift     --period 2026-02..2026-04 --config arol.json
-scripts/arol report anomalies --period 2026-02          --config arol.json
+scripts/arol report kpi       --period 2026-02
+scripts/arol report drift     --period 2026-02..2026-04
+scripts/arol report anomalies --period 2026-02
 ```
 
 Each writes a self-contained directory: `report.md` (source of truth),
@@ -1702,14 +1703,14 @@ it, `--pdf` logs how to install it and writes Markdown and HTML as normal.
 
 The project has **203 C++ unit tests** across 21 Google Test files — 192 in the
 default build plus the 11-case GPU/CPU differential behind `-DMAS_ENABLE_CUDA=ON`
-— plus **310
+— plus **313
 Python tests** for the analytics tier. Every test count in this
 README is asserted by `python/tests/test_readme_counts.py`, so adding a test and
 forgetting this paragraph fails the suite rather than quietly dating it.
 
 ```bash
 cd build && ctest -C Release --output-on-failure # 192 C++ tests in the default build; the 11-case GPU/CPU differential is compiled only with -DMAS_ENABLE_CUDA=ON (and skips without a device)
-cd python && ../.venv/bin/python -m pytest -q    # 310 Python tests (see the three gates below)
+cd python && ../.venv/bin/python -m pytest -q    # 313 Python tests (see the three gates below)
 ```
 
 Three gates apply to the Python suite. Two are data gates: **6 tests** need the

@@ -130,3 +130,30 @@ def test_a_run_where_every_step_fails_exits_nonzero(tmp_path):
                      "--config", _cfg_file(tmp_path, str(tmp_path / "nope.duckdb")),
                      "--out", str(out)])
     assert code == 1
+
+
+def test_arol_json_in_the_current_directory_is_read_without_config(
+        tiny_store, tmp_path, monkeypatch):
+    (tmp_path / "arol.json").write_text(
+        json.dumps({"store_path": tiny_store, "machine_id": "MCC"}))
+    monkeypatch.chdir(tmp_path)
+    out = tmp_path / "out"
+    code = cli.main(["report", "kpi", "--period", "2026-02", "--out", str(out)])
+    assert code == 0
+    assert (out / "kpi" / "report.md").exists()
+
+
+def test_an_explicit_config_beats_the_one_in_the_current_directory(
+        tiny_store, tmp_path, monkeypatch):
+    (tmp_path / "arol.json").write_text(json.dumps({"bogus_key": 1}))
+    monkeypatch.chdir(tmp_path)
+    code = cli.main(["report", "kpi", "--period", "2026-02",
+                     "--config", _cfg_file(tmp_path, tiny_store),
+                     "--out", str(tmp_path / "out")])
+    assert code == 0
+
+
+def test_a_bad_arol_json_in_the_current_directory_is_rejected(tmp_path, monkeypatch):
+    (tmp_path / "arol.json").write_text(json.dumps({"bogus_key": 1}))
+    monkeypatch.chdir(tmp_path)
+    assert cli.main(["report", "kpi", "--out", str(tmp_path / "out")]) == 2

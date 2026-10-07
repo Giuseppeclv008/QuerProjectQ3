@@ -198,7 +198,7 @@ day-files are offset from midnight) and reconciled in
 
 ## 11. Engineering
 
-- **310 Python tests, 203 C++ tests**, all green; test output pristine. Both
+- **313 Python tests, 203 C++ tests**, all green; test output pristine. Both
   counts are asserted against the sources by `test_readme_counts.py`, so the
   slide cannot drift from the suite.
 - **Golden-report regression**: a fixed store and a fixed plan must render
