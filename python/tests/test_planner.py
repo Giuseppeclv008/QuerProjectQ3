@@ -5,10 +5,18 @@ at all. In all three the user must end up with real numbers -- the difference is
 only whether the limits section says a model was involved.
 """
 import json
+from dataclasses import replace
 
 import pytest
 
 from analytics.agent import planner, router
+
+
+@pytest.fixture
+def tiny_cfg(tiny_cfg):
+    """The fakes here speak the Anthropic messages shape, and Ollama is the
+    default provider, so pin the provider these tests were written against."""
+    return replace(tiny_cfg, provider="anthropic", model="claude-opus-5")
 
 
 class _FakeBlock:

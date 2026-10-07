@@ -1485,8 +1485,8 @@ reason. A model failure costs readability, never correctness.
 
 ### Running the model on the Anthropic API
 
-`provider: anthropic` is the default, so `ask` already talks to the hosted API
-and the only thing missing on a fresh clone is a credential. The client is
+`provider: ollama` is the default, so the hosted API is opt-in: pass
+`--provider anthropic` (or set it in `arol.json`) and supply a credential. The client is
 constructed with no key argument
 ([`agent/llm.py`](python/analytics/agent/llm.py)), so the SDK resolves
 credentials itself — first match wins:
@@ -1499,25 +1499,26 @@ export ANTHROPIC_API_KEY=sk-ant-...
 ant auth login
 ant auth status     # says which credential source is active
 
-scripts/arol ask "which head behaves differently?" --period 2026-02
+scripts/arol ask "which head behaves differently?" --period 2026-02 \
+  --provider anthropic
 ```
 
 The `anthropic` package is already pinned in
 [`python/requirements.txt`](python/requirements.txt), so the venv built above
 needs nothing extra.
 
-**Choosing the model.** The default is `claude-opus-5`; `--model` overrides it
-without touching the config:
+**Choosing the model.** `--model` picks the hosted model without touching the
+config; `claude-opus-5` is the one this section was written against:
 
 ```bash
 scripts/arol ask "any anomalies in February?" --period 2026-02 \
-  --model claude-sonnet-5
+  --provider anthropic --model claude-sonnet-5
 ```
 
 | field | default | what it does |
 |---|---|---|
-| `provider` | `anthropic` | `anthropic` or `ollama`; the only field that has to change to move between hosted and local |
-| `model` | `claude-opus-5` | any current model id — `claude-sonnet-5` and `claude-haiku-4-5` are the cheaper tiers |
+| `provider` | `ollama` | `ollama` or `anthropic`; the only field that has to change to move between local and hosted |
+| `model` | `qwen2.5:7b` | with `anthropic`, any current model id — `claude-sonnet-5` and `claude-haiku-4-5` are the cheaper tiers |
 | `effort` | `high` | `low`..`max`; Anthropic-only, and deliberately never sent to Ollama, which rejects it |
 | `max_tokens` | `16000` | a reply cut off here is reported as exactly that, not as malformed JSON |
 | `api_timeout_s` | `120.0` | passed straight to the client |
@@ -1542,14 +1543,13 @@ the model's to compute.
 
 ### Running the model locally
 
-`ask` works against a hosted model or one running on your machine. The only
-field that changes is `provider`:
+`ask` works against a model running on your machine (the default) or a hosted
+one. The only field that changes is `provider`:
 
 ```bash
 ollama serve && ollama pull qwen2.5:7b
 
-scripts/arol ask "which head behaves differently?" --period 2026-02 \
-  --provider ollama --model qwen2.5:7b
+scripts/arol ask "which head behaves differently?" --period 2026-02
 ```
 
 Nothing below the planner knows the difference: both paths return the same plan
@@ -1649,14 +1649,16 @@ No path, band, or threshold is hard-coded. `arol.json`:
   "mad_k": 3.0,
   "idle_min_seconds": 300,
   "idle_max_gap_seconds": 600,
-  "provider": "anthropic",
-  "model": "claude-opus-5",
-  "effort": "high",
+  "provider": "ollama",
+  "model": "qwen2.5:7b",
   "planning": "plan"
 }
 ```
 
-For a local model, three fields change and the rest stay:
+For the hosted API instead: `"provider": "anthropic"`, `"model": "claude-opus-5"`,
+`"effort": "high"`.
+
+Tuning the local model — smaller narrator input, cheapest planning tier:
 
 ```json
 {

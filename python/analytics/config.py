@@ -55,8 +55,8 @@ class Config:
     # model and one running on the machine. Everything downstream -- the tools,
     # the executor, the renderer -- is untouched by the choice, because the model
     # only ever decides which analyses to run and how to word them.
-    provider: str = "anthropic"     # anthropic | ollama
-    model: str = "claude-opus-5"
+    provider: str = "ollama"        # ollama | anthropic
+    model: str = "qwen2.5:7b"
     max_tokens: int = 16000
     api_timeout_s: float = 120.0
 

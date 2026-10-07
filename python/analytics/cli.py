@@ -54,7 +54,7 @@ def _build_parser():
     common.add_argument("--provider", choices=list(Config.PROVIDERS), default=None,
                         help="where the model runs (default: from config)")
     common.add_argument("--model", default=None,
-                        help="model name, e.g. claude-opus-5 or qwen2.5:7b")
+                        help="model name, e.g. qwen2.5:7b or claude-opus-5")
     common.add_argument("--planning", choices=list(Config.PLANNING), default=None,
                         help="how much of the planning the model does "
                              "(plan=compose it, select=pick tools, classify=pick a report)")

@@ -5,11 +5,21 @@ the report still came from the tools, so a narrator failure costs readability an
 nothing else.
 """
 import json
+from dataclasses import replace
+
+import pytest
 
 from analytics.agent import narrator
 from analytics.agent.executor import execute
 from analytics.agent.router import canned_plan
 from analytics.report import render
+
+
+@pytest.fixture
+def tiny_cfg(tiny_cfg):
+    """The fakes here speak the Anthropic messages shape, and Ollama is the
+    default provider, so pin the provider these tests were written against."""
+    return replace(tiny_cfg, provider="anthropic", model="claude-opus-5")
 
 
 class _Block:

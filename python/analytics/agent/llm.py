@@ -63,8 +63,7 @@ class OllamaClient:
     """A minimal Ollama chat client.
 
     Deliberately stdlib-only. Ollama's chat endpoint is one POST, and the
-    `ollama` package would add a dependency for a provider a user may never
-    enable -- while `anthropic` is already required for the default path.
+    `ollama` package would add a dependency the default path does not need.
     """
 
     def __init__(self, host, timeout):

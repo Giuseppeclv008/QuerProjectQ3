@@ -160,9 +160,9 @@ Ask a question in plain English (a model picks which analyses to run):
 
   scripts/arol ask "which head behaves differently, and why?" --period 2026-02 --config arol.json
 
+  Local model (default): ollama serve && ollama pull qwen2.5:7b
   Hosted model:  export ANTHROPIC_API_KEY=...
-  Local model:   ollama pull qwen2.5:7b
-                 add   --provider ollama --model qwen2.5:7b
+                 add   --provider anthropic --model claude-opus-5
   The numbers always come from the analyses, never from the model. With no key
   or no model reachable, ask falls back to a keyword router and the report
   says so. Answers go to reports/ask/<timestamp>/.
@@ -213,7 +213,7 @@ arol ask "<question>" [options]
   --pdf           also write a PDF (needs WeasyPrint)
   -v              more detail on screen
   Only used by ask:
-  --provider      anthropic (default) or ollama
+  --provider      ollama (default) or anthropic
   --model         model name, e.g. qwen2.5:7b
   --planning      plan (the model composes the analyses, default),
                   select (it only picks tools) or classify (it picks one report)
@@ -228,7 +228,7 @@ arol.json (all keys are optional; defaults in brackets)
   idle_min_seconds      no-load for longer than this = idle       [300]
   idle_max_gap_seconds  a hole in the data longer than this ends
                         an idle period                            [600]
-  provider, model       model used by ask       [anthropic, claude-opus-5]
+  provider, model       model used by ask       [ollama, qwen2.5:7b]
   ollama_host, num_ctx  local model address and context size
                                               [http://localhost:11434, 8192]
 

@@ -35,7 +35,7 @@ def test_ollama_rejects_a_context_too_small_for_the_planner_prompt():
 
 def test_the_default_provider_is_unchanged():
     cfg = Config(store_path="x")
-    assert (cfg.provider, cfg.planning) == ("anthropic", "plan")
+    assert (cfg.provider, cfg.model, cfg.planning) == ("ollama", "qwen2.5:7b", "plan")
 
 
 # --------------------------------------------------------------- the schema
