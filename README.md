@@ -1677,6 +1677,19 @@ Tuning the local model — smaller narrator input, cheapest planning tier:
 alone is ~2,600 tokens, Ollama defaults to 2048, and it **truncates silently**
 rather than erroring — which looks exactly like a stupid model.
 
+`think` (Ollama only) controls a thinking model's reasoning pass: `false` skips
+it for speed (qwen3, gpt-oss), `true` forces it, `"low"`/`"medium"`/`"high"`
+set gpt-oss's level. Omitted or `null`, nothing is sent and the model's own
+default applies — leave it unset for non-thinking models such as qwen2.5.
+
+```json
+{
+  "provider": "ollama",
+  "model": "qwen3:14b",
+  "think": false
+}
+```
+
 A configuration problem (unreadable config, unknown report type) exits 2 before
 any work starts. An analysis gap — an empty period, a head with too
 few closures — is not an error: it produces a report whose limits section names
@@ -1703,14 +1716,14 @@ it, `--pdf` logs how to install it and writes Markdown and HTML as normal.
 
 The project has **203 C++ unit tests** across 21 Google Test files — 192 in the
 default build plus the 11-case GPU/CPU differential behind `-DMAS_ENABLE_CUDA=ON`
-— plus **313
+— plus **325
 Python tests** for the analytics tier. Every test count in this
 README is asserted by `python/tests/test_readme_counts.py`, so adding a test and
 forgetting this paragraph fails the suite rather than quietly dating it.
 
 ```bash
 cd build && ctest -C Release --output-on-failure # 192 C++ tests in the default build; the 11-case GPU/CPU differential is compiled only with -DMAS_ENABLE_CUDA=ON (and skips without a device)
-cd python && ../.venv/bin/python -m pytest -q    # 313 Python tests (see the three gates below)
+cd python && ../.venv/bin/python -m pytest -q    # 325 Python tests (see the three gates below)
 ```
 
 Three gates apply to the Python suite. Two are data gates: **6 tests** need the

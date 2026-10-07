@@ -99,6 +99,36 @@ def test_the_ollama_request_omits_every_anthropic_only_field():
     assert body["messages"][0] == {"role": "system", "content": "sys"}
 
 
+def test_think_is_left_to_the_model_unless_the_config_sets_it():
+    """Absent, Ollama applies the model's own default; sending false would
+    change behaviour for every model that predates the field."""
+    client = _FakeOllama('{"ok": true}')
+    llm.json_call(_ollama_cfg(), client, "s", "p", {})
+    assert "think" not in client.bodies[0]
+
+
+@pytest.mark.parametrize("think", [False, True, "low", "medium", "high"])
+def test_a_configured_think_reaches_the_ollama_request(think):
+    client = _FakeOllama('{"ok": true}')
+    llm.json_call(_ollama_cfg(think=think), client, "s", "p", {})
+    assert client.bodies[0]["think"] == think
+
+
+@pytest.mark.parametrize("think", ["max", "off", 0, 1.0, []])
+def test_an_unknown_think_value_is_rejected_at_config_time(think):
+    with pytest.raises(ConfigError, match="think must be"):
+        _ollama_cfg(think=think)
+
+
+def test_think_is_accepted_from_a_config_file(tmp_path):
+    from analytics.config import load_config
+    p = tmp_path / "arol.json"
+    p.write_text('{"store_path": "x", "think": false}')
+    assert load_config(str(p)).think is False
+    p.write_text('{"store_path": "x", "think": "low"}')
+    assert load_config(str(p)).think == "low"
+
+
 def test_an_ollama_reply_that_is_not_json_degrades_like_any_other():
     client = _FakeOllama("I think the answer is head 12")
     payload, reason = llm.json_call(_ollama_cfg(), client, "s", "p", {})

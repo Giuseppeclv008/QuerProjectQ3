@@ -66,6 +66,11 @@ class Config:
     # ollama only.
     ollama_host: str = "http://localhost:11434"
     num_ctx: int = 8192             # Ollama defaults to 2048; the planner needs ~2.6k
+    # Ollama's `think`: false skips a thinking model's reasoning (qwen3,
+    # gpt-oss...) for speed; "low"/"medium"/"high" set gpt-oss's level. None
+    # sends nothing, leaving the model's own default -- which is what a
+    # non-thinking model like qwen2.5 needs.
+    think: bool | str | None = None
 
     # How much the model is asked to do. A smaller local model can route
     # reliably long before it can compose a whole plan, so the hard part is
@@ -88,6 +93,7 @@ class Config:
 
     PROVIDERS = ("anthropic", "ollama")
     PLANNING = ("plan", "select", "classify")
+    THINK_LEVELS = ("low", "medium", "high")
 
     def __post_init__(self):
         if self.torque_min >= self.torque_max:
@@ -123,6 +129,12 @@ class Config:
         if self.provider not in self.PROVIDERS:
             raise ConfigError(
                 f"provider must be one of {list(self.PROVIDERS)}, got {self.provider!r}"
+            )
+        if not (self.think is None or isinstance(self.think, bool)
+                or (isinstance(self.think, str) and self.think in self.THINK_LEVELS)):
+            raise ConfigError(
+                f"think must be true, false, null or one of {list(self.THINK_LEVELS)}, "
+                f"got {self.think!r}"
             )
         if self.planning not in self.PLANNING:
             raise ConfigError(
