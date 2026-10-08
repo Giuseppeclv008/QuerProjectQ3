@@ -20,6 +20,11 @@ class Plan:
     steps: list = field(default_factory=list)
     source: str = "router"   # "router" | "llm"
     note: str = ""           # why the router was used, if it was
+    # The operator's words, verbatim. `goal` is the planner's restatement and
+    # can drift from what was asked ("did it get worse?" became "identify which
+    # head behaves differently"); the narrator answers this, not the goal.
+    # Empty for the canned `report` verbs, which answer no question.
+    question: str = ""
 
 
 def effective_args(step):

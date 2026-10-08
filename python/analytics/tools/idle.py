@@ -91,7 +91,8 @@ def idle_periods(cfg, period=None, min_seconds=None):
     return ToolResult.ok(
         "idle_periods",
         {"periods": periods,
-         "total_idle_seconds": sum(p["duration_seconds"] for p in periods)},
+         "total_idle_seconds": sum(p["duration_seconds"] for p in periods),
+         "min_seconds": threshold},
         period=period,
         rows_scanned=scanned,
         filters=[f"min_seconds={threshold}"],

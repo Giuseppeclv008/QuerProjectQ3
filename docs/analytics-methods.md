@@ -147,6 +147,10 @@ define production speed as bottles closed per unit time
 
 ## `idle_periods` — downtime, separated from failure
 
+> This is no-load *cycling*, not the machine standing still: a stopped machine
+> writes no rows and cannot appear here. Stops are measured by
+> [`event_gaps`](#event_gaps--stops-as-holes-in-the-event-stream).
+
 **Question:** how much of the time was the machine not capping at all?
 
 A gaps-and-islands query over per-head runs of no-load cycles. Consecutive
@@ -318,6 +322,45 @@ Count, mean, median, standard deviation, min and max of applied torque per head
 Reported ordered by standard deviation descending, so the most variable head is
 first. Measured over three months: head 9, σ = 0.0729 Nm about a median of
 1.997 Nm.
+
+---
+
+## `event_gaps` — stops, as holes in the event stream
+
+**Question:** how long was the machine stopped, and when?
+
+A row exists only when a head's counter advanced, so a stopped machine leaves a
+hole rather than a row. The tool takes the distinct poll timestamps of the
+whole machine, measures the distance to the previous one with `LAG`, and keeps
+the distances longer than `min_seconds` (default `idle_max_gap_seconds`, 600).
+It returns every gap, their count and total, and the longest.
+
+Three things it does not claim, all stated in its assumptions. Silence is the
+machine stopped **or** its data not arriving — the store cannot tell the two
+apart. Time before the period's first event and after its last is not a gap.
+And a gap belongs to the whole machine: no head is named as its cause.
+
+Measured on March 2026: 227 gaps longer than 10 minutes, 342.6 h in total; 52
+longer than an hour, 254.9 h; the longest runs from 15 March 16:51 to 16 March
+21:30 (28.6 h).
+
+---
+
+## `compare_periods` — month against month
+
+**Question:** did the machine get better or worse?
+
+One row per calendar month or ISO week (`by`), clipped to the period, for the
+whole machine: capping operations; caps per calendar day and per active day
+(a day with at least one cap), with both day counts; rejects and the reject
+rate on the `success_rates` denominator; no-load cycles and their share of all
+cycles. It also returns the change from the first bucket to the last, and the
+lowest-volume bucket by name — first-to-last alone hides a dip in the middle.
+
+Measured over February–April 2026: 529,439 caps per day in February, 126,124
+in March, 430,459 in April; reject rate 0.0050%, 0.0052%, 0.0011%; no-load
+share 32.5%, 65.7%, 40.3%. February to April reads −18.7%; March is the
+collapse.
 
 ---
 

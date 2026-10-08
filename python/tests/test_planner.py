@@ -191,3 +191,37 @@ def test_the_system_prompts_tool_advice_matches_what_the_router_would_do():
             f"SYSTEM steers {tool!r} at questions the router sends to the "
             f"{report_type!r} plan, which runs {sorted(planned)}")
     assert set(_KEYWORDS) == {"drift", "anomalies", "kpi"}
+
+
+def test_every_registered_tool_is_named_in_the_planning_rules():
+    """A tool the rules never mention is one the model has no reason to pick:
+    capping_speed and idle_periods were missing, and a 'did it get worse?'
+    question never looked at production. A new tool must be added here too."""
+    from analytics.agent.registry import TOOLS
+    for name in TOOLS:
+        assert name in planner.SYSTEM, f"planner.SYSTEM never names {name!r}"
+
+
+def test_the_rules_forbid_inventing_optional_arguments():
+    assert "unless the question names a value" in planner.SYSTEM
+
+
+def test_the_rules_route_downtime_away_from_idle_periods():
+    rules = planner.SYSTEM
+    assert "downtime" in rules and "event_gaps" in rules
+    assert "idle_periods is NOT downtime" in rules
+
+
+def test_the_question_is_kept_verbatim_on_a_model_plan(tiny_cfg):
+    q = "Find the head with the lowest success rate, please"
+    p = planner.plan(tiny_cfg, q, "2026-02", client=_FakeClient(_GOOD))
+    assert p.source == "llm"
+    assert p.question == q
+    assert p.goal == _GOOD["goal"]
+
+
+def test_the_question_is_kept_on_the_router_fallback_too(tiny_cfg, monkeypatch):
+    monkeypatch.setattr(planner, "_client", lambda cfg: None)
+    p = planner.plan(tiny_cfg, "why did it stop?", "2026-02")
+    assert p.source == "router"
+    assert p.question == "why did it stop?"

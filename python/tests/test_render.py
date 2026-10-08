@@ -213,3 +213,148 @@ def test_two_same_signal_steps_do_not_overwrite_each_others_figure(tiny_cfg, tmp
     assert len(names) == len(set(names)), f"figure names collide: {names}"
     for _, name in figures:
         assert (tmp_path / name).exists(), f"referenced figure {name} not written"
+
+
+def _summarise_q(question, *steps_and_results):
+    steps = [s for s, _ in steps_and_results]
+    results = [r for _, r in steps_and_results]
+    return render.summarise(Execution(
+        plan=Plan(goal="g", steps=steps, question=question), results=results))
+
+
+_OVERVIEW = ToolResult.ok("overview", {
+    "capping_operations": 100, "successful": 99, "failed": 1,
+    "no_load_cycles": 50, "heads": [1, 2], "ts_min": "a", "ts_max": "b",
+    "null_torque": 0, "invalid_torque": 3, "counter_resets": 2})
+
+
+def test_idle_findings_state_the_threshold_used():
+    idle = ToolResult.ok("idle_periods", {
+        "periods": [{"head_id": 1, "start": "a", "end": "b", "cycles": 9,
+                     "duration_seconds": 7200}],
+        "total_idle_seconds": 7200, "min_seconds": 3600})
+    findings = _summarise((PlanStep("idle_periods", {"min_seconds": 3600}), idle))
+    assert "of at least 3,600s" in findings
+    assert "not machine downtime" in findings
+
+
+def test_data_used_quotes_the_plans_idle_threshold_not_only_the_default(
+        tiny_cfg, tmp_path):
+    idle = ToolResult.ok("idle_periods", {"periods": [], "total_idle_seconds": 0,
+                                          "min_seconds": 3600})
+    ex = Execution(plan=Plan(goal="g", steps=[PlanStep("idle_periods",
+                                                       {"min_seconds": 3600})]),
+                   results=[idle], trace=[], store={})
+    text = render.render(ex, tiny_cfg, tmp_path, render.summarise(ex), "t")
+    assert (f"idle threshold 3600s (config default "
+            f"{tiny_cfg.idle_min_seconds}s)") in text
+
+
+def test_the_weakest_head_comes_with_the_median_and_the_best():
+    rows = [{"head_id": h, "total": 1000, "successful": 0, "failed": 0,
+             "success_rate": r}
+            for h, r in ((1, 0.999867), (2, 0.999972), (3, 0.999990))]
+    findings = _summarise((PlanStep("success_rates", {"by": "head"}),
+                           ToolResult.ok("success_rates", rows)))
+    assert "Weakest head.** 1 at 99.9867%" in findings
+    assert "Median across 3 heads: 99.9972%" in findings
+    assert "best: 3 at 99.9990%" in findings
+
+
+def _anomaly_values(**over):
+    v = {"faults": [], "threshold_hits": [], "deviation_hits": [],
+         "deviation_fallbacks": {}, "capping_operations": 4000,
+         "faults_by_condition": {"Bad Closure": 3, "No InTorque": 1},
+         "deviation_heads_at_floor": 36, "deviation_heads": 36,
+         "counts": {"faults": 4, "threshold_hits": 2, "deviation_hits": 1000}}
+    v.update(over)
+    return v
+
+
+def test_anomalies_report_shares_conditions_and_the_noise_floor():
+    s = render.summarise(Execution(
+        plan=Plan(goal="g", steps=[PlanStep("anomalies", {})]),
+        results=[ToolResult.ok("anomalies", _anomaly_values())]))
+    assert "1,000 beyond their head's robust band (25.0000% of capping operations)" \
+        in s.findings
+    assert "Rejects by condition: Bad Closure 3, No InTorque 1." in s.findings
+    assert "all 36 heads" in s.findings and "sensor noise" in s.findings
+    # A check the data cannot support is not proposed.
+    assert "supplier" not in s.next_checks
+    assert "success_rates by day" in s.next_checks
+
+
+def test_a_partial_floor_is_counted_not_called_noise():
+    findings = _summarise((PlanStep("anomalies", {}), ToolResult.ok(
+        "anomalies", _anomaly_values(deviation_heads_at_floor=5))))
+    assert "on 5 of 36 heads" in findings
+    assert "sensor noise" not in findings
+
+
+def test_event_gaps_are_summarised_without_blaming_a_head():
+    gaps = ToolResult.ok("event_gaps", {
+        "gaps": [], "gap_count": 227, "total_gap_seconds": 1233360,
+        "total_gap_hours": 342.6, "min_seconds": 600,
+        "longest_gap": {"start": "2026-03-15 16:51:38",
+                        "end": "2026-03-16 21:30:18", "duration_seconds": 103120}})
+    findings = _summarise((PlanStep("event_gaps", {}), gaps))
+    assert "227 gaps longer than 600s" in findings
+    assert "342.6 h in total" in findings
+    assert "Longest: 28.6 h, 2026-03-15 16:51:38" in findings
+    assert "no head is its cause" in findings
+
+
+def test_compare_periods_lists_each_bucket_and_names_the_lowest():
+    def bucket(month, caps, days, rejected, rate, share):
+        return {"bucket_start": f"2026-{month}-01 00:00:00", "caps": caps,
+                "successful": caps - rejected, "rejected": rejected,
+                "no_load_cycles": 0, "calendar_days": days, "active_days": days,
+                "caps_per_day": caps / days, "caps_per_active_day": caps / days,
+                "reject_rate": rate, "no_load_share": share}
+    feb = bucket("02", 14824304, 28, 748, 0.00005, 0.325)
+    mar = bucket("03", 3909837, 31, 204, 0.000052, 0.657)
+    s = render.summarise(Execution(
+        plan=Plan(goal="g", steps=[PlanStep("compare_periods", {})]),
+        results=[ToolResult.ok("compare_periods", {
+            "by": "month", "buckets": [feb, mar], "change_first_to_last": {},
+            "lowest_volume_bucket": mar})]))
+    assert "**2026-02.** 14,824,304 capping operations, 529,439/day" in s.findings
+    assert "**Lowest volume.** 2026-03, at 126,124" in s.findings
+    assert "event_gaps over 2026-03" in s.next_checks
+
+
+def test_a_why_question_is_told_what_the_data_cannot_answer():
+    s = _summarise_q("Why did the failure rate rise in April?",
+                     (PlanStep("overview", {}), _OVERVIEW))
+    assert s.findings.startswith("- **What this data cannot answer.**")
+
+
+def test_a_what_question_gets_no_disclaimer():
+    s = _summarise_q("How many caps in April?", (PlanStep("overview", {}), _OVERVIEW))
+    assert "cannot answer" not in s.findings
+
+
+def test_off_topic_lines_are_dropped_when_a_question_does_not_touch_them():
+    s = _summarise_q("How long was the machine stopped?",
+                     (PlanStep("overview", {}), _OVERVIEW))
+    assert "excluded from every rate below" not in s.findings   # no rate ran
+    assert "Data quality" not in s.findings
+    assert "Counter resets" not in s.findings
+
+
+def test_a_canned_report_keeps_every_line():
+    s = _summarise_q("", (PlanStep("overview", {}), _OVERVIEW),
+                     (PlanStep("success_rates", {"by": "overall"}),
+                      ToolResult.ok("success_rates", {
+                          "total": 100, "successful": 99, "failed": 1,
+                          "success_rate": 0.99, "lowest_head": 1})))
+    assert "excluded from every rate below" in s.findings
+    assert "Data quality" in s.findings and "Counter resets" in s.findings
+
+
+def test_limits_say_what_each_tool_that_ran_does_not_measure(tiny_cfg, tmp_path):
+    from analytics.agent.registry import TOOLS
+    _, text = _kpi(tiny_cfg, tmp_path)
+    limits = text.split("## Confidence and limits")[1].split("## Next checks")[0]
+    for tool in {s.tool for s in canned_plan("kpi", "2026-02").steps}:
+        assert f"**`{tool}` does not measure.** {TOOLS[tool].not_measured}" in limits

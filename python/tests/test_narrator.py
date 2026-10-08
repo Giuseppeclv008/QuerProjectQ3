@@ -209,3 +209,54 @@ def test_bounded_truncates_long_strings_not_only_long_lists():
     nested = _bounded({"message": long, "items": [long]}, 10)
     assert "truncated" in nested["message"]
     assert "truncated" in nested["items"][0]
+
+
+@pytest.mark.parametrize("findings", [
+    "1. March produced a quarter of February's volume.",
+    "1) March produced a quarter of February's volume.",
+    "• March produced a quarter of February's volume.",
+])
+def test_a_numbered_or_dotted_list_is_a_bulleted_list(tiny_cfg, findings):
+    n = narrator.narrate(tiny_cfg, _execution(tiny_cfg),
+                         client=_Client({"findings": findings,
+                                         "next_checks": "- Check March."}))
+    assert n.source == "llm"
+    assert n.findings == findings
+
+
+def test_rejected_findings_are_logged_so_the_cause_is_visible(tiny_cfg, caplog):
+    prose = "Here are my findings about the machine:"
+    with caplog.at_level("WARNING", logger="analytics.agent.narrator"):
+        n = narrator.narrate(tiny_cfg, _execution(tiny_cfg),
+                             client=_Client({"findings": prose,
+                                             "next_checks": "- x"}))
+    assert n.source == "template"
+    assert prose in caplog.text
+
+
+def test_the_logged_excerpt_is_bounded(tiny_cfg, caplog):
+    prose = "x" * 2000
+    with caplog.at_level("WARNING", logger="analytics.agent.narrator"):
+        narrator.narrate(tiny_cfg, _execution(tiny_cfg),
+                         client=_Client({"findings": prose, "next_checks": "- x"}))
+    assert "x" * 500 in caplog.text
+    assert "x" * 501 not in caplog.text
+
+
+def test_the_operators_question_reaches_the_narrator_verbatim(tiny_cfg):
+    """The planner rewrites the question into a goal; the narrator must see
+    both, so its first finding answers what was asked, not the rewording."""
+    ex = _execution(tiny_cfg)
+    ex = replace(ex, plan=replace(ex.plan, question="Did the machine get worse?"))
+    client = _Client(_GOOD)
+    narrator.narrate(tiny_cfg, ex, client=client)
+    prompt = client.calls[0]["messages"][0]["content"]
+    assert "<question>\nDid the machine get worse?\n</question>" in prompt
+    assert f"<goal>\n{ex.plan.goal}\n</goal>" in prompt
+
+
+def test_the_system_prompt_asks_for_a_direct_answer_first():
+    rules = narrator.SYSTEM.lower()
+    assert "first bullet" in rules
+    assert "cannot" in rules and "answer" in rules
+    assert "threshold" in rules

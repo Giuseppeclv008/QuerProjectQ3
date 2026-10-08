@@ -23,13 +23,14 @@ _TITLES = {
 _KEYWORDS = {
     "drift": ("drift", "drifting", "trend", "over time", "evolve", "evolved",
               "change over", "changed over", "moving average", "walking",
-              "correlate", "correlation", "differently", "compare head"),
+              "correlate", "correlation", "differently", "compare",
+              "worse"),
     "anomalies": ("anomaly", "anomalies", "anomalous", "abnormal", "outlier",
                   "outside", "threshold", "fault", "faults", "reject", "rejected",
                   "deviation", "unusual", "spike"),
     "kpi": ("kpi", "success", "successful", "rate", "how many", "percentage",
             "throughput", "speed", "pieces", "idle", "count", "overview",
-            "summary", "performed"),
+            "summary", "performed", "stopped", "downtime"),
 }
 
 

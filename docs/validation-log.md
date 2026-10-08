@@ -1814,3 +1814,39 @@ produced a prettier artifact would have made this directory evidence of
 nothing"); this entry records it in the log the original sentence lives in.
 What the run proves is unchanged either way: live agentic path on a local
 model, plan source `llm`, registry-validated, executor → renderer end to end.
+
+## 2026-10-08 — `ask` answers the question: three probe questions and the facts a report must surface
+
+With `qwen3:14b` the numbers in `ask` reports were right but the answers were
+weak: the narrator's findings were rejected on every run ("the model's
+findings carried no bullet") so the generic template was read instead, the
+planner's rules never named `capping_speed` or `idle_periods`, and nothing
+measured stops or compared periods. This pass passes the operator's question
+verbatim to the narrator, asks for a direct first finding (or a plain "the
+data cannot answer this"), accepts numbered and `•` lists, logs the first 500
+characters of any findings it rejects, names every tool in the planner's
+rules, makes each tool state what it does not measure, and adds two tools:
+`event_gaps` (machine stops) and `compare_periods` (month or week side by
+side).
+
+The three probe questions and the facts, recomputed from
+`events_3mo.duckdb` with the tools themselves:
+
+| question | facts the report must surface |
+|---|---|
+| "Did the machine get worse…" (2026-02..2026-04) | March collapses: 126,124 caps/day against 529,439 in February and 430,459 in April (per calendar day; 150,378 per active day in March). No drift: max \|tau\| 0.239, 0 heads drifting. Rejects negligible: 1,095 of 31,647,915 capping operations. No-load cycling is not: 23,347,981 cycles, 42.5% of all cycles. |
+| "How many hours was the machine stopped in March…" | 342.6 h in 227 gaps longer than 10 min; 254.9 h in 52 gaps longer than 1 h; longest 15 Mar 16:51 → 16 Mar 21:30 (28.6 h). No head is the cause. |
+| "Why did the failure rate rise in April…" | Causes and operators are not in the data. The premise is also false: the reject rate falls, 0.0050% in February to 0.0011% in April. |
+
+Weakest head over the three months: 99.9867% against a median of 99.9972%.
+Anomalies in March: all 36 heads have the robust band held at `mad_floor`, so
+the 1,433,066 deviation hits (36.7% of capping operations) are mostly sensor
+quantisation; rejects split Bad Closure 202, No InTorque 3.
+
+**Not yet run live.** The re-run of the three questions through
+`scripts/arol ask` on `qwen3:14b` is outstanding: the model is not pulled on
+this machine and needs ~9 GB the disk does not have free. Until it runs, the
+evidence for this pass is the unit suite and the figures above. Without a
+model the keyword router still picks one of the three canned plans, which do
+not include the two new tools (rewriting them was out of scope), so the stop
+and month-by-month figures reach a report only through a model plan.

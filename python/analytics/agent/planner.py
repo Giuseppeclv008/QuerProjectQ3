@@ -35,13 +35,25 @@ Rules:
 - Use only the tools listed. Never invent a tool name or an argument.
 - Set `period` on every step to the period you were given, unless the question \
 explicitly asks about a different one.
-- Leave an argument null to accept that tool's default.
+- Leave every optional argument null unless the question names a value for it. \
+Never invent a threshold, window or bucket the question did not ask for.
 - Prefer the fewest steps that fully answer the question. Two to five is typical.
 - Every step needs a one-line rationale naming what it contributes to the answer.
-- If the question is about how something changed over time, plan a trend step. \
-If it is about which head is unusual, plan head_correlation. If it is about \
-whether values are out of range, plan anomalies. If it is about how much or how \
-often, plan overview and success_rates."""
+- If the question is about how something changed over time (got worse or \
+better, rose or fell), plan a trend step, success_rates by day and \
+capping_speed by day; to compare months or weeks side by side, plan \
+compare_periods.
+- If it is about which head is unusual, plan head_correlation, and torque_stats \
+by head for the level a correlation cannot see.
+- If it is about whether values are out of range, plan anomalies.
+- If it is about how much or how often, plan overview and success_rates; for \
+production speed or volume, plan capping_speed.
+- If it is about downtime, stops or how long the machine was stopped, plan \
+event_gaps. idle_periods is NOT downtime: it measures heads cycling without a \
+cap, and a stopped machine never appears in it.
+- If the question asks about something no tool measures (causes, operators, \
+batches or lots, suppliers, maintenance), plan the tools closest to it anyway: \
+the report will state that the data cannot answer the rest."""
 
 
 def _fallback(question, period, note):
@@ -102,7 +114,8 @@ def _select(cfg, client, question, period):
     Keeps real composition -- which analyses, in what order -- without asking a
     small model to fill an arguments object it will get wrong.
     """
-    catalogue = "\n".join(f"- {name}: {spec.description}"
+    catalogue = "\n".join(f"- {name}: {spec.description} Does NOT measure: "
+                          f"{spec.not_measured}"
                           for name, spec in sorted(TOOLS.items()))
     schema = {"type": "object",
               "properties": {"goal": {"type": "string"},
@@ -173,7 +186,10 @@ def plan(cfg, question, period, client=None):
     """A Plan for `question`. Never raises; degrades to the router."""
     client = client or _client(cfg)
     if client is None:
-        return _fallback(question, period,
-                         f"no {cfg.provider} client (unreachable, or missing SDK "
-                         f"or credentials)")
-    return _TIERS[cfg.planning](cfg, client, question, period)
+        result = _fallback(question, period,
+                           f"no {cfg.provider} client (unreachable, or missing "
+                           f"SDK or credentials)")
+    else:
+        result = _TIERS[cfg.planning](cfg, client, question, period)
+    # Set once, here, so every tier and every fallback carries it.
+    return replace(result, question=question)
