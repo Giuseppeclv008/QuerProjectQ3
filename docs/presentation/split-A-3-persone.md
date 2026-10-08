@@ -52,6 +52,9 @@ Demo (slide 11): **parla P3, guida il terminale P2**, con una eccezione — il p
 (`scripts/demo.sh`, 55,1 M righe, 12/12 step, ~23 s) lo dice **P2 mentre digita**. È la sua
 evidenza misurata, è lui a rimisurare quel tempo sulla macchina della presentazione, e così i
 ~23 s di attesa non sono silenzio. P3 prende i bullet 2–5 e la frase di chiusura.
+La demo gira dal branch `fix/agentic_call`: lì `ask` usa di default Ollama con qwen3:14b.
+Per questo il ripiego del bullet 03 si lancia con `--provider anthropic` e senza chiave:
+togliere la chiave e basta non cambia niente, il modello ripianifica.
 
 ---
 
@@ -176,7 +179,7 @@ sommano; il 74,9 del 7,2× qui sotto è la mediana per colonna del resweep —
 stessa misura, convenzione dichiarata in `docs/bench/results.md`.)*
 
 - La **fase clean scala bene**: 537,8 s → 74,9 s = **7,2×**.
-- Il **merge no**: 65–73 s, e a differenza di prima è *piatto* in N. End-to-end il MAS arriva a **3,83×**: è il merge seriale a separare 7,2× da 3,83×, non un difetto di scaling.
+- Il **merge no**: 64,8 s a N=16 e 65–71 s da N=2 a N=16 (mono-MT 70–73 s), il 46% del wall di MAS N=16; a differenza di prima è *piatto* in N. End-to-end il MAS arriva a **3,83×**: è il merge seriale a separare 7,2× da 3,83×, non un difetto di scaling.
 - mono-MT **batte** mono-1T a scala mensile: T=8 fa 3,42×. Resta sotto MAS N=16 (3,83×).
 - Attenzione al confronto con le slide vecchie: questi numeri vengono dal resweep su i7-13700H raffreddato attivamente. Il vecchio 1,11× era il rapporto misurato su M2, dove mono-1T faceva 101,8 s; la baseline si muove di 5,28× fra le due macchine, il mix di costo no.
 - Sweep: 1/7/28 giorni × architetture × 3 ripetizioni = **81/81 run oracle-exact**.
@@ -186,7 +189,7 @@ stessa misura, convenzione dichiarata in `docs/bench/results.md`.)*
 
 | Domanda | Risposta breve |
 |---|---|
-| Perché aggiungere worker aiuta sempre meno? | Il merge è seriale ed è *piatto* in N (65–73 s): non cresce più col numero di store — quello era il vecchio difetto — ma resta un costo fisso. Legge di Amdahl sulla porzione di unificazione: clean 7,2×, end-to-end 3,83×. Fix noto (Parquet partizionato o store multi-writer) = roadmap, non fatto. |
+| Perché aggiungere worker aiuta sempre meno? | Il merge è seriale ed è *piatto* in N (65–71 s sul MAS, fino a 73 s su mono-MT): non cresce più col numero di store — quello era il vecchio difetto — ma resta un costo fisso. Legge di Amdahl sulla porzione di unificazione: clean 7,2×, end-to-end 3,83×. Fix noto (Parquet partizionato o store multi-writer) = roadmap, non fatto. |
 | Come rilevate un worker morto senza falsi positivi? | Silenzio > 30 s con HB su canale dedicato non bloccante. Il worker batte a vuoto, dopo ogni risultato **e durante la pulizia** (`BeatingStore`, al più ogni secondo), quindi non esiste un silenzio legittimo: 30 s di nulla significano morto o bloccato. |
 | E se un worker esce da solo perché non arriva più lavoro? | Manda un **BYE**. È una partenza, non una morte: nessuna completion riaperta, nessun re-dispatch, `workers_died` non si gonfia. Perché quel frame esca serve un linger reale sul sink dei risultati (300 ms). |
 | Alla morte di un worker rilanciate tutto? | No, solo ciò che quel worker aveva **claimed** — il CLAIM parte sul socket dei risultati nel momento in cui l'item è preso in carico. Quelli pagano il cap di 2 rinvii; completions riaperte e item mai reclamati ripartono senza pagare; quelli in mano a worker vivi restano dove sono. |
@@ -212,7 +215,7 @@ stessa misura, convenzione dichiarata in `docs/bench/results.md`.)*
 8. [`python/analytics/report/render.py`](../../python/analytics/report/render.py), [`plots.py`](../../python/analytics/report/plots.py), [`export.py`](../../python/analytics/report/export.py)
 9. [`docs/agent-decision-flow.md`](../agent-decision-flow.md) ← **la slide 7 è questo diagramma**
 10. [`docs/reports/ask-live-sample/`](../reports/ask-live-sample/) — il run `ask` committato, col suo `trace.json`; [`docs/reports/README.md`](../reports/README.md) per la tabella di staleness (oggi vuota)
-11. `python/tests/test_anthropic_schema_live.py` (gate sulla chiave) e `python/tests/test_backend_parity.py` (DuckDB vs Parquet) — le due evidenze che la slide 10 cita
+11. `python/tests/test_anthropic_schema_live.py` (gate sulla chiave) e, sul branch `fix/agentic_call`, `tests/test_raw_input.cpp` (Parquet e JSON danno gli stessi eventi del CSV) — le evidenze dietro due schede della slide 10
 12. [`docs/analytics-methods.md`](../analytics-methods.md), [`docs/reports/`](../reports/), `docs/validation-log.md`
 
 ### Concetti da padroneggiare
@@ -226,9 +229,9 @@ stessa misura, convenzione dichiarata in `docs/bench/results.md`.)*
 - Politica di fallimento: problema di **config** ⇒ exit 2 prima di qualsiasi lavoro; buco di **analisi** ⇒ report che nomina il buco.
 - Il finding (slide 9, testo di P1 e voce di P2, ma i numeri escono dai tuoi tool): 99,9950% a livello macchina nasconde head 29 con 117 reject su 1.095, contro media per testa 30,4 e 78 della seconda peggiore (head 35).
 - **Il non-trovato conta**, ma con l'ambito giusto: nessuna testa supera la soglia Mann-Kendall su coppia o success rate, e tutte e 36 correlano > 0,9999 sulla coppia media — cioè **nessuna è fuori passo nella forma**. Sul **livello** non dice nulla: Pearson è invariante a un offset per testa, quindi una testa che gira stabilmente più bassa muovendosi con le altre prende ~1 ed è riportata come allineata. Il controllo che lo escluderebbe è la mediana per testa (`torque_stats by head`), e il report lo scrive fra i next check. Una versione precedente nominava sempre una "testa meno correlata" — aritmetica vera, conclusione falsa.
-- **Il path agentico live è provato su un modello locale, non su quello hosted** (slide 10): [`docs/reports/ask-live-sample/`](../reports/ask-live-sample/) è un run `ask` committato su qwen2.5:7b sotto Ollama — plan source `llm`, **uno** step validato dal registry (`head_correlation(by='day')`), executor → renderer end-to-end sullo store vero. Resta non verificata solo l'**accettazione dello schema da parte dell'API Anthropic**: nessuna chiave è mai stata usata, e `test_anthropic_schema_live.py` manda gli schemi ed è gated proprio su quella.
+- **Il path agentico live è provato su un modello locale, non su quello hosted** (slide 10): [`docs/reports/ask-live-sample/`](../reports/ask-live-sample/) è un run `ask` committato su qwen2.5:7b sotto Ollama — plan source `llm`, **uno** step validato dal registry (`head_correlation(by='day')`), executor → renderer end-to-end sullo store vero. Resta non verificata solo l'**accettazione dello schema da parte dell'API Anthropic**: nessuna chiave è mai stata usata, e `test_anthropic_schema_live.py` manda gli schemi ed è gated proprio su quella. In demo invece gira **qwen3:14b**, il default del branch `fix/agentic_call`: la slide 10 lo dice, e se il 14b narra bene dal vivo non contraddice niente, perché la scheda sul 7B parla dei run committati.
 - **Il 7B pianifica ma non narra**: ogni narrazione che ha prodotto è stata respinta dal rilevatore di bullet e sostituita dal riassunto deterministico, col motivo stampato nei limiti — 3 su 3 a luglio, 2 su 2 ad agosto, e nel run committato si legge "it announced findings rather than stating them". La prosa del campione è quella del template.
-- **CSV è solo l'ingestion grezza, non lo store**: `clean --format parquet` scrive uno store Parquet, `mas_export` lo esporta, e gli stessi 8 tool leggono entrambi i backend (`test_backend_parity.py`). Leggere JSON o Parquet *come telemetria grezza* è un fratello del reader, non lavoro d'agente.
+- **Solo la GPU è ferma al CSV** (branch `fix/agentic_call`; su `main` tutta l'ingestion è ancora CSV): il percorso CPU legge CSV, Parquet e JSON con `open_raw_reader()`, e un giorno vero (28/02, 806.785 eventi) convertito in Parquet e JSON dà store identici riga per riga. `--engine=cuda` analizza il testo CSV da sé e rifiuta gli altri due formati con exit 2. Lo store non è mai stato legato al CSV: DuckDB o Parquet, letti dagli stessi 8 tool (`test_backend_parity.py`).
 - **I report committati sono stati rigenerati il 2026-08-19** su uno store ricostruito dai tre mesi del pool (55.132.433 righe, fingerprint identico a quello registrato). Due numeri si sono mossi e vanno saputi spiegare: un **buco nei dati ora chiude una run di idle** (`6e1b9be`, knob `idle_max_gap_seconds` = 600 s) — febbraio passa da 11.551,3 a 7.228,1 head-hours mentre i periodi *salgono* da 22.459 a 25.046, che è esattamente ciò che implica spezzare le run sui buchi; e il **floor sulla scala di deviazione** (`mad_floor` = 0,01 Nm) porta le anomalie di febbraio da 1.612.634 a 162.019 hit, cioè da una banda robusta che segnalava ~10,9% del mese a ~1,1%.
 - Il campione itemizzato delle anomalie copre **tutto il periodo** e non le sue prime ore; cap a `max_anomaly_items` = 5000, col totale ricalcolato via `COUNT(*)` esatto solo quando il campione si riempie davvero.
 
@@ -239,7 +242,7 @@ stessa misura, convenzione dichiarata in `docs/bench/results.md`.)*
 | L'LLM calcola qualche numero? | No. Sceglie i tool e scrive la prosa attorno ai risultati. Nessun accesso allo store, nessun ruolo aritmetico. |
 | Se l'API è giù? | Router keyword, report comunque prodotto, motivo scritto nella sezione limiti. I 3 verbi `report` non chiamano mai il modello. |
 | Come testate l'agente senza token? | Client API finto iniettato: ogni path di fallimento di planner e narrator è pinnato. Zero rete, zero chiavi. |
-| Cosa non è coperto? | Solo l'**accettazione dello schema da parte dell'API Anthropic**: nessuna chiave è mai stata usata, `test_anthropic_schema_live.py` manda gli schemi ed è gated su quella. Il path `ask` live **ha** evidenza committata su modello locale (`docs/reports/ask-live-sample/`, qwen2.5:7b), e il fallback router pure. |
+| Cosa non è coperto? | Solo l'**accettazione dello schema da parte dell'API Anthropic**: nessuna chiave è mai stata usata, `test_anthropic_schema_live.py` manda gli schemi ed è gated su quella. Il path `ask` live **ha** evidenza committata su modello locale (`docs/reports/ask-live-sample/`, qwen2.5:7b), e il fallback router pure; in demo gira qwen3:14b. |
 | Il modello scrive davvero la prosa? | Sul 7B no: il rilevatore di bullet ha respinto ogni sua narrazione (3 su 3 a luglio, 2 su 2 ad agosto) e il report è caduto sul riassunto deterministico, dicendolo nei limiti. È il degrado previsto — la narrazione perde leggibilità, i numeri no. |
 | Perché il tempo di idle è calato del 37% rispetto ai report vecchi? | Perché un buco nei dati ora chiude la run invece di essere contato come idle (`idle_max_gap_seconds` = 600 s): febbraio 11.551,3 → 7.228,1 head-hours, coi periodi che *salgono* a 25.046. Lo store non ha righe per una macchina spenta, quindi una run illimitata riportava il fermo come idling. |
 | Perché le anomalie di febbraio sono passate da 1,6 M a 162 k? | `mad_floor` = 0,01 Nm. Un sensore quantizzato collassava la banda robusta a rumore e la banda finiva per segnalare ~10,9% del mese; col floor scende a ~1,1%. |
