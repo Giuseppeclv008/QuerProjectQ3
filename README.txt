@@ -171,9 +171,10 @@ Ask a question in plain English (a model picks which analyses to run):
 5. PARAMETERS
 -------------
 
-clean [--format duckdb|parquet] <input.csv> <output> <machine_id>
+clean [--format duckdb|parquet] <input> <output> <machine_id>
 
-  input        one raw day-file
+  input        one raw day-file: .csv, .parquet, or .json/.jsonl/.ndjson
+               (format by extension; Parquet/JSON columns matched by name)
   output       *.duckdb = store; any other name = CSV file;
                with --format parquet = folder
   --format     duckdb (default) or parquet

@@ -332,10 +332,12 @@ organized by layer.
 │   │   │   ├── CapEvent.hpp                # RawRow, CapEvent, NUM_HEADS, is_reject
 │   │   │   ├── CapEventExtractor.hpp       # Stateful per-head dedup engine
 │   │   │   ├── CapEventExtractorFlat.hpp   # Element-wise form + column loader (GPU precondition)
-│   │   │   └── Pipeline.hpp                # clean_file() orchestrator
+│   │   │   ├── Pipeline.hpp                # clean_file() orchestrator
+│   │   │   └── RawReader.hpp               # Raw day-file reader interface (any format)
 │   │   ├── store/                          # Storage layer (persistence)
 │   │   │   ├── EventStore.hpp              # IEventStore abstract interface (DIP seam)
 │   │   │   ├── CsvRawReader.hpp            # Raw telemetry CSV streaming reader
+│   │   │   ├── RawInput.hpp                # Parquet/JSON raw reader + open_raw_reader()
 │   │   │   ├── CsvEventStore.hpp           # CSV file persistence backend
 │   │   │   └── DuckDbEventStore.hpp        # DuckDB persistence backend (PIMPL)
 │   │   ├── agent/                          # Agent layer (MAS coordination)
@@ -357,6 +359,7 @@ organized by layer.
 │       │   └── Pipeline.cpp
 │       ├── store/                          # Store implementations
 │       │   ├── CsvRawReader.cpp
+│       │   ├── RawInput.cpp
 │       │   ├── CsvEventStore.cpp
 │       │   ├── DuckDbEventStore.cpp
 │       │   ├── ParquetEventStore.cpp
@@ -377,7 +380,7 @@ organized by layer.
 │           ├── bench_cpu_main.cpp          # → bench_cpu       (store-free contender)
 │           └── cuda_clean_main.cpp         # → mas_cuda_clean  (GPU contender, --verify)
 │
-├── tests/                                  # Google Test unit tests (21 files, 203 tests)
+├── tests/                                  # Google Test unit tests (22 files, 213 tests)
 │   ├── test_cap_event.cpp
 │   ├── test_cap_event_extractor.cpp
 │   ├── test_cap_event_extractor_flat.cpp   # The GPU precondition, proved against the stateful one
@@ -392,6 +395,7 @@ organized by layer.
 │   ├── test_duckdb_event_store.cpp
 │   ├── test_parquet_event_store.cpp
 │   ├── test_parquet_export.cpp
+│   ├── test_raw_input.cpp                  # Parquet/JSON input == CSV input
 │   ├── test_zmq_smoke.cpp
 │   ├── test_zmq_transport.cpp
 │   ├── test_zmq_e2e.cpp                    # Coordinator + worker over real sockets
@@ -597,7 +601,7 @@ nothing attached to it:
 | Target | Sources | Links |
 |--------|---------|-------|
 | `mas_clean_core` | `CapEventExtractor`, `CapEventExtractorFlat`, `CsvRawReader` | **nothing** — C++20 stdlib only (`psapi` on Windows) |
-| `mas_store` | `CsvEventStore`, `DuckDbEventStore`, `ParquetEventStore`, `ParquetExport`, `Pipeline` | `mas_clean_core` + DuckDB |
+| `mas_store` | `CsvEventStore`, `DuckDbEventStore`, `ParquetEventStore`, `ParquetExport`, `RawInput`, `Pipeline` | `mas_clean_core` + DuckDB |
 | `mas_agent` | `Message`, `CleaningWorker`, `Coordinator` | `mas_store` |
 | `mas_transport` | `ZmqTransport` | cppzmq |
 | `mas_core` | *(INTERFACE alias)* | `mas_agent` — kept so no call site changed |
@@ -615,7 +619,7 @@ nothing is what lets the benchmark build on a machine with no DuckDB at all.
 | `CapEvent` / `RawRow` | [`CapEvent.hpp`](core/include/mas/domain/CapEvent.hpp) | Domain value types. `NUM_HEADS=36`; a failure is any status with the reject bit set (`is_reject`), not a single code (the old `FAULT_STATUS=65` constant is gone). |
 | `CapEventExtractor` | [`CapEventExtractor.hpp`](core/include/mas/domain/CapEventExtractor.hpp) · [`.cpp`](core/src/domain/CapEventExtractor.cpp) | Stateful per-head dedup. Maintains `last_count_[36]`. Not thread-safe. |
 | `extract_flat()` / `RawColumns` / `load_columns()` | [`CapEventExtractorFlat.hpp`](core/include/mas/domain/CapEventExtractorFlat.hpp) · [`.cpp`](core/src/domain/CapEventExtractorFlat.cpp) | Element-wise form of the same transform, plus a whole-file CSV→columns loader. Stdlib only, no state across rows. Tolerates CRLF; validates the 109-column header. |
-| `clean_file()` | [`Pipeline.hpp`](core/include/mas/domain/Pipeline.hpp) · [`.cpp`](core/src/domain/Pipeline.cpp) | Orchestrator: CsvRawReader → CapEventExtractor → IEventStore in ≥8192-event batches (8192 is a floor: the flush check runs per row, which appends up to 36 events). |
+| `clean_file()` | [`Pipeline.hpp`](core/include/mas/domain/Pipeline.hpp) · [`.cpp`](core/src/domain/Pipeline.cpp) | Orchestrator: `open_raw_reader()` (CSV, Parquet or JSON) → CapEventExtractor → IEventStore in ≥8192-event batches (8192 is a floor: the flush check runs per row, which appends up to 36 events). |
 
 ### Store Layer
 
@@ -624,7 +628,8 @@ nothing is what lets the benchmark build on a machine with no DuckDB at all.
 | Component | File(s) | Description |
 |-----------|---------|-------------|
 | `IEventStore` | [`EventStore.hpp`](core/include/mas/store/EventStore.hpp) | Abstract `write(span<CapEvent>)` interface (DIP seam). |
-| `CsvRawReader` | [`CsvRawReader.hpp`](core/include/mas/store/CsvRawReader.hpp) · [`.cpp`](core/src/store/CsvRawReader.cpp) | Streams raw 109-column CSVs. Skips malformed rows with counter. |
+| `CsvRawReader` | [`CsvRawReader.hpp`](core/include/mas/store/CsvRawReader.hpp) · [`.cpp`](core/src/store/CsvRawReader.cpp) | Streams raw 109-column CSVs. Skips malformed rows with counter. Implements `RawReader` ([`RawReader.hpp`](core/include/mas/domain/RawReader.hpp)). |
+| `TabularRawReader`, `open_raw_reader()` | [`RawInput.hpp`](core/include/mas/store/RawInput.hpp) · [`.cpp`](core/src/store/RawInput.cpp) | Parquet and JSON raw day-files through DuckDB, streamed. Columns matched by name; same row-validity policy as CSV. `open_raw_reader()` picks the reader by extension and is what `clean_file()` and every probe use. |
 | `CsvEventStore` | [`CsvEventStore.hpp`](core/include/mas/store/CsvEventStore.hpp) · [`.cpp`](core/src/store/CsvEventStore.cpp) | CSV file backend. Writes header on construction. |
 | `DuckDbEventStore` | [`DuckDbEventStore.hpp`](core/include/mas/store/DuckDbEventStore.hpp) · [`.cpp`](core/src/store/DuckDbEventStore.cpp) | DuckDB backend (PIMPL). Staging → merge. `merge_from()` with best-effort DETACH, `merge_all()` (the bulk path mas_merge takes). `export_parquet()` was deliberately removed — the header explains why (COPY ... TO truncates; the guarded `export_store_to_parquet` is the one export path). |
 | `ParquetEventStore` | [`ParquetEventStore.hpp`](core/include/mas/store/ParquetEventStore.hpp) · [`.cpp`](core/src/store/ParquetEventStore.cpp) | Experimental Parquet backend: one file per input, no index, no WAL. Buffers in memory, writes on `close()` through a temp + atomic rename; `abandon()` for a clean that failed. |
@@ -819,10 +824,12 @@ that gets handed over.
 ### `clean` — Single-File Batch Pipeline
 
 ```
-usage: clean [--format duckdb|parquet] <raw_in.csv> <events_out.csv|.duckdb|out_dir> <machine_id>
+usage: clean [--format duckdb|parquet] <raw_in.csv|.parquet|.json> <events_out.csv|.duckdb|out_dir> <machine_id>
 ```
 
-Processes a single raw CSV day-file. Output selection:
+Processes a single raw day-file. The input format is its extension:
+`.parquet`, `.json` / `.jsonl` / `.ndjson`, anything else is CSV (see
+[Raw input formats](#raw-input-formats)). Output selection:
 - `--format parquet` → the second argument is a *directory*; writes
   `<dir>/<input basename without extension>.parquet` via `ParquetEventStore`. Nothing is written
   at all if the clean fails, so a short file never reads as a whole day.
@@ -906,6 +913,31 @@ usage: mas_merge <dst.duckdb> <machine_id> <src1.duckdb> [src2.duckdb ...]
 ```
 
 Merges one or more per-worker stores into a unified destination. **Crash-tolerant:** a corrupt source store (from a killed worker) is skipped with a warning instead of aborting. Idempotent: running twice produces the same result.
+
+### Raw input formats
+
+The brief asks for pools in "CSV / JSON / Parquet" (§3.1). Every tool that
+takes a raw day-file — `clean`, `mas_monolith`, `mas_coordinator`/`mas_worker` —
+accepts all three; the format is the extension (case-insensitive):
+
+| Extension | Reader |
+|---|---|
+| `.parquet` | `TabularRawReader` via DuckDB `read_parquet` |
+| `.json`, `.jsonl`, `.ndjson` | `TabularRawReader` via DuckDB `read_json` (array or newline-delimited records) |
+| anything else | `CsvRawReader` (unchanged, no DuckDB) |
+
+The file must carry exactly the 109 AROL columns (`timestamp`, `H01 Count` …
+`H36 Status`). Parquet and JSON columns are matched **by name**, so their order
+does not matter; a missing or extra column refuses the file and names the
+column. Every cell goes through the same `parse_row_fields()` policy as a CSV
+cell, so a null, non-numeric or out-of-range value skips that row (counted in
+the "skipped N malformed rows" warning), not the file. Timestamps are
+normalised to the pool's `2026-02-27T16:00:00.000` spelling, whether the file
+stores a Parquet `TIMESTAMP` or a string like `2026-02-27 16:00:00`.
+
+Verified on a real day (2026-02-28, 806,785 events): the CSV, a Parquet and a
+JSON conversion of it produce stores identical row for row. `--engine=cuda`
+stays CSV-only (the GPU loader parses CSV text) and refuses other inputs.
 
 ### `mas_export` — Parquet Export
 
@@ -1302,7 +1334,7 @@ cmake --build build --parallel
 | `MAS_BUILD_TESTS` | `ON` | Build the GoogleTest suite. `OFF` drops the last dependency that needs network. |
 
 The default triple (`OFF, ON, OFF, ON`) is the build this project has always
-had: **192 tests green**. With `MAS_BENCH_ONLY=ON` **no tests are built at
+had: **202 tests green**. With `MAS_BENCH_ONLY=ON` **no tests are built at
 all** — the suite is a googletest fetch and the bench build's contract is
 "downloads nothing", so `_deps/` is never created:
 
@@ -1714,7 +1746,7 @@ it, `--pdf` logs how to install it and writes Markdown and HTML as normal.
 
 ## Testing
 
-The project has **203 C++ unit tests** across 21 Google Test files — 192 in the
+The project has **213 C++ unit tests** across 22 Google Test files — 202 in the
 default build plus the 11-case GPU/CPU differential behind `-DMAS_ENABLE_CUDA=ON`
 — plus **325
 Python tests** for the analytics tier. Every test count in this
@@ -1722,7 +1754,7 @@ README is asserted by `python/tests/test_readme_counts.py`, so adding a test and
 forgetting this paragraph fails the suite rather than quietly dating it.
 
 ```bash
-cd build && ctest -C Release --output-on-failure # 192 C++ tests in the default build; the 11-case GPU/CPU differential is compiled only with -DMAS_ENABLE_CUDA=ON (and skips without a device)
+cd build && ctest -C Release --output-on-failure # 202 C++ tests in the default build; the 11-case GPU/CPU differential is compiled only with -DMAS_ENABLE_CUDA=ON (and skips without a device)
 cd python && ../.venv/bin/python -m pytest -q    # 325 Python tests (see the three gates below)
 ```
 
@@ -1742,7 +1774,7 @@ shows 8; and adding a key removes 2 more.
 The C++ side has gates too, and this is the only place that says so: **4 C++
 tests** can skip in the default build. Two are pool-gated — the real-day-file
 half of `CapEventExtractorFlat` (765,711 events) and the whole of
-`test_bench_cpu_parity.cpp` — so on a fresh clone **192 tests green** means 190
+`test_bench_cpu_parity.cpp` — so on a fresh clone **202 tests green** means 200
 executed. The other two skip only where creating a symlink is denied
 (`test_atomic_publish.cpp`, `test_parquet_export.cpp`).
 
@@ -1755,6 +1787,7 @@ way).
 
 | Test File | What It Tests |
 |-----------|---------------|
+| `test_raw_input.cpp` | Parquet and JSON input: same rows and same events as the CSV twin, columns matched by name, missing/extra column refused and named, bad cells skip the row, out-of-order counted, missing and corrupt files |
 | `test_cap_event.cpp` | The status bitmask: a closure is rejected iff its status is odd (bit 0), across every condition in the brief's slide-6 table |
 | `test_cap_event_extractor.cpp` | Increment, aggregated, reset, held-dedup, first-observation seeding |
 | `test_cap_event_extractor_flat.cpp` | The GPU precondition: `extract_flat` and the stateful extractor emit identical events, all nine fields, on the edge cases and on a real day-file. Plus header validation (wrong count *and* wrong name) and CRLF/LF equivalence |

@@ -1,5 +1,5 @@
 #include "mas/apps/CliArgs.hpp"
-#include "mas/store/CsvRawReader.hpp"
+#include "mas/store/RawInput.hpp"
 #include "mas/store/DuckDbEventStore.hpp"
 #include "mas/store/ParquetEventStore.hpp"
 #include "mas/domain/Pipeline.hpp"
@@ -22,7 +22,7 @@ int main(int argc, char** argv) {
     // flags are parsed. Rejecting argc < 3 here made "--format needs a value"
     // unreachable, so `clean --format` answered with the generic usage.
     if (argc < 2) {
-        std::cerr << "usage: clean [--format duckdb|parquet] <raw_in.csv> "
+        std::cerr << "usage: clean [--format duckdb|parquet] <raw_in.csv|.parquet|.json> "
                      "<events_out.csv|.duckdb|out_dir> [machine_id]\n";
         return 2;
     }
@@ -46,7 +46,7 @@ int main(int argc, char** argv) {
         // machine_id is required, not defaulted (same rationale as
         // mas_worker): a silently-"MCC" store is a wrong answer that
         // announces itself as a success.
-        std::cerr << "usage: clean [--format duckdb|parquet] <raw_in.csv> "
+        std::cerr << "usage: clean [--format duckdb|parquet] <raw_in.csv|.parquet|.json> "
                      "<events_out.csv|.duckdb|out_dir> <machine_id>\n";
         return 2;
     }
@@ -54,8 +54,7 @@ int main(int argc, char** argv) {
     const std::string machine = argv[argi + 2];
 
     if (parquet) {
-        mas::CsvRawReader probe(in);
-        if (!probe.is_open()) return report_missing_input(in);
+        if (!mas::open_raw_reader(in)->is_open()) return report_missing_input(in);
         try {
             mas::ParquetEventStore store(mas::parquet_path_for(out, in), machine);
             mas::CleanFileStats stats;
@@ -90,8 +89,7 @@ int main(int argc, char** argv) {
         // creates the .duckdb file as a side effect, so a missing input must
         // never leave an empty database behind (mirrors the CSV wrapper's
         // probe in Pipeline.cpp).
-        mas::CsvRawReader probe(in);
-        if (!probe.is_open()) return report_missing_input(in);
+        if (!mas::open_raw_reader(in)->is_open()) return report_missing_input(in);
 
         try {
             mas::DuckDbEventStore store(out, machine);

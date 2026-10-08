@@ -155,6 +155,7 @@ if(NOT MAS_BENCH_ONLY)
     core/src/store/DuckDbEventStore.cpp
     core/src/store/ParquetEventStore.cpp
     core/src/store/ParquetExport.cpp
+    core/src/store/RawInput.cpp
     core/src/domain/Pipeline.cpp)
   target_link_libraries(mas_store PUBLIC mas_clean_core PRIVATE duckdb_imported)
 
@@ -279,6 +280,7 @@ if(MAS_BUILD_TESTS)
       tests/test_duckdb_event_store.cpp
       tests/test_parquet_event_store.cpp
       tests/test_parquet_export.cpp
+      tests/test_raw_input.cpp
       # The agent-layer tests run on FakeTransport (a pure-virtual header) and
       # include no zmq.hpp: they belong to the store gate, not the ZMQ one.
       # Gating them on MAS_ENABLE_ZMQ silently dropped 44 tests -- the whole

@@ -198,7 +198,7 @@ day-files are offset from midnight) and reconciled in
 
 ## 11. Engineering
 
-- **325 Python tests, 203 C++ tests**, all green; test output pristine. Both
+- **325 Python tests, 213 C++ tests**, all green; test output pristine. Both
   counts are asserted against the sources by `test_readme_counts.py`, so the
   slide cannot drift from the suite.
 - **Golden-report regression**: a fixed store and a fixed plan must render
@@ -220,10 +220,9 @@ day-files are offset from midnight) and reconciled in
 
 - **`NUM_HEADS` is compile-time 36.** The brief's own example shows a 48-head
   machine; no 48-head data exists to test against. Known limit, roadmap item.
-- **Raw ingestion is CSV only.** The store itself is not: `clean --format
-  parquet` writes a Parquet store, `mas_export` exports one, and the same eight
-  tools read either backend (`test_backend_parity.py`). Reading JSON or Parquet
-  *raw telemetry* is a reader sibling, not agent work.
+- **The GPU engine ingests CSV only.** The CPU path reads CSV, Parquet and
+  JSON day-files (`open_raw_reader`, identical stores on a real day); the CUDA
+  loader parses CSV text itself and refuses the other two.
 - **~0.02% of closures carry statuses we decode but have not seen AROL confirm** —
   12,461 No-Load-with-torque and 12 No-Closure rows. We treat them as carrying no
   pass/fail verdict and exclude them from the rate rather than guessing.

@@ -1,14 +1,15 @@
 #include "mas/domain/Pipeline.hpp"
 #include "mas/domain/CapEventExtractor.hpp"
 #include "mas/store/CsvEventStore.hpp"
-#include "mas/store/CsvRawReader.hpp"
+#include "mas/store/RawInput.hpp"
 #include <vector>
 
 namespace mas {
 
 long long clean_file(const std::string& in_path, IEventStore& store,
                      CleanFileStats* stats) {
-    CsvRawReader reader(in_path);
+    const auto reader_ptr = open_raw_reader(in_path);   // CSV, Parquet or JSON
+    RawReader& reader = *reader_ptr;
     if (!reader.is_open()) return -1;   // input missing/unreadable
 
     constexpr std::size_t kBatch = 8192;   // spec §5.3: batched insert
@@ -33,8 +34,7 @@ long long clean_file(const std::string& in_path, IEventStore& store,
 long long clean_file(const std::string& in_path, const std::string& out_path,
                      const std::string& machine_id) {
     {   // probe first: a missing input must never create the output file
-        CsvRawReader probe(in_path);
-        if (!probe.is_open()) return -1;
+        if (!open_raw_reader(in_path)->is_open()) return -1;
     }
     try {
         CsvEventStore store(out_path, machine_id);
