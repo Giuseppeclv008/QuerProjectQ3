@@ -160,7 +160,7 @@ Ask a question in plain English (a model picks which analyses to run):
 
   scripts/arol ask "which head behaves differently, and why?" --period 2026-02
 
-  Local model (default): ollama serve && ollama pull qwen2.5:7b
+  Local model (default): ollama serve && ollama pull qwen3:14b
   Hosted model:  export ANTHROPIC_API_KEY=...
                  add   --provider anthropic --model claude-opus-5
   The numbers always come from the analyses, never from the model. With no key
@@ -230,7 +230,8 @@ arol.json (all keys are optional; defaults in brackets)
   idle_min_seconds      no-load for longer than this = idle       [300]
   idle_max_gap_seconds  a hole in the data longer than this ends
                         an idle period                            [600]
-  provider, model       model used by ask       [ollama, qwen2.5:7b]
+  provider, model       model used by ask       [ollama, qwen3:14b]
+  think                 Ollama reasoning pass   [false; null for qwen2.5]
   ollama_host, num_ctx  local model address and context size
                                               [http://localhost:11434, 8192]
 

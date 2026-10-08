@@ -1551,7 +1551,8 @@ scripts/arol ask "any anomalies in February?" --period 2026-02 \
 | field | default | what it does |
 |---|---|---|
 | `provider` | `ollama` | `ollama` or `anthropic`; the only field that has to change to move between local and hosted |
-| `model` | `qwen2.5:7b` | with `anthropic`, any current model id — `claude-sonnet-5` and `claude-haiku-4-5` are the cheaper tiers |
+| `model` | `qwen3:14b` | with `anthropic`, any current model id — `claude-sonnet-5` and `claude-haiku-4-5` are the cheaper tiers |
+| `think` | `false` | Ollama only; skips qwen3's reasoning pass. Set `null` for a non-thinking model (qwen2.5) |
 | `effort` | `high` | `low`..`max`; Anthropic-only, and deliberately never sent to Ollama, which rejects it |
 | `max_tokens` | `16000` | a reply cut off here is reported as exactly that, not as malformed JSON |
 | `api_timeout_s` | `120.0` | passed straight to the client |
@@ -1580,7 +1581,7 @@ the model's to compute.
 one. The only field that changes is `provider`:
 
 ```bash
-ollama serve && ollama pull qwen2.5:7b
+ollama serve && ollama pull qwen3:14b
 
 scripts/arol ask "which head behaves differently?" --period 2026-02
 ```
@@ -1683,7 +1684,8 @@ No path, band, or threshold is hard-coded. `arol.json`:
   "idle_min_seconds": 300,
   "idle_max_gap_seconds": 600,
   "provider": "ollama",
-  "model": "qwen2.5:7b",
+  "model": "qwen3:14b",
+  "think": false,
   "planning": "plan"
 }
 ```
@@ -1711,14 +1713,15 @@ rather than erroring — which looks exactly like a stupid model.
 
 `think` (Ollama only) controls a thinking model's reasoning pass: `false` skips
 it for speed (qwen3, gpt-oss), `true` forces it, `"low"`/`"medium"`/`"high"`
-set gpt-oss's level. Omitted or `null`, nothing is sent and the model's own
-default applies — leave it unset for non-thinking models such as qwen2.5.
+set gpt-oss's level. The default is `false`, matching the default qwen3:14b.
+With `null`, nothing is sent and the model's own default applies — set that
+for non-thinking models such as qwen2.5:
 
 ```json
 {
   "provider": "ollama",
-  "model": "qwen3:14b",
-  "think": false
+  "model": "qwen2.5:7b",
+  "think": null
 }
 ```
 

@@ -35,7 +35,7 @@ def test_ollama_rejects_a_context_too_small_for_the_planner_prompt():
 
 def test_the_default_provider_is_unchanged():
     cfg = Config(store_path="x")
-    assert (cfg.provider, cfg.model, cfg.planning) == ("ollama", "qwen2.5:7b", "plan")
+    assert (cfg.provider, cfg.model, cfg.planning) == ("ollama", "qwen3:14b", "plan")
 
 
 # --------------------------------------------------------------- the schema
@@ -99,11 +99,17 @@ def test_the_ollama_request_omits_every_anthropic_only_field():
     assert body["messages"][0] == {"role": "system", "content": "sys"}
 
 
-def test_think_is_left_to_the_model_unless_the_config_sets_it():
-    """Absent, Ollama applies the model's own default; sending false would
-    change behaviour for every model that predates the field."""
+def test_think_defaults_to_off_for_the_default_qwen3_model():
     client = _FakeOllama('{"ok": true}')
-    llm.json_call(_ollama_cfg(), client, "s", "p", {})
+    llm.json_call(Config(store_path="x"), client, "s", "p", {})
+    assert client.bodies[0]["think"] is False
+
+
+def test_think_null_leaves_it_to_the_model():
+    """None sends nothing, so Ollama applies the model's own default -- the
+    setting for a non-thinking model such as qwen2.5."""
+    client = _FakeOllama('{"ok": true}')
+    llm.json_call(_ollama_cfg(think=None), client, "s", "p", {})
     assert "think" not in client.bodies[0]
 
 

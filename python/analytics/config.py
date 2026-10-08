@@ -56,7 +56,7 @@ class Config:
     # the executor, the renderer -- is untouched by the choice, because the model
     # only ever decides which analyses to run and how to word them.
     provider: str = "ollama"        # ollama | anthropic
-    model: str = "qwen2.5:7b"
+    model: str = "qwen3:14b"
     max_tokens: int = 16000
     api_timeout_s: float = 120.0
 
@@ -69,8 +69,9 @@ class Config:
     # Ollama's `think`: false skips a thinking model's reasoning (qwen3,
     # gpt-oss...) for speed; "low"/"medium"/"high" set gpt-oss's level. None
     # sends nothing, leaving the model's own default -- which is what a
-    # non-thinking model like qwen2.5 needs.
-    think: bool | str | None = None
+    # non-thinking model like qwen2.5 needs. False by default to match the
+    # default model: qwen3's reasoning pass costs minutes per call locally.
+    think: bool | str | None = False
 
     # How much the model is asked to do. A smaller local model can route
     # reliably long before it can compose a whole plan, so the hard part is
