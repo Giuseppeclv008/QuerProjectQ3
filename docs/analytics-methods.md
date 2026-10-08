@@ -19,7 +19,8 @@ February–April begin at 16:00 on January 31).
 
 The `status` column is **not an enumeration**. It is a bitmask: bit 0 is the
 reject signal, and bits 1–6 are the conditions that caused it. The brief's slide
-6 lists 14 rows, which is 7 conditions × {reject, no reject}.
+6 lists 13 rows: Closure OK (status 0, no reject) plus 6 conditions ×
+{reject, no reject}.
 
 | bit | value | condition |
 |---|---|---|

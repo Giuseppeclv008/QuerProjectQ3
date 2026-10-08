@@ -117,7 +117,7 @@ faithfully, so no data was lost. Only the interpretation was wrong.
 ### 3.2.1 The status bitmask (Plan 7)
 
 `status` is **not an enumeration**. Bit 0 is the reject signal; bits 1–6 are the conditions
-that caused it. The brief's slide 6 lists 14 rows = 7 conditions × {reject, no reject}.
+that caused it. The brief's slide 6 lists 13 rows = Closure OK (status 0) + 6 conditions × {reject, no reject}.
 
 | bit | value | condition |
 |---|---|---|
@@ -395,7 +395,7 @@ to be clean before the agent depends on it.
 1. **Status encoding confirmation. — RESOLVED (Plan 7).** ~~§3.2 is inferred from the joint
    `(status, torque)` distribution and is consistent with the brief's example table, but it is
    an *inference* about machine/firmware semantics.~~ The brief's **slide 6** documents the
-   encoding directly: 14 rows = 7 conditions × {reject, no reject}, i.e. a bitmask with the
+   encoding directly: 13 rows = Closure OK + 6 conditions × {reject, no reject}, i.e. a bitmask with the
    reject signal in bit 0. This is no longer an inference — it is **confirmed by the brief's
    own table**, and independently by the data (585 at status 65 + 15 at status 9 = the 600 the
    odd-status rule returns). See §3.2.1. Remaining assumption — the meaning of a *non-rejected*

@@ -43,7 +43,7 @@
 
 Spec §11 scopes Plan 7 to "WP3 report agent (§6), WP4 CLI and config (§7), report templates, plots, sample reports, and the end-to-end demo (§9)." **Task 1 adds one item outside that scope: correcting the closure-status model to the bitmask the brief documents on slide 6.**
 
-Rationale: every report prints a failed-closure count and a success rate. Spec §12 open question 4 records statuses 4 and 9 as "unknown", but slide 6 of the brief decodes them — the status byte is a bitmask (`bit0 = reject signal`, `bit1 = No Load`, `bit2 = No Closure`, `bit3 = No InTorque`, `bit4 = No CapTurns`, `bit5 = Following Error`, `bit6 = Bad Closure`), and the table's 14 rows are 7 conditions × reject/no-reject. Shipping reports built on `failed := status == 65` would print numbers we already know are under-counted, and would leave the toolkit unable to classify 10 of the brief's 14 documented codes on a dataset that happened to contain them.
+Rationale: every report prints a failed-closure count and a success rate. Spec §12 open question 4 records statuses 4 and 9 as "unknown", but slide 6 of the brief decodes them — the status byte is a bitmask (`bit0 = reject signal`, `bit1 = No Load`, `bit2 = No Closure`, `bit3 = No InTorque`, `bit4 = No CapTurns`, `bit5 = Following Error`, `bit6 = Bad Closure`), and the table's 13 rows are Closure OK plus 6 conditions × reject/no-reject. Shipping reports built on `failed := status == 65` would print numbers we already know are under-counted, and would leave the toolkit unable to classify 10 of the brief's 13 documented codes on a dataset that happened to contain them.
 
 Measured impact on the three-month store is small but real: 15 status-9 events (No InTorque + reject) currently counted as neither success nor failure, and 7 status-4 events (No Closure, no reject). If the reviewer prefers to keep §3.2 frozen, drop Task 1 and start at Task 2 — nothing downstream depends on it beyond the numbers in the sample reports.
 
@@ -56,7 +56,7 @@ Spec §9 says "Markdown is the source of truth; HTML and PDF are exports." This 
 | File | Change | Responsibility |
 |---|---|---|
 | `core/include/mas/domain/CapEvent.hpp` | modify | `is_fault_status` → reject-bit predicate; document the bitmask |
-| `tests/test_cap_event.cpp` | modify | pin the bitmask semantics across all 14 documented codes |
+| `tests/test_cap_event.cpp` | modify | pin the bitmask semantics across all 13 documented codes |
 | `python/analytics/status.py` | create | `REJECT_SQL`, `CONDITIONS`, `decode()` — the one place status bits are named |
 | `python/analytics/config.py` | modify | drop `fault_status`; add agent/report fields |
 | `python/analytics/tools/{overview,success,torque,anomaly,trend}.py` | modify | filter failures on the reject bit, not `status == 65` |
@@ -125,9 +125,9 @@ Create `python/tests/test_status.py`:
 ```python
 """The status byte is a bitmask, per the brief's slide-6 table.
 
-The table's 14 rows are 7 conditions x reject/no-reject, and bit 0 is the reject
-signal. This is what lets us classify the statuses the three-month store actually
-carries (0, 2, 4, 9, 65) instead of treating 4 and 9 as unknown.
+The table's 13 rows are Closure OK + 6 conditions x reject/no-reject; bit 0 is
+the reject signal. This is what lets us classify the statuses the three-month
+store actually carries (0, 2, 4, 9, 65) instead of treating 4 and 9 as unknown.
 """
 from analytics.status import CONDITIONS, decode
 
@@ -158,7 +158,7 @@ def test_four_is_no_closure_without_reject():
 
 
 def test_every_row_of_the_brief_table_decodes():
-    # The brief lists 7 conditions; each appears with and without the reject bit.
+    # The brief lists 6 conditions; each appears with and without the reject bit.
     for bit, name in CONDITIONS.items():
         assert decode(float(bit)) == {"reject": False, "conditions": [name]}
         assert decode(float(bit | 1)) == {"reject": True, "conditions": [name]}
@@ -182,10 +182,10 @@ Create `python/analytics/status.py`:
 ```python
 """Closure-status decoding, per the brief's slide-6 table.
 
-The table is a bitmask, not an enum: its 14 rows are 7 error conditions crossed
-with a reject signal. Bit 0 is that reject signal, which is why every "Reject
-Signal = YES" row has an odd status. Reading it as a flat enum is what left
-statuses 4 and 9 unexplained in the three-month store (spec 12, OQ4).
+The table is a bitmask, not an enum: its 13 rows are Closure OK plus 6 error
+conditions crossed with a reject signal. Bit 0 is that reject signal, which is
+why every "Reject Signal = YES" row has an odd status. Reading it as a flat enum
+is what left statuses 4 and 9 unexplained in the three-month store (spec 12, OQ4).
 
     bit 0 (1)  reject signal
     bit 1 (2)  No Load          - first torque threshold not reached (SlowTorque)
@@ -365,8 +365,8 @@ In `core/include/mas/domain/CapEvent.hpp`, replace `is_fault_status` and its com
 // AROL Equatorque closure status, per the brief's slide-6 table: a bitmask, not
 // an enum. Bit 0 is the reject signal; bits 1..6 are the error conditions
 // (No Load, No Closure, No InTorque, No CapTurns, Following Error, Bad Closure).
-// The table's 14 rows are those 6 conditions plus "Closure OK", each with and
-// without the reject bit.
+// The table's 13 rows are "Closure OK" (status 0, no reject bit) plus those 6
+// conditions, each with and without the reject bit.
 //
 // Measured over 2026-02-01 (765,711 closures), and confirmed across the full
 // three-month store:

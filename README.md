@@ -539,7 +539,8 @@ the one-`numpy.diff` Python contender.
 
 The `status` column is **a bitmask, not an enumeration**. Bit 0 is the reject
 signal; bits 1–6 are the conditions that caused it. The machine brief's status
-table lists 14 rows, which is 7 conditions × {reject, no reject}.
+table lists 13 rows: Closure OK (status 0, no reject) plus 6 conditions ×
+{reject, no reject}.
 
 | bit | value | condition |
 |---|---|---|

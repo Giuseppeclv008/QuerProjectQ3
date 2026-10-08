@@ -1,8 +1,8 @@
 """The status byte is a bitmask, per the brief's slide-6 table.
 
-The table's 14 rows are 7 conditions x reject/no-reject, and bit 0 is the reject
-signal. This is what lets us classify the statuses the three-month store actually
-carries (0, 2, 4, 9, 65) instead of treating 4 and 9 as unknown.
+The table's 13 rows are Closure OK + 6 conditions x reject/no-reject; bit 0 is
+the reject signal. This is what lets us classify the statuses the three-month
+store actually carries (0, 2, 4, 9, 65) instead of treating 4 and 9 as unknown.
 """
 import duckdb
 
@@ -35,7 +35,7 @@ def test_four_is_no_closure_without_reject():
 
 
 def test_every_row_of_the_brief_table_decodes():
-    # The brief lists 7 conditions; each appears with and without the reject bit.
+    # The brief lists 6 conditions; each appears with and without the reject bit.
     for bit, name in CONDITIONS.items():
         assert decode(float(bit)) == {"reject": False, "conditions": [name]}
         assert decode(float(bit | 1)) == {"reject": True, "conditions": [name]}

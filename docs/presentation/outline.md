@@ -87,8 +87,8 @@ day-files are offset from midnight) and reconciled in
 ## 5. The data, measured
 
 - `status` is **a bitmask, not an enumeration** — bit 0 is the reject signal,
-  bits 1–6 are the conditions. Slide 6 of the brief lists 14 rows = 7 conditions
-  × {reject, no reject}.
+  bits 1–6 are the conditions. Slide 6 of the brief lists 13 rows = Closure OK
+  (status 0) + 6 conditions × {reject, no reject}.
 - A closure is a rejection **if and only if** its status is odd.
 - Measured over three months:
 
