@@ -1,7 +1,7 @@
-# Presentation outline — 13 slides
+# Presentation outline — 12 slides
 
 Numbering follows the deck: the title slide carries no number, so the problem
-is slide 1 and the demo slide 12; the deck closes on an unnumbered "Thank you".
+is slide 1 and the demo slide 11; the deck closes on an unnumbered "Thank you".
 In PowerPoint or Canva a slide's page is its number plus one.
 
 Every bullet is written to be transcribed onto a slide as-is. Numbers are
@@ -200,27 +200,7 @@ day-files are offset from midnight) and reconciled in
 
 ---
 
-## 10. Engineering
-
-- **310 Python tests, 203 C++ tests**, all green; test output pristine. Both
-  counts are asserted against the sources by `test_readme_counts.py`, so the
-  slide cannot drift from the suite.
-- **Golden-report regression**: a fixed store and a fixed plan must render
-  byte-identical Markdown, so a change in any tool's SQL shows up as a diff in a
-  committed file instead of a silent shift in a number nobody re-read.
-- **Orchestration tested with a mocked model** — no tokens, no network. Every
-  planner and narrator failure path (no key, API error, refusal, malformed JSON,
-  invalid step) is pinned.
-- **Independent oracle cross-check**: toolkit SQL against a raw-CSV
-  re-derivation.
-- **Every number in the three committed reports was reconciled by hand** against
-  a direct DuckDB query written independently of the toolkit. That reconciliation
-  is what found three reporting defects — none reproducible on the test fixture.
-- Config-driven throughout (WP5): no hard-coded path, band or threshold.
-
----
-
-## 11. Honest limits
+## 10. Honest limits
 
 - **`NUM_HEADS` is compile-time 36.** The brief's own example shows a 48-head
   machine; no 48-head data exists to test against. Known limit, roadmap item.
@@ -248,7 +228,7 @@ day-files are offset from midnight) and reconciled in
 
 ---
 
-## 12. Demo
+## 11. Demo
 
 - One command reproduces everything:
 

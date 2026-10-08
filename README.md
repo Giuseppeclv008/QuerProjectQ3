@@ -462,7 +462,7 @@ organized by layer.
 │   ├── validation-log.md                   # Real-data test results log
 │   ├── analytics-methods.md                # Per-tool: definition, SQL shape, assumptions
 │   ├── agent-decision-flow.md              # How a request becomes a report, and every fallback
-│   ├── presentation/outline.md             # 13-slide outline, bullets fully written
+│   ├── presentation/outline.md             # 12-slide outline, bullets fully written
 │   ├── reports/                            # Committed sample reports (hand-reconciled)
 │   │   ├── kpi-2026-02/
 │   │   ├── drift-2026-02_2026-04/

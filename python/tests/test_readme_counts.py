@@ -114,8 +114,6 @@ def test_presentation_cpp_test_counts_match_the_sources():
     """
     actual, per_file = _cpp_counts()
     deck = _deck()
-    assert _claimed_in(deck, r"\*\*[\d,]+ Python tests, ([\d,]+) C\+\+ tests\*\*",
-                       "the deck") == actual
     assert _claimed_in(deck, r"\*\*([\d,]+) C\+\+\*\* \([\d,]+ file GTest\)",
                        "the deck") == actual
     assert _claimed_in(deck, r"\(([\d,]+) file GTest\)", "the deck") == len(per_file)
@@ -124,7 +122,6 @@ def test_presentation_cpp_test_counts_match_the_sources():
 def test_every_presentation_test_count_is_one_of_the_guarded_forms():
     """Same rule as the README's: no unguarded count may sit in the deck."""
     guarded = [
-        r"\*\*[\d,]+ Python tests, [\d,]+ C\+\+ tests\*\*",
         r"\*\*[\d,]+ C\+\+\*\* \([\d,]+ file GTest\) \+ \*\*[\d,]+ Python\*\*",
     ]
     stripped = _deck()
@@ -152,10 +149,9 @@ def test_readme_python_test_count_matches_collection(request):
     collected = len(request.session.items)
     assert _claimed(r"\*\*([\d,]+)\s*\nPython tests\*\*") == collected
     assert _claimed(r"#\s*([\d,]+) Python tests") == collected
-    # The deck states the same total twice, in both files.
+    # The deck states the total once, in the split; the outline lost its
+    # Engineering slide, and the count with it.
     deck = _deck()
-    assert _claimed_in(deck, r"\*\*([\d,]+) Python tests, [\d,]+ C\+\+ tests\*\*",
-                       "the deck") == collected
     assert _claimed_in(deck, r"\+ \*\*([\d,]+) Python\*\*", "the deck") == collected
 
 

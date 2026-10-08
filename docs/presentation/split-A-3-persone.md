@@ -1,26 +1,26 @@
 # Divisione A — 3 persone, per tier tecnologico
 
-Riferimento slide: [`outline.md`](outline.md) (13 slide). La numerazione è quella dei titoli del
-deck: il titolo non ha numero, «1. The problem» è la seconda pagina e «12. Demo and closing»
+Riferimento slide: [`outline.md`](outline.md) (12 slide). La numerazione è quella dei titoli del
+deck: il titolo non ha numero, «1. The problem» è la seconda pagina e «11. Demo and closing»
 l'ultima del talk, seguita da un «Thank you» senza numero. In PowerPoint o Canva la pagina è il
 numero più uno.
-Assegnazione a voce: **P1 = titolo, 1, 3, 5, 8 · P2 = 2, 4, 9, 10 · P3 = 6, 7, 11 · 12 = P3 voce, P2 terminale.**
+Assegnazione a voce: **P1 = titolo, 1, 3, 5, 8 · P2 = 2, 4, 9 · P3 = 6, 7, 10 · 11 = P3 voce, P2 terminale.**
 
-Le quattro slide corali (titolo, 1, 2, 12) restano contenuto di tutti — chiunque deve reggerle in
+Le quattro slide corali (titolo, 1, 2, 11) restano contenuto di tutti — chiunque deve reggerle in
 Q&A — ma hanno una voce assegnata, così il turno non resta indeciso davanti allo schermo.
 Chi prepara non è sempre chi parla: vedi [§ Slide corali](#slide-corali--chi-prepara-chi-parla).
 
 | | Ruolo | Slide proprie | Anche a voce | Parlato |
 |---|---|---|---|---|
 | P1 | Ingestion core + semantica del dato | 3, 5, 9 (la dice P2) | titolo, 1, 8 (testo di P3) | **6:15** |
-| P2 | Runtime distribuito, performance, evidenza sperimentale | 4, 10 | 2, 9 (testo di P1), primo bullet della 12 | **6:15** |
-| P3 | Analytics, agente, BOT, limiti | 6, 7, 11 | 12 | **6:10** |
+| P2 | Runtime distribuito, performance, evidenza sperimentale | 4 | 2, 9 (testo di P1), primo bullet della 11 | **5:05** |
+| P3 | Analytics, agente, BOT, limiti | 6, 7, 10 | 11 | **6:10** |
 
 ## Budget — il tetto è 20 minuti
 
 Non è una stima nostra: i deliverable del track chiedono le slide "for a 20-minute oral
-presentation" (`material/project track.pdf`). Il piano parlato sta in **18:40**, e il margine
-di 1:20 serve al rallentamento naturale davanti alla commissione. I tempi qui sotto
+presentation" (`material/project track.pdf`). Il piano parlato sta in **17:30**, e il margine
+di 2:30 serve al rallentamento naturale davanti alla commissione. I tempi qui sotto
 **includono la frase di passaggio** a chi viene dopo.
 
 | Slide | Voce | Tempo |
@@ -29,32 +29,26 @@ di 1:20 serve al rallentamento naturale davanti alla commissione. I tempi qui so
 | 1. Il problema | P1 | 1:25 |
 | 2. Architettura | P2 | 1:10 |
 | 3. WP1 — ingestion | P1 | 1:45 |
-| 4. Performance | P2 | 1:40 |
+| 4. Performance | P2 | 1:55 |
 | 5. I dati, misurati | P1 | 1:20 |
 | 6. WP2 — il toolkit | P3 | 1:20 |
 | 7. WP3 — l'agente | P3 | 1:50 |
 | 8. WP4 — il BOT | P1 (testo di P3) | 1:25 |
 | 9. Un risultato | P2 (testo di P1) | 1:35 |
-| 10. Ingegneria | P2 | 1:25 |
-| 11. Limiti | P3 | 1:15 |
-| 12. Demo | P3, primo bullet P2 | 2:10 |
-| | | **18:40** |
+| 10. Limiti | P3 | 1:15 |
+| 11. Demo | P3, primo bullet P2 | 2:10 |
+| | | **17:30** |
 
 Se si sfora, si taglia dalla **3** e dalla **7**: sono le due che si allargano da sole. Non
-dalla 12, che è l'unica parte non recuperabile a voce.
-
-I 15 secondi in più sulla 10 vengono dalla 4, dentro il turno di P2: la 10 è la slide più densa
-del deck (138 parole, nessuna figura — a 1:10 la diresti leggendo senza respirare), mentre la 4
-ha una figura che porta da sola metà del discorso. Il totale e i tempi per persona non cambiano.
+dalla 11, che è l'unica parte non recuperabile a voce.
 
 **La 8 la dice P1, la 9 la dice P2.** Se ognuna la dicesse chi la scrive, il parlato sarebbe
-6:25 / 4:40 / 7:35; così è 6:15 / 6:15 / 6:10, e P2 tiene la 9 e la 10 di fila, quindi fra la 7
-e la 11 la voce cambia tre volte e non quattro.
+6:25 / 3:30 / 7:35; così è 6:15 / 5:05 / 6:10.
 **I testi restano di chi li ha scritti.** La 8 è di P3: le domande di dettaglio su `cli.py`,
 `render.py`, exit code e rendering **tornano a P3**. La 9 è di P1: le domande sul dato **tornano
 a P1**, quelle su come i tool calcolano i numeri a P3. Chi presenta non possiede.
 
-Demo (slide 12): **parla P3, guida il terminale P2**, con una eccezione — il primo bullet
+Demo (slide 11): **parla P3, guida il terminale P2**, con una eccezione — il primo bullet
 (`scripts/demo.sh`, 55,1 M righe, 12/12 step, ~23 s) lo dice **P2 mentre digita**. È la sua
 evidenza misurata, è lui a rimisurare quel tempo sulla macchina della presentazione, e così i
 ~23 s di attesa non sono silenzio. P3 prende i bullet 2–5 e la frase di chiusura.
@@ -85,7 +79,7 @@ lo possiede e lo dice chi ha il turno.
 | Titolo | P3 (tiene il contenuto del deck e la sua build) | **P1** | 20 s, nessun contenuto tecnico. P1 apre e prosegue dritto sulla 1: un handoff in meno e una voce sola, come vuole la nota del deck ("non presentarsi uno per uno"). |
 | 1. Il problema | **P1**; l'ultimo bullet ("far rispondere un agente") lo scrive P3 | **P1** | Ogni bullet è suo: 36 teste @1 Hz, 89 file, stato-non-eventi, 24,5% di duplicati, chiusura dal delta del contatore. È la frase-modello del suo ruolo. |
 | 2. Architettura | **P2**; livelli 3–4 e la riga WP5 li scrive P3, i livelli 1–2 li valida P1 | **P2** | Il C4 container è una vista di processo: casa sua. E deve piantare *clean* contro *merge* e lo store per-worker **prima** della slide 4, altrimenti 7,2× contro 3,83× non si capisce. Evita anche a P1 il blocco titolo-1-2-3 di fila. |
-| 12. Demo | **P2** (macchina, `demo.sh`, tempo rimisurato) + **P3** (sequenza `ask`, ripiego) | **P3** voce, **P2** terminale | Vedi la nota in testa al documento: il primo bullet lo dice P2 mentre digita. |
+| 11. Demo | **P2** (macchina, `demo.sh`, tempo rimisurato) + **P3** (sequenza `ask`, ripiego) | **P3** voce, **P2** terminale | Vedi la nota in testa al documento: il primo bullet lo dice P2 mentre digita. |
 
 Figura obbligatoria della 2: [`docs/diagrams/C4_Container.png`](../diagrams/C4_Container.png).
 
@@ -203,7 +197,7 @@ stessa misura, convenzione dichiarata in `docs/bench/results.md`.)*
 
 ## P3 — Analytics, agente, BOT, limiti
 
-**Possiede:** gli 8 tool, `ToolResult` e provenance, planner/registry/router/narrator, CLI `arol`, rendering report, i report committati e i limiti onesti (slide 11).
+**Possiede:** gli 8 tool, `ToolResult` e provenance, planner/registry/router/narrator, CLI `arol`, rendering report, i report committati e i limiti onesti (slide 10).
 **La slide 8 la scrivi tu ma la dice P1**: resta tua in Q&A, non a voce.
 
 ### File in ordine di lettura
@@ -218,7 +212,7 @@ stessa misura, convenzione dichiarata in `docs/bench/results.md`.)*
 8. [`python/analytics/report/render.py`](../../python/analytics/report/render.py), [`plots.py`](../../python/analytics/report/plots.py), [`export.py`](../../python/analytics/report/export.py)
 9. [`docs/agent-decision-flow.md`](../agent-decision-flow.md) ← **la slide 7 è questo diagramma**
 10. [`docs/reports/ask-live-sample/`](../reports/ask-live-sample/) — il run `ask` committato, col suo `trace.json`; [`docs/reports/README.md`](../reports/README.md) per la tabella di staleness (oggi vuota)
-11. `python/tests/test_anthropic_schema_live.py` (gate sulla chiave) e `python/tests/test_backend_parity.py` (DuckDB vs Parquet) — le due evidenze che la slide 11 cita
+11. `python/tests/test_anthropic_schema_live.py` (gate sulla chiave) e `python/tests/test_backend_parity.py` (DuckDB vs Parquet) — le due evidenze che la slide 10 cita
 12. [`docs/analytics-methods.md`](../analytics-methods.md), [`docs/reports/`](../reports/), `docs/validation-log.md`
 
 ### Concetti da padroneggiare
@@ -232,7 +226,7 @@ stessa misura, convenzione dichiarata in `docs/bench/results.md`.)*
 - Politica di fallimento: problema di **config** ⇒ exit 2 prima di qualsiasi lavoro; buco di **analisi** ⇒ report che nomina il buco.
 - Il finding (slide 9, testo di P1 e voce di P2, ma i numeri escono dai tuoi tool): 99,9950% a livello macchina nasconde head 29 con 117 reject su 1.095, contro media per testa 30,4 e 78 della seconda peggiore (head 35).
 - **Il non-trovato conta**, ma con l'ambito giusto: nessuna testa supera la soglia Mann-Kendall su coppia o success rate, e tutte e 36 correlano > 0,9999 sulla coppia media — cioè **nessuna è fuori passo nella forma**. Sul **livello** non dice nulla: Pearson è invariante a un offset per testa, quindi una testa che gira stabilmente più bassa muovendosi con le altre prende ~1 ed è riportata come allineata. Il controllo che lo escluderebbe è la mediana per testa (`torque_stats by head`), e il report lo scrive fra i next check. Una versione precedente nominava sempre una "testa meno correlata" — aritmetica vera, conclusione falsa.
-- **Il path agentico live è provato su un modello locale, non su quello hosted** (slide 11): [`docs/reports/ask-live-sample/`](../reports/ask-live-sample/) è un run `ask` committato su qwen2.5:7b sotto Ollama — plan source `llm`, **uno** step validato dal registry (`head_correlation(by='day')`), executor → renderer end-to-end sullo store vero. Resta non verificata solo l'**accettazione dello schema da parte dell'API Anthropic**: nessuna chiave è mai stata usata, e `test_anthropic_schema_live.py` manda gli schemi ed è gated proprio su quella.
+- **Il path agentico live è provato su un modello locale, non su quello hosted** (slide 10): [`docs/reports/ask-live-sample/`](../reports/ask-live-sample/) è un run `ask` committato su qwen2.5:7b sotto Ollama — plan source `llm`, **uno** step validato dal registry (`head_correlation(by='day')`), executor → renderer end-to-end sullo store vero. Resta non verificata solo l'**accettazione dello schema da parte dell'API Anthropic**: nessuna chiave è mai stata usata, e `test_anthropic_schema_live.py` manda gli schemi ed è gated proprio su quella.
 - **Il 7B pianifica ma non narra**: ogni narrazione che ha prodotto è stata respinta dal rilevatore di bullet e sostituita dal riassunto deterministico, col motivo stampato nei limiti — 3 su 3 a luglio, 2 su 2 ad agosto, e nel run committato si legge "it announced findings rather than stating them". La prosa del campione è quella del template.
 - **CSV è solo l'ingestion grezza, non lo store**: `clean --format parquet` scrive uno store Parquet, `mas_export` lo esporta, e gli stessi 8 tool leggono entrambi i backend (`test_backend_parity.py`). Leggere JSON o Parquet *come telemetria grezza* è un fratello del reader, non lavoro d'agente.
 - **I report committati sono stati rigenerati il 2026-08-19** su uno store ricostruito dai tre mesi del pool (55.132.433 righe, fingerprint identico a quello registrato). Due numeri si sono mossi e vanno saputi spiegare: un **buco nei dati ora chiude una run di idle** (`6e1b9be`, knob `idle_max_gap_seconds` = 600 s) — febbraio passa da 11.551,3 a 7.228,1 head-hours mentre i periodi *salgono* da 22.459 a 25.046, che è esattamente ciò che implica spezzare le run sui buchi; e il **floor sulla scala di deviazione** (`mad_floor` = 0,01 Nm) porta le anomalie di febbraio da 1.612.634 a 162.019 hit, cioè da una banda robusta che segnalava ~10,9% del mese a ~1,1%.
@@ -254,7 +248,7 @@ stessa misura, convenzione dichiarata in `docs/bench/results.md`.)*
 
 ## Metodo di lavoro (3 sessioni)
 
-1. **Sessione 1 (1 h, insieme)** — base comune sopra + giro dei 13 slide, ognuno prende i suoi.
+1. **Sessione 1 (1 h, insieme)** — base comune sopra + giro dei 12 slide, ognuno prende i suoi.
 2. **Sessione 2 (individuale)** — leggere i propri file nell'ordine dato, scrivere le proprie slide, preparare **2 domande trappola** per gli altri due.
 3. **Sessione 3 (1,5 h, insieme)** — prova completa cronometrata, poi incrocio: P1 interroga P3, P3 interroga P2, P2 interroga P1. Chi non sa una risposta si segna il file da rileggere.
 
@@ -267,7 +261,6 @@ stessa misura, convenzione dichiarata in `docs/bench/results.md`.)*
 - P1 → P3, fine 5: "…lo store è unico e affidabile. Cosa ci si chiede sopra."
 - P3 → P1, fine 7: "…il modello sceglie il piano. Ecco cosa ci si comanda da riga di comando."
 - P1 → P2, fine 8: "…lo stesso report ogni volta. E il report ha trovato una cosa."
-- P2, dalla 9 alla 10 (stessa voce): "…una testa sola. Perché potete crederci."
-- P2 → P3, fine 10: "…verificato. Adesso cosa **non** copriamo."
-- P2 → P3, dentro la 12: "12 su 12, senza modello. Ora con il modello."
+- P2 → P3, fine 9: "…una testa sola. Adesso cosa **non** copriamo."
+- P2 → P3, dentro la 11: "12 su 12, senza modello. Ora con il modello."
 - P3 → chiusura: "il modello ha scelto le analisi; l'SQL ha prodotto ogni numero."
