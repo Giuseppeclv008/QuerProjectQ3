@@ -18,7 +18,8 @@ day-files are offset from midnight) and reconciled in
 
 - System and Device Programming — Politecnico di Torino
 - Project proposed by AROL Group (Prof. Quer)
-- Team members and date
+- Presented by Francesco Ambrosino, Giuseppe Antonio Calvello and Stefano Alverino
+  (no date on the slide)
 
 ---
 
@@ -45,9 +46,10 @@ day-files are offset from midnight) and reconciled in
   1. **C++ MAS ingestion** — CSV pool → dedup → closure reconstruction → DuckDB
   2. **`cap_events` store** — DuckDB, the single source of truth
   3. **Python analytics toolkit (WP2)** — 8 pure functions, SQL in, typed result out
-  4. **Report agent (WP3) + CLI (WP4)** — Claude plans and narrates, never computes
-- Show the **C4 container diagram** from the README.
-- Configuration (WP5) cuts across all of it: no path, band or threshold is
+  4. **Report agent (WP3) + CLI (WP4)** — the LLM plans and narrates, never computes
+- The slide redraws the **C4 container view** from the README
+  (`docs/diagrams/C4_Container.png`), each box tagged with its tier.
+- *Said aloud, no longer on the slide:* configuration (WP5) cuts across all of it: no path, band or threshold is
   hard-coded.
 
 ---
@@ -55,11 +57,13 @@ day-files are offset from midnight) and reconciled in
 ## 3. WP1 — ingestion
 
 - Closure detection by **counter delta per head**, not by any single column.
+- Four cases: normal increment, aggregated increment (delta > 1), counter reset,
+  stalled counter (no event).
 - Consecutive-duplicate elimination before reconstruction; idempotent
   reprocessing, so re-running a day-file cannot double-count.
 - Staging + merge write path into DuckDB; cross-worker merge unifies per-worker
   stores.
-- Result: **55,132,433 cap events** over three months, 36 heads.
+- Result: **55,132,433 closure events** over three months, 36 heads.
 - Validated against an **independent Python oracle** — the C++ output and a
   raw-CSV re-derivation agree exactly.
 
@@ -69,7 +73,7 @@ day-files are offset from midnight) and reconciled in
 
 - Three architectures benchmarked: single-file `clean`, multi-threaded monolith,
   distributed MAS (coordinator + workers over ZeroMQ).
-- Sweep: 1 / 7 / 28-day volumes × all architectures × 3 repeats — **81/81 runs
+- *Said aloud, no longer on the slide:* sweep: 1 / 7 / 28-day volumes × all architectures × 3 repeats — **81/81 runs
   oracle-exact**.
 - Resilience shown, not claimed: worker SIGKILL mid-run and coordinator death
   with an orphan worker both recover (chaos E2E).
@@ -80,8 +84,11 @@ day-files are offset from midnight) and reconciled in
   (mono-MT 70–73 s), 46% of MAS N=16's wall clock. It now only moves rows —
   under the old key it grew with store count, and that growth was the defect
   doing work. Amdahl on the serial fraction, not a failure to scale.
-- Show the speedup chart. Name the fix (partitioned Parquet or a
-  concurrent-writer store) as roadmap, not as done.
+- The slide's chart is wall clock per architecture, clean + merge: mono-1T 537.8 s,
+  mono-MT T=8 157.3 s, MAS N=16 140.4 s, captioned *serial merge, not the
+  workers, caps the speedup*.
+- *Said aloud, no longer on the slide:* name the fix (partitioned Parquet or a concurrent-writer store)
+  as roadmap, not as done.
 
 ---
 
@@ -93,7 +100,7 @@ day-files are offset from midnight) and reconciled in
   2/3, 4/5, 8/9, 16/17, 32/33, 64/65.
 - A closure is a rejection **if and only if** its status is odd.
 - Measured over three months. The slide captions the table *MEASURED ·
-  FEB–APR 2026 · 55,132,433 CLOSURES: only 5 of the 13 codes occur* — 0, 2, 4, 9
+  FEB–APR 2026 · 55,132,433 CLOSURES / Only 5 of the 13 codes occur* — 0, 2, 4, 9
   and 65; the other eight never appear in the pool:
 
   | status | torque>0 | count | decoded |
@@ -170,9 +177,10 @@ day-files are offset from midnight) and reconciled in
   run must still land on disk.
 - **`ask` runs on a local model by default** (on `fix/agentic_call`, the branch
   the demo runs from): Ollama with qwen3:14b, no API key, nothing leaves the
-  machine. Another model: `"model"` in `arol.json`, or `--model` after the
-  question. The hosted Anthropic API is wired in (`--provider anthropic`) but
-  untested.
+  machine.
+- *Said aloud, no longer on the slide:* another model: `"model"` in `arol.json`, or `--model` after
+  the question. The hosted Anthropic API is wired in (`--provider anthropic`)
+  but untested.
 - Show a generated report — the six mandated sections and the tool-call trace.
 
 ---
@@ -183,7 +191,7 @@ day-files are offset from midnight) and reconciled in
   (14,817,976 successful, 748 rejected).
 - Per head, it is not evenly spread. Over three months **head 29 accounts for 117
   of the 1,095 rejected capping operations** — against a per-head mean of 30.4,
-  and against 78 for the next-worst head (35). **3.8× the machine average.**
+  and against 78 for the next-worst head (35). **3.8× the per-head average.**
 - That is the actionable finding, and the headline rate hides it completely.
   In February, 99.9950% (machine) and 99.9781% (head 29) look like the same
   number until you count rejects per head.
@@ -207,7 +215,7 @@ day-files are offset from midnight) and reconciled in
   offset, so a head running steadily below the others while moving with them
   scores ~1 and is reported as tracking. The report says so, and names the check
   that would catch it: per-head median torque (`torque_stats by head`).
-- Reporting the absence honestly is a feature. An earlier version of the report
+- *Said aloud, no longer on the slide:* reporting the absence honestly is a feature. An earlier version of the report
   always named a "least-correlated head", which on this data asserted that *the
   odd head out has a correlation of 1.000* — true arithmetic, false conclusion.
 

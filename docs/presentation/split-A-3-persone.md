@@ -81,10 +81,10 @@ lo possiede e lo dice chi ha il turno.
 |---|---|---|---|
 | Titolo | P3 (tiene il contenuto del deck e la sua build) | **P1** | 20 s, nessun contenuto tecnico. P1 apre e prosegue dritto sulla 1: un handoff in meno e una voce sola, come vuole la nota del deck ("non presentarsi uno per uno"). |
 | 1. Il problema | **P1**; l'ultimo bullet ("far rispondere un agente") lo scrive P3 | **P1** | Ogni bullet è suo: 36 teste @1 Hz, 89 file, stato-non-eventi, 24,5% di duplicati, chiusura dal delta del contatore. È la frase-modello del suo ruolo. |
-| 2. Architettura | **P2**; livelli 3–4 e la riga WP5 li scrive P3, i livelli 1–2 li valida P1 | **P2** | Il C4 container è una vista di processo: casa sua. E deve piantare *clean* contro *merge* e lo store per-worker **prima** della slide 4, altrimenti 7,2× contro 3,83× non si capisce. Evita anche a P1 il blocco titolo-1-2-3 di fila. |
+| 2. Architettura | **P2**; livelli 3–4 li scrive P3, i livelli 1–2 li valida P1 (la riga WP5 non è più sulla slide: si dice a voce) | **P2** | Il C4 container è una vista di processo: casa sua. E deve piantare *clean* contro *merge* e lo store per-worker **prima** della slide 4, altrimenti 7,2× contro 3,83× non si capisce. Evita anche a P1 il blocco titolo-1-2-3 di fila. |
 | 11. Demo | **P2** (macchina, `demo.sh`, tempo rimisurato) + **P3** (sequenza `ask`, ripiego) | **P3** voce, **P2** terminale | Vedi la nota in testa al documento: il primo bullet lo dice P2 mentre digita. |
 
-Figura obbligatoria della 2: [`docs/diagrams/C4_Container.png`](../diagrams/C4_Container.png).
+La 2 ridisegna nel deck il C4 container di [`docs/diagrams/C4_Container.png`](../diagrams/C4_Container.png).
 
 **Q&A sulle corali.** La base comune qui sopra resta obbligatoria per tutti e tre, ma il turno
 di risposta ha un default, per non lasciare due secondi di silenzio: dato, semantica e bitmask
