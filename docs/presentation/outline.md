@@ -1,5 +1,9 @@
 # Presentation outline — 13 slides
 
+Numbering follows the deck: the title slide carries no number, so the problem
+is slide 1 and the demo slide 12; the deck closes on an unnumbered "Thank you".
+In PowerPoint or Canva a slide's page is its number plus one.
+
 Every bullet is written to be transcribed onto a slide as-is. Numbers are
 measured on `events_3mo.duckdb` (55,132,433 rows, machine `MCC`, 36 heads,
 2026-01-31 16:00:06 → 2026-04-30 16:59:59 — the store fingerprint; the
@@ -8,7 +12,7 @@ day-files are offset from midnight) and reconciled in
 
 ---
 
-## 1. Title
+## Title
 
 **Agentic AI for Telemetry Analysis on AROL Capping Machines**
 
@@ -18,7 +22,7 @@ day-files are offset from midnight) and reconciled in
 
 ---
 
-## 2. The problem
+## 1. The problem
 
 - An AROL Equatorque capping machine polls **36 capping heads at ~1 Hz** and
   uploads one wide CSV per day: ~86,400 rows × 109 columns, ~1.6 GB/month
@@ -35,7 +39,7 @@ day-files are offset from midnight) and reconciled in
 
 ---
 
-## 3. Architecture
+## 2. Architecture
 
 - Four tiers, each independently testable:
   1. **C++ MAS ingestion** — CSV pool → dedup → closure reconstruction → DuckDB
@@ -48,7 +52,7 @@ day-files are offset from midnight) and reconciled in
 
 ---
 
-## 4. WP1 — ingestion
+## 3. WP1 — ingestion
 
 - Closure detection by **counter delta per head**, not by any single column.
 - Consecutive-duplicate elimination before reconstruction; idempotent
@@ -61,7 +65,7 @@ day-files are offset from midnight) and reconciled in
 
 ---
 
-## 5. Performance
+## 4. Performance
 
 - Three architectures benchmarked: single-file `clean`, multi-threaded monolith,
   distributed MAS (coordinator + workers over ZeroMQ).
@@ -80,7 +84,7 @@ day-files are offset from midnight) and reconciled in
 
 ---
 
-## 6. The data, measured
+## 5. The data, measured
 
 - `status` is **a bitmask, not an enumeration** — bit 0 is the reject signal,
   bits 1–6 are the conditions. Slide 6 of the brief lists 14 rows = 7 conditions
@@ -108,7 +112,7 @@ day-files are offset from midnight) and reconciled in
 
 ---
 
-## 7. WP2 — the analytics toolkit
+## 6. WP2 — the analytics toolkit
 
 - Eight pure functions: `overview`, `success_rates`, `torque_stats`,
   `capping_speed`, `idle_periods`, `anomalies`, `trend`, `head_correlation`.
@@ -124,7 +128,7 @@ day-files are offset from midnight) and reconciled in
 
 ---
 
-## 8. WP3 — the report agent
+## 7. WP3 — the report agent
 
 - Show the **decision flowchart** ([`docs/agent-decision-flow.md`](../agent-decision-flow.md)).
 - **The model plans and narrates; it never computes.** Every number comes from
@@ -143,7 +147,7 @@ day-files are offset from midnight) and reconciled in
 
 ---
 
-## 9. WP4 — the BOT
+## 8. WP4 — the BOT
 
 - Four commands:
 
@@ -164,7 +168,7 @@ day-files are offset from midnight) and reconciled in
 
 ---
 
-## 10. A finding
+## 9. A finding
 
 - The machine-level number looks perfect: **99.9950%** success over February
   (14,817,976 successful, 748 rejected).
@@ -196,7 +200,7 @@ day-files are offset from midnight) and reconciled in
 
 ---
 
-## 11. Engineering
+## 10. Engineering
 
 - **310 Python tests, 203 C++ tests**, all green; test output pristine. Both
   counts are asserted against the sources by `test_readme_counts.py`, so the
@@ -216,7 +220,7 @@ day-files are offset from midnight) and reconciled in
 
 ---
 
-## 12. Honest limits
+## 11. Honest limits
 
 - **`NUM_HEADS` is compile-time 36.** The brief's own example shows a 48-head
   machine; no 48-head data exists to test against. Known limit, roadmap item.
@@ -244,7 +248,7 @@ day-files are offset from midnight) and reconciled in
 
 ---
 
-## 13. Demo
+## 12. Demo
 
 - One command reproduces everything:
 
@@ -273,7 +277,7 @@ collapsing distinct closures across the PLC's counter reset — see
 Re-derived from the rebuilt store, not carried over:
 
 - February success rate and counts, and the per-head rate for head 29
-- the three-month status distribution in section 6, and the 1,096 reject total
+- the three-month status distribution in section 5, and the 1,096 reject total
 - head 29's share of the rejects
 
 **The finding survived the rebuild but got smaller, and the smaller number is
