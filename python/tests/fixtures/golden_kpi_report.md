@@ -25,8 +25,15 @@ Capping KPI report for 2026-02.
 
 - **Scope.** 6 capping operations across 3 heads, from 2026-02-01 00:00:00 to 2026-02-01 00:00:40. 2 no-load cycles are excluded from every rate below.
 - **Success rate.** 66.6667% (4 successful, 2 rejected). Lowest head: 2.
-- **Weakest head.** 2 at 33.3333% over 3 capping operations. Median across 2 heads: 66.6667%; best: 1 at 100.0000%.
+- **Weakest head.** 2 at 33.3333% over 3 capping operations (2 rejected, 100.0% of all 2 rejects; the median head has 1). Median across 2 heads: 66.6667%; best: 1 at 100.0000%.
 - **Throughput.** 6 pieces/hour, averaged over 1 active bucket.
+
+### Success rate per head (table)
+
+| Head | Closures | Successful | Rejected | Success rate |
+|---|---|---|---|---|
+| 1 | 3 | 3 | 0 | 100.0000% |
+| 2 | 3 | 1 | 2 | 33.3333% |
 
 ### Success Rate Per Head
 

@@ -65,7 +65,7 @@ class Config:
 
     # ollama only.
     ollama_host: str = "http://localhost:11434"
-    num_ctx: int = 8192             # Ollama defaults to 2048; the planner needs ~2.6k
+    num_ctx: int = 8192             # Ollama defaults to 2048; the planner needs ~3.6k
     # Ollama's `think`: false skips a thinking model's reasoning (qwen3,
     # gpt-oss...) for speed; "low"/"medium"/"high" set gpt-oss's level. None
     # sends nothing, leaving the model's own default -- which is what a
@@ -149,12 +149,14 @@ class Config:
             raise ConfigError(
                 f"max_anomaly_items must be >= 1, got {self.max_anomaly_items}"
             )
-        # The planner's prompt is ~2,600 tokens of tool schema before the question
-        # is added, and Ollama silently truncates rather than erroring.
-        if self.provider == "ollama" and self.num_ctx < 4096:
+        # The planner's prompt is ~3,600 tokens of rules and tool schemas before
+        # the question is added (12 tools; measured on qwen3:14b through Ollama's
+        # prompt_eval_count), the plan it writes needs room too, and Ollama
+        # silently truncates rather than erroring.
+        if self.provider == "ollama" and self.num_ctx < 6144:
             raise ConfigError(
-                f"num_ctx must be >= 4096 for ollama (the planner prompt alone is "
-                f"~2,600 tokens and is truncated silently), got {self.num_ctx}"
+                f"num_ctx must be >= 6144 for ollama (the planner prompt alone is "
+                f"~3,600 tokens and is truncated silently), got {self.num_ctx}"
             )
 
 

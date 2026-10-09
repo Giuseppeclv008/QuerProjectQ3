@@ -29,7 +29,7 @@ def test_an_unknown_planning_tier_is_rejected_at_config_time():
 def test_ollama_rejects_a_context_too_small_for_the_planner_prompt():
     """Ollama's default num_ctx is 2048 and it truncates silently rather than
     erroring, so a too-small window would look like a stupid model."""
-    with pytest.raises(ConfigError, match="num_ctx must be >= 4096"):
+    with pytest.raises(ConfigError, match="num_ctx must be >= 6144"):
         Config(store_path="x", provider="ollama", num_ctx=2048)
 
 
@@ -267,3 +267,9 @@ def test_every_tier_produces_steps_the_executor_can_run(tiny_cfg):
         for step in p.steps:
             assert validate_step(
                 _replace(step, args=effective_args(step))) is None, (tier, step)
+
+
+def test_the_smallest_context_that_holds_the_planner_prompt_is_accepted():
+    assert Config(store_path="x", provider="ollama", num_ctx=6144).num_ctx == 6144
+    with pytest.raises(ConfigError, match="num_ctx must be >= 6144"):
+        Config(store_path="x", provider="ollama", num_ctx=4096)

@@ -16,7 +16,7 @@ def test_every_wp2_tool_is_registered():
     assert set(registry.TOOLS) == {
         "overview", "success_rates", "torque_stats", "capping_speed",
         "idle_periods", "anomalies", "trend", "head_correlation",
-        "event_gaps", "compare_periods",
+        "event_gaps", "compare_periods", "closure_filter", "methodology",
     }
 
 

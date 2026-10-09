@@ -210,6 +210,12 @@ Three counts, computed together:
   1.4826 · MAD` (default `k = 3`), with the scale floored at `mad_floor`
   (default 0.01 Nm).
 
+The threshold hits also come grouped by head (`threshold_by_head`, most readings
+first), because "which heads have the most out-of-band readings" is a question
+about heads and the itemised list is capped and ordered by time. The grouping is
+exact: over February–April 2026 it sums to the 234 threshold hits, with head 22
+at 26, head 35 at 16 and head 7 at 13, and all 36 heads having at least one.
+
 **Why MAD and not σ.** Standard deviation is computed from the very points you
 are trying to find. A handful of extreme outliers inflate σ enough that they fall
 inside their own band and hide themselves. The median and the median absolute
@@ -223,6 +229,14 @@ with no calibration for the reader. Multiplying by 1.4826 (the consistency
 constant) makes `k` mean sigma-equivalents; the 0.01 Nm floor keeps a
 quantised sensor's tiny-but-nonzero MAD from collapsing the band to sensor
 noise. Both are declared in every report's assumptions.
+
+**What the floor does to the count.** On the 2026 store the scale sits at the
+floor on all 36 heads, so the band is a fixed ±0.03 Nm around each head's
+median and not a multiple of the head's own spread. The deviation count is then
+the share of readings that far from the median, and it is not noise: 1.1% of
+capping operations in February (162,019 of 14,824,304), 20.4% in March–April
+(3,437,769 of 16,823,611), where the mean torque moved (see `compare_periods`).
+Read the share against another period; a step in it is a step in torque level.
 
 **When MAD is zero.** That same 50% breakdown point means MAD is exactly 0 for a
 head whose readings are more than half identical — routine for a quantised
@@ -357,10 +371,69 @@ rate on the `success_rates` denominator; no-load cycles and their share of all
 cycles. It also returns the change from the first bucket to the last, and the
 lowest-volume bucket by name — first-to-last alone hides a dip in the middle.
 
+Each bucket also carries the mean, median and sigma of its capping operations'
+torque, all heads together. `trend` reads a monotone drift per head, so it cannot
+see a step in level or spread, and the store holds one: mean 1.9996 Nm in
+February, 2.0531 in March, 2.0203 in April, with sigma 0.0213, 0.1163 and 0.0861.
+Inside March the split is sharper still: 1–8 March has a median of 1.999 Nm,
+9–30 March 1.748 (sigma 0.137), and 31 March 2.198 (sigma 0.004). The report
+names the step when one bucket's sigma is at least twice another's. What the step
+is — a different product or setting, or the machine — the store cannot say.
+
 Measured over February–April 2026: 529,439 caps per day in February, 126,124
 in March, 430,459 in April; reject rate 0.0050%, 0.0052%, 0.0011%; no-load
 share 32.5%, 65.7%, 40.3%. February to April reads −18.7%; March is the
 collapse.
+
+---
+
+## `closure_filter` — a count against a value the operator gives
+
+**Question:** how many closures had torque above X Nm? which failed events are
+below a threshold? what are all the failed events of head 3?
+
+`anomalies` counts against the *configured* band; this counts against the values
+in the question: `above` and `below` (Nm, strict), an `outcome`
+(`successful`, `failed` or `all`) and one `head`, in any combination. It returns
+the exact count, the share of the capping operations in scope, the count per head
+(most first), and the first 20 matching events in time order, each with the
+rejection condition decoded. The limits are compared as the REAL the store holds,
+so a stored 2.2 is not "above" a limit of 2.2.
+
+Measured for February 2026: 3 closures above 2.5 Nm (heads 2, 12 and 35); 70
+failed closures below 1.5 Nm across 26 heads; 10 failed closures on head 3, from
+1 to 21 February, all status 65 (Bad Closure).
+
+---
+
+## `methodology` — how the data was prepared and a closure judged
+
+**Question:** what preprocessing was applied? how were duplicated closures
+detected? which assumptions were made in cleaning? what classifies a successful
+closure?
+
+The pipeline is documented, but nothing a result carries said so, and the brief
+asks the bot to be transparent about it. This tool returns four texts — the
+preprocessing of the raw rows, how duplicates are avoided, the assumptions of the
+cleaning, and the classification of a closure — restating `README.txt` (section 6)
+and the rules in `status.py` and the other tools' assumptions. Nothing in them is
+measured from the store, and the tool says so; a test pins each documented claim
+to the text it restates.
+
+---
+
+## What the report adds around the numbers
+
+The findings name the weakest head or day; the **tables** are every one. A table
+per head or per day is printed for `success_rates` (closures, successful,
+rejected, rate) and for `torque_stats` by head (mean, min, max, sigma, median),
+and the events of a `closure_filter` as a table of their own. The torque
+statistics of the overall `torque_stats` come with the **distribution** in 0.01 Nm
+classes, drawn as `torque_histogram.png`; `success_rates` by day draws
+`failed_closures_per_day.png`. A comparison across buckets names a **step in
+level** when the means are at least five times the steadiest bucket's sigma
+apart, ignoring any bucket that holds under 1% of the period's capping operations
+(the store starts on 31 January at 16:00, and its eight hours are not a month).
 
 ---
 

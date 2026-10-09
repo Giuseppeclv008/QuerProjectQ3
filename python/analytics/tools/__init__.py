@@ -1,1 +1,1 @@
-"""The ten WP2 tools. Each is a pure function taking Config, returning ToolResult."""
+"""The twelve WP2 tools. Each is a pure function taking Config, returning ToolResult."""

@@ -88,3 +88,21 @@ def test_an_unknown_bucket_is_an_error_not_a_crash(two_month_store):
 
 def test_an_empty_period_is_insufficient(two_month_store):
     assert _cmp(two_month_store, period="2026-06").status == "insufficient_data"
+
+
+def test_torque_level_and_spread_are_given_per_bucket(two_month_store):
+    feb, mar = _cmp(two_month_store).values["buckets"]
+    # February's four caps are 2.0, 2.0, 2.0 and 1.9; its no-load cycle carries
+    # torque 0 and must not pull the statistic down.
+    assert feb["torque_mean"] == pytest.approx(1.975, abs=1e-4)
+    assert feb["torque_median"] == pytest.approx(2.0, abs=1e-4)
+    assert feb["torque_stddev"] == pytest.approx(0.05, abs=1e-4)
+    # One cap has a level but no spread, and is not reported as a spread of 0.
+    assert mar["torque_mean"] == pytest.approx(2.0, abs=1e-4)
+    assert mar["torque_stddev"] is None
+
+
+def test_change_carries_the_torque_level_and_skips_an_undefined_spread(two_month_store):
+    change = _cmp(two_month_store).values["change_first_to_last"]
+    assert change["torque_mean"] == pytest.approx(0.025, abs=1e-4)
+    assert change["torque_stddev"] is None

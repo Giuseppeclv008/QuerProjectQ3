@@ -42,9 +42,22 @@ Never invent a threshold, window or bucket the question did not ask for.
 - If the question is about how something changed over time (got worse or \
 better, rose or fell), plan a trend step, success_rates by day and \
 capping_speed by day; to compare months or weeks side by side, plan \
-compare_periods.
+compare_periods. For torque, always add compare_periods by week: a drift test \
+reads a steady trend and misses a step in level.
 - If it is about which head is unusual, plan head_correlation, and torque_stats \
 by head for the level a correlation cannot see.
+- If it asks for a figure per head or for each head (how many closures, the \
+rate, the rejects of each head), plan success_rates by head: it has the \
+closures, successes and rejects of every head, which overview does not.
+- If it asks for the distribution or a histogram of torque, plan torque_stats \
+without `by`: its result is drawn as a histogram.
+- If it counts or lists closures above or below a torque value it names, or \
+of one outcome, or of one head, plan closure_filter with those values in \
+above, below, outcome and head; a count against a value the question gives \
+is never anomalies.
+- If it asks how the data was prepared, cleaned or deduplicated, which \
+assumptions were made, or how a closure is classed as successful, plan \
+methodology.
 - If it is about whether values are out of range, plan anomalies.
 - If it is about how much or how often, plan overview and success_rates; for \
 production speed or volume, plan capping_speed.
@@ -182,6 +195,30 @@ def _plan(cfg, client, question, period):
 _TIERS = {"classify": _classify, "select": _select, "plan": _plan}
 
 
+def _with_level_check(plan):
+    """Never report a torque trend without comparing torque level across the period.
+
+    The drift test reads a steady trend and misses a step: for March 2026 it said
+    no head drifts while the median torque went from 1.999 Nm to 1.748 and back
+    to 2.198. A model asked "did the torque change over the month?" planned the
+    trend alone, whatever the rules said, so the comparison is added to its plan
+    here, and the report says it was added.
+    """
+    steps = list(plan.steps)
+    trends = [s for s in steps
+              if s.tool == "trend" and effective_args(s).get("signal", "torque") == "torque"]
+    if not trends or any(s.tool == "compare_periods" for s in steps):
+        return plan
+    period = trends[0].args.get("period")
+    by = "month" if period is None or ".." in str(period) else "week"
+    steps.append(PlanStep(
+        "compare_periods", {"period": period, "by": by},
+        f"Added by the system: the torque of each {by} side by side, because a "
+        f"drift test reads a steady trend and misses a step in level."))
+    note = f"compare_periods by {by} was added to the plan, since a torque trend alone misses a step in level"
+    return replace(plan, steps=steps, note="; ".join(x for x in (plan.note, note) if x))
+
+
 def plan(cfg, question, period, client=None):
     """A Plan for `question`. Never raises; degrades to the router."""
     client = client or _client(cfg)
@@ -191,5 +228,10 @@ def plan(cfg, question, period, client=None):
                            f"SDK or credentials)")
     else:
         result = _TIERS[cfg.planning](cfg, client, question, period)
+        # Only the tier where the model composes the plan: `classify` runs the
+        # fixed plan of a report verb, and `select` leaves the arguments to the
+        # tools' defaults, so neither is the model's plan to amend.
+        if result.source == "llm" and cfg.planning == "plan":
+            result = _with_level_check(result)
     # Set once, here, so every tier and every fallback carries it.
     return replace(result, question=question)

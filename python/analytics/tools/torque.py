@@ -11,6 +11,11 @@ from analytics.tools.overview import ASSUMPTION
 
 _OUTCOMES = ("successful", "failed", "all")
 
+# Width of a histogram class, Nm. The sensor reads to 0.001 and the spread of a
+# healthy head is ~0.02, so 0.01 puts the bulk of the closures in a handful of
+# classes and still shows the tails (a closure at 1.28 or 2.74) by themselves.
+HISTOGRAM_WIDTH = 0.01
+
 
 def torque_stats(cfg, period=None, outcome="successful", by=None):
     if outcome not in _OUTCOMES:
@@ -72,6 +77,16 @@ def torque_stats(cfg, period=None, outcome="successful", by=None):
         values = {"n": r[0], "mean": r[1], "min": r[2], "max": r[3],
                   "stddev": r[4], "median": r[5]}
         scanned = r[0]
+        # The distribution, for the histogram: only the classes that hold a
+        # closure, exact counts.
+        classes = con.execute(
+            # The 1e-3 of a class (1e-5 Nm) keeps a REAL such as 1.9 (stored as
+            # 1.89999998) out of the class below; the sensor reads to 1e-3.
+            f"SELECT CAST(FLOOR(app_torque / ? + 1e-3) AS BIGINT) AS cls, COUNT(*) {base} "
+            f"GROUP BY 1 ORDER BY 1", [HISTOGRAM_WIDTH] + sem + params).fetchall()
+        values["histogram_bin_width"] = HISTOGRAM_WIDTH
+        values["histogram"] = [{"bin_start": round(c * HISTOGRAM_WIDTH, 4), "count": n}
+                               for c, n in classes]
 
     return ToolResult.ok(
         "torque_stats", values,

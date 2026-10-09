@@ -177,3 +177,51 @@ def anomalies_over_time(result, out_dir, suffix=""):
     ax.grid(alpha=0.3)
     fig.autofmt_xdate()
     return _save(fig, out_dir, f"anomalies_over_time{suffix}.png")
+
+
+def torque_histogram(result, out_dir, suffix=""):
+    """Histogram of the closing torque, on a log axis: the tails are the point."""
+    if not _usable(result) or not isinstance(result.values, dict):
+        return None
+    classes = result.values.get("histogram")
+    if not classes:
+        return None
+    width = result.values.get("histogram_bin_width", 0.01)
+    outcome = next((f.split("=", 1)[1] for f in result.provenance.filters
+                    if f.startswith("outcome=")), "all")
+    fig, ax = plt.subplots(figsize=_FIGSIZE)
+    ax.bar([c["bin_start"] + width / 2 for c in classes], [c["count"] for c in classes],
+           width=width * 0.9, color="#2c7fb8")
+    ax.axvline(result.values["median"], color="#c0392b", linestyle="--", linewidth=1,
+               label=f"median {result.values['median']:.3f} Nm")
+    ax.set_yscale("log")
+    ax.set_xlabel("closing torque (Nm)")
+    ax.set_ylabel("closures (log scale)")
+    ax.set_title(f"Closing torque distribution ({outcome} closures, "
+                 f"{result.values['n']:,} in {width:g} Nm classes)")
+    ax.legend(loc="best", fontsize="small")
+    ax.grid(alpha=0.3, which="both")
+    return _save(fig, out_dir, f"torque_histogram{suffix}.png")
+
+
+def failed_closures_per_day(result, out_dir, suffix=""):
+    """Bars: rejected closures per day, the busiest day marked."""
+    if not _usable(result) or not isinstance(result.values, list):
+        return None
+    rows = [r for r in result.values if "day" in r]
+    if not rows or not any(r["failed"] for r in rows):
+        return None            # no rejects is a claim; an empty chart would not say it
+    days = [str(r["day"])[:10] for r in rows]
+    failed = [r["failed"] for r in rows]
+    worst = max(range(len(rows)), key=lambda i: failed[i])
+    colors = ["#c0392b" if i == worst else "#2c7fb8" for i in range(len(rows))]
+    fig, ax = plt.subplots(figsize=_FIGSIZE)
+    ax.bar(days, failed, color=colors)
+    ax.set_xlabel("day")
+    ax.set_ylabel("rejected closures")
+    ax.set_title(f"Rejected closures per day (most: {days[worst]}, {failed[worst]:,})")
+    step = max(len(days) // 12, 1)
+    ax.set_xticks(range(0, len(days), step))
+    ax.set_xticklabels(days[::step], rotation=45, ha="right", fontsize="small")
+    ax.grid(alpha=0.3, axis="y")
+    return _save(fig, out_dir, f"failed_closures_per_day{suffix}.png")

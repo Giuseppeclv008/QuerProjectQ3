@@ -99,3 +99,18 @@ def test_failed_stats_exclude_rejects_that_carried_no_load(reject_without_load_s
     assert "app_torque > 0 (no-load excluded)" in " ".join(r.provenance.filters)
     assert r.values["n"] == 1, "a zero-torque reject was included in failed stats"
     assert r.values["mean"] == pytest.approx(1.98)
+
+
+def test_the_distribution_comes_back_in_classes_that_add_up_to_the_count(tiny_cfg):
+    from analytics.tools.torque import HISTOGRAM_WIDTH
+    v = torque_stats(tiny_cfg, period="2026-02", outcome="successful").values
+    assert v["histogram_bin_width"] == HISTOGRAM_WIDTH
+    assert sum(c["count"] for c in v["histogram"]) == v["n"] == 4
+    # 1.90, 2.00 (twice) and 2.10 fall in the classes starting at 1.90, 2.00 and 2.10
+    assert {round(c["bin_start"], 2): c["count"] for c in v["histogram"]} == \
+        {1.9: 1, 2.0: 2, 2.1: 1}
+
+
+def test_a_per_head_result_carries_no_histogram(tiny_cfg):
+    r = torque_stats(tiny_cfg, period="2026-02", outcome="successful", by="head")
+    assert all("histogram" not in row for row in r.values)

@@ -104,7 +104,7 @@ def anomalies(cfg, period=None, method="both"):
         for condition in decode(status)["conditions"] or ["unspecified"]:
             faults_by_condition[condition] = faults_by_condition.get(condition, 0) + n
 
-    threshold_hits, n_threshold = [], 0
+    threshold_hits, n_threshold, threshold_by_head = [], 0, []
     if method in ("threshold", "both"):
         rows, n_threshold = _sample(
             con,
@@ -117,6 +117,18 @@ def anomalies(cfg, period=None, method="both"):
             {"head_id": int(r[0]), "ts": r[1], "app_torque": r[2],
              "reason": f"torque outside band [{cfg.torque_min}, {cfg.torque_max}]"}
             for r in rows
+        ]
+        # "Which heads have the most out-of-band readings" is a question about
+        # heads, and `threshold_hits` is capped and ordered by time, so the
+        # per-head count is its own exact grouping, most readings first.
+        threshold_by_head = [
+            {"head_id": int(h), "count": int(n)}
+            for h, n in con.execute(
+                f"""SELECT head_id, COUNT(*) FROM cap_events
+                    WHERE app_torque > 0 AND (app_torque < ? OR app_torque > ?)
+                      AND {where}
+                    GROUP BY head_id ORDER BY COUNT(*) DESC, head_id""",
+                [cfg.torque_min, cfg.torque_max] + params).fetchall()
         ]
 
     deviation_hits, n_deviation, fallbacks = [], 0, {}
@@ -196,9 +208,12 @@ def anomalies(cfg, period=None, method="both"):
                 scale_ctes + " SELECT head_id, basis FROM scale WHERE basis <> 'mad'",
                 params + [cfg.mad_floor]).fetchall()
         }
-        # A head whose band is the floor is measured against sensor
-        # resolution, not against its own spread: on the real store all 36
-        # are, and the deviation count is then mostly quantisation noise.
+        # A head whose band is the floor is measured against a fixed distance
+        # from its median (k * mad_floor), not against its own spread: on the
+        # real store all 36 are. The count is then the share of readings that
+        # far from the median, and it is not noise: 1.1% of capping operations
+        # in February 2026, 20.4% in March-April where torque stepped. A change
+        # in that share is a change in torque level.
         heads_total, heads_at_floor = con.execute(
             scale_ctes + " SELECT COUNT(*), COUNT(*) FILTER (WHERE s <= ?) FROM scale",
             params + [cfg.mad_floor, cfg.mad_floor]).fetchone()
@@ -214,6 +229,9 @@ def anomalies(cfg, period=None, method="both"):
             "deviation_fallbacks": fallbacks,
             "capping_operations": capping_operations,
             "faults_by_condition": faults_by_condition,
+            # Exact out-of-band readings per head, most first; empty when the
+            # threshold method did not run.
+            "threshold_by_head": threshold_by_head,
             # Heads whose deviation scale is held at cfg.mad_floor, out of the
             # heads measured. 0/0 when the deviation method did not run.
             "deviation_heads_at_floor": heads_at_floor,

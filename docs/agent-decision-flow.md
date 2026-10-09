@@ -111,10 +111,26 @@ written not to raise, and the boundary exists for the case where one does anyway
 
 ## Narration
 
-For `ask`, the tool results are handed to Claude verbatim — values, status,
-message and provenance — and it writes the *Findings* and *Next checks*
-sections. Its instructions forbid stating a number that is not in the results it
-was given.
+For `ask`, the narrator works one of two ways, by provider.
+
+**Hosted (`anthropic`).** The tool results are handed to Claude verbatim —
+values, status, message and provenance, plus what each tool does not measure —
+and it writes the *Findings* and *Next checks* sections, each as a list of
+strings the report turns into bullets. Its instructions forbid stating a number
+that is not in the results it was given. A list longer than
+`narrator_max_items` is sent as its count and a sample, and says so.
+
+**Local (`ollama`).** The model is given the deterministic summary's own
+sentences and the operator's question, and writes one to three statements. The
+report prints them under an *Answer* bullet with every deterministic finding
+beneath, and the *Next checks* are the template's. This path exists because
+`qwen3:14b`, handed the raw results, misread them: it reported all 36 heads as
+drifting when none was, said caps per day had improved when they fell 18.7%,
+and gave a three-month total as one month's. An answer is rejected, and the
+template stands alone, if it states a number the findings do not carry, is
+empty, or only announces its findings.
+
+The instruction to state no unseen number is a quality measure on either path.
 
 That instruction is a quality measure, not a safety measure. The safety comes
 from structure: the model's prose occupies two sections of the report, while the

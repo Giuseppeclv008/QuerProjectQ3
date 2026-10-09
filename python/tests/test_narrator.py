@@ -260,3 +260,246 @@ def test_the_system_prompt_asks_for_a_direct_answer_first():
     assert "first bullet" in rules
     assert "cannot" in rules and "answer" in rules
     assert "threshold" in rules
+
+
+def test_the_schema_asks_for_lists_not_one_markdown_string():
+    props = narrator._SCHEMA["properties"]
+    assert props["findings"]["type"] == "array"
+    assert props["next_checks"]["type"] == "array"
+    assert props["findings"]["items"] == {"type": "string"}
+
+
+def test_a_list_becomes_one_bullet_per_item(tiny_cfg):
+    reply = {"findings": ["March produced a quarter of February's volume.",
+                          "The reject rate fell."],
+             "next_checks": ["Run event_gaps over March."]}
+    n = narrator.narrate(tiny_cfg, _execution(tiny_cfg), client=_Client(reply))
+    assert n.source == "llm"
+    assert n.findings == ("- March produced a quarter of February's volume.\n"
+                          "- The reject rate fell.")
+    assert n.next_checks == "- Run event_gaps over March."
+
+
+def test_a_marker_left_in_an_item_is_not_printed_twice(tiny_cfg):
+    reply = {"findings": ["- one", "2. two", "• three"], "next_checks": ["* four"]}
+    n = narrator.narrate(tiny_cfg, _execution(tiny_cfg), client=_Client(reply))
+    assert n.findings == "- one\n- two\n- three"
+    assert n.next_checks == "- four"
+
+
+def test_a_list_of_empty_items_is_an_empty_findings_section(tiny_cfg):
+    n = narrator.narrate(tiny_cfg, _execution(tiny_cfg),
+                         client=_Client({"findings": ["", "   "], "next_checks": ["x"]}))
+    assert n.source == "template"
+    assert "empty findings" in n.note
+
+
+def test_a_list_of_lead_ins_is_still_an_announcement(tiny_cfg):
+    reply = {"findings": ["Here are the key findings:"], "next_checks": ["x"]}
+    n = narrator.narrate(tiny_cfg, _execution(tiny_cfg), client=_Client(reply))
+    assert n.source == "template"
+    assert "lead-ins" in n.note
+
+
+def test_the_system_prompt_says_idle_totals_are_not_machine_hours():
+    rules = narrator.SYSTEM.lower()
+    assert "head-hours" in rules and "event gaps" in rules
+
+
+class _OllamaClient:
+    """Speaks Ollama's /api/chat shape; records the bodies it was sent."""
+
+    def __init__(self, payload=None, raises=None):
+        self._payload, self._raises = payload, raises
+        self.calls = []
+
+    def chat(self, body):
+        self.calls.append(body)
+        if self._raises:
+            raise self._raises
+        return {"message": {"content": json.dumps(self._payload)}}
+
+
+@pytest.fixture
+def local_cfg(tiny_cfg):
+    return replace(tiny_cfg, provider="ollama", model="qwen3:14b")
+
+
+def _local(local_cfg, payload=None, raises=None, question=None):
+    ex = _execution(local_cfg)
+    if question:
+        ex = replace(ex, plan=replace(ex.plan, question=question))
+    client = _OllamaClient(payload, raises)
+    return ex, client, narrator.narrate(local_cfg, ex, client=client)
+
+
+def test_a_local_model_answers_above_the_deterministic_findings(local_cfg):
+    ex, _, n = _local(local_cfg, {"answer": ["The success rate is 66.6667%."]})
+    base = render.summarise(ex)
+    assert n.source == "llm"
+    assert n.findings.startswith("- **Answer.** The success rate is 66.6667%.\n")
+    # every deterministic sentence is still on the page, after the answer
+    assert n.findings.endswith(base.findings)
+    assert n.next_checks == base.next_checks
+
+
+def test_a_local_model_is_given_the_findings_and_the_question_not_the_raw_json(local_cfg):
+    ex, client, _ = _local(local_cfg, {"answer": ["ok"]},
+                           question="Did the machine get worse?")
+    body = client.calls[0]
+    system, user = body["messages"][0]["content"], body["messages"][1]["content"]
+    assert system == narrator.ANSWER_SYSTEM
+    assert "<question>\nDid the machine get worse?\n</question>" in user
+    figures = ("Figures drawn in this report: success rate per head "
+               "(success_rate_per_head.png); capping speed (capping_speed.png).")
+    facts = "\n\n".join([render.summarise(ex).findings, render.tables(ex, max_rows=120), figures])
+    assert f"<findings>\n{facts}\n</findings>" in user
+    assert "capping_operations" not in user          # no raw tool values
+    assert body["format"] == narrator._ANSWER_SCHEMA
+
+
+def test_an_answer_with_a_number_the_findings_lack_is_rejected(local_cfg, caplog):
+    with caplog.at_level("WARNING", logger="analytics.agent.narrator"):
+        ex, _, n = _local(local_cfg, {"answer": ["The reject rate fell by 39.4%."]})
+    assert n.source == "template"
+    assert "39.4" in n.note and "not in the findings" in n.note
+    assert n.findings == render.summarise(ex).findings
+    assert "rejected answer" in caplog.text and "39.4" in caplog.text
+
+
+def test_numbers_are_compared_by_value_not_by_spelling():
+    assert narrator._ungrounded("fell to 0.005%", "rate 0.0050% in 2026-04") is None
+    assert narrator._ungrounded("1096 rejects", "1,096 rejected closures") is None
+    assert narrator._ungrounded("1 to 3 of 2 heads", "none") is None       # single digits are free
+    assert narrator._ungrounded("in 2026-03, 36 heads", "2026-03 ... 36 heads") is None
+    assert "12.5" in narrator._ungrounded("it was 12.5", "it was 12")
+
+
+def test_a_local_answer_that_is_only_a_lead_in_is_rejected(local_cfg):
+    _, _, n = _local(local_cfg, {"answer": ["Here is the answer:"]})
+    assert n.source == "template"
+    assert "lead-ins" in n.note
+
+
+def test_a_local_answer_that_is_empty_is_rejected(local_cfg):
+    _, _, n = _local(local_cfg, {"answer": ["", "  "]})
+    assert n.source == "template"
+    assert "empty findings" in n.note
+
+
+def test_a_local_model_that_fails_leaves_the_template(local_cfg):
+    ex, _, n = _local(local_cfg, raises=RuntimeError("connection refused"))
+    assert n.source == "template"
+    assert "connection refused" in n.note
+    assert n.findings == render.summarise(ex).findings
+
+
+def test_a_marker_in_the_first_local_statement_is_not_printed_twice(local_cfg):
+    _, _, n = _local(local_cfg, {"answer": ["1. The success rate is 66.6667%.",
+                                            "Head 2 is the weakest."]})
+    assert n.findings.startswith("- **Answer.** The success rate is 66.6667%.\n"
+                                 "  - Head 2 is the weakest.\n")
+
+
+def test_the_answer_prompt_pins_what_the_model_got_wrong_on_raw_results():
+    rules = narrator.ANSWER_SYSTEM
+    assert "drifts, or stands out, only where a finding says so" in rules   # 36 heads "drift"
+    assert "nothing about drift" in rules
+    assert "head-hours" in rules and "Stops" in rules              # idle is not stopped time
+    assert "the machine stopped or its data missing" in rules      # a gap is not a certain stop
+    assert 'Never write that the machine "was stopped"' in rules
+    assert "one string per list item" in rules
+    assert "never answered with a bare yes or no" in rules          # "worse" is per measure
+
+
+def test_the_hosted_path_is_unchanged_by_the_local_one(tiny_cfg):
+    client = _Client(_GOOD)
+    n = narrator.narrate(tiny_cfg, _execution(tiny_cfg), client=client)
+    assert n.source == "llm" and n.findings == "- The machine is healthy."
+    assert "<results>" in client.calls[0]["messages"][0]["content"]
+
+
+def test_a_number_the_operator_wrote_in_the_question_may_be_repeated():
+    # "outside 1.5 to 2.5 Nm" is answered with 1.5 and 2.5, which are in the
+    # question and not in any finding; it was rejected and the template stood.
+    assert narrator._ungrounded("130 readings fall outside 1.5 to 2.5 Nm",
+                                "130 outside the torque band",
+                                "Are there values outside 1.5 to 2.5 Nm?") is None
+    assert narrator._ungrounded("130 readings fall outside 1.6 to 2.5 Nm",
+                                "130 outside the torque band",
+                                "Are there values outside 1.5 to 2.5 Nm?") is not None
+
+
+def test_a_rounded_figure_matches_its_source_but_a_different_one_does_not():
+    findings = "Throughput. 29,239.2584 pieces/hour"
+    assert narrator._ungrounded("29239.26 pieces/hour", findings) is None
+    assert narrator._ungrounded("29,239 pieces/hour", findings) is None
+    assert narrator._ungrounded("29,240 pieces/hour", findings) is not None
+    assert narrator._ungrounded("39.4% fewer", "reject rate 0.0050% to 0.0011%") is not None
+
+
+def test_a_local_answer_repeating_the_questions_number_is_kept(local_cfg):
+    ex, _, n = _local(local_cfg, {"answer": ["Readings outside 1.5 to 2.5 Nm are in the table."]},
+                      question="Are there values outside 1.5 to 2.5 Nm?")
+    assert n.source == "llm"
+
+
+def test_the_local_model_is_handed_the_tables_with_the_findings(local_cfg):
+    ex, client, _ = _local(local_cfg, {"answer": ["ok"]})
+    user = client.calls[0]["messages"][1]["content"]
+    assert "### Success rate per head (table)" in user
+    assert "| 2 | 3 | 1 | 2 | 33.3333% |" in user          # head 2 of the tiny store
+
+
+def test_the_answer_prompt_no_longer_tells_the_model_to_say_heads_are_alike():
+    # The rule "within about 1% of each other, say no head stands out" was
+    # repeated in answers it had nothing to do with.
+    assert "within about 1%" not in narrator.ANSWER_SYSTEM
+    assert "stands out, only where a finding says so" in narrator.ANSWER_SYSTEM
+
+
+def _big_tables(days):
+    from analytics.agent.executor import Execution
+    from analytics.agent.plan import Plan, PlanStep
+    from analytics.result import ToolResult
+    heads = ToolResult.ok("success_rates", [
+        {"head_id": h, "total": 879000 + h, "successful": 878900, "failed": 100 + h,
+         "success_rate": 0.99981234} for h in range(1, 37)])
+    daily = ToolResult.ok("success_rates", [
+        {"day": f"2026-{2 + d // 31:02d}-{d % 28 + 1:02d}", "total": 400000 + d,
+         "successful": 399990, "failed": 10 + d % 7, "success_rate": 0.99997} for d in range(days)])
+    steps = [PlanStep("success_rates", {"by": "head"}), PlanStep("success_rates", {"by": "day"})]
+    return Execution(plan=Plan(goal="g", steps=steps, question="q"), results=[heads, daily])
+
+
+def test_a_small_context_cuts_the_long_daily_table_and_keeps_every_head(local_cfg):
+    from analytics.report import render as r
+    cfg = replace(local_cfg, num_ctx=6144)
+    ex = _big_tables(89)
+    facts = narrator._facts(cfg, ex, r.summarise(ex))
+    assert "| 36 |" in facts                      # all 36 heads reach the model
+    assert "more rows not shown" in facts         # the 89 days did not
+    tokens = len(facts) / narrator._TABLE_CHARS_PER_TOKEN
+    assert tokens < cfg.num_ctx - narrator._REPLY_TOKENS
+
+
+def test_a_roomy_context_keeps_every_row(local_cfg):
+    from analytics.report import render as r
+    cfg = replace(local_cfg, num_ctx=32768)
+    ex = _big_tables(89)
+    facts = narrator._facts(cfg, ex, r.summarise(ex))
+    assert "more rows not shown" not in facts
+    assert facts.count("| 2026-") >= 89
+
+
+def test_the_answer_prompt_tells_the_model_to_own_up_to_a_cut_table():
+    assert "rows are not shown" in narrator.ANSWER_SYSTEM
+
+
+def test_the_local_model_is_told_which_figures_the_report_draws(local_cfg):
+    _, client, _ = _local(local_cfg, {"answer": ["ok"]})
+    user = client.calls[0]["messages"][1]["content"]
+    assert ("Figures drawn in this report: success rate per head "
+            "(success_rate_per_head.png); capping speed (capping_speed.png).") in user
+    assert "Figures drawn in this report" in narrator.ANSWER_SYSTEM
+    assert "no figure drawn here shows it" in narrator.ANSWER_SYSTEM

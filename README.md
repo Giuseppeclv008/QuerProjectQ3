@@ -9,7 +9,7 @@ Two tiers, each usable on its own:
 
 1. **Ingestion (C++)** — collapses a 1 Hz polling stream of 89 CSV day-files
    into reconstructed cap closures in DuckDB. 55.1M events over three months.
-2. **Analytics and reporting (Python)** — ten deterministic analysis tools, an
+2. **Analytics and reporting (Python)** — twelve deterministic analysis tools, an
    LLM that chooses which of them to run and writes the prose, and the `arol`
    CLI. **No figure, table, or plot is computed by the model**; all of them
    come from the same parameterised SQL whether the model is involved or not
@@ -302,7 +302,7 @@ database stores, and the testing/validation scripts.
 | `chaos_e2e.sh` | Bash | Resilience test: SIGKILL a worker, verify full recovery |
 | `run_bench.sh` | Bash | Performance sweep across architectures, threads, and volumes |
 | `arol` | Python CLI | WP4 BOT interface: three fixed report types plus free-text `ask` |
-| analytics toolkit | Python | WP2: ten deterministic tools reading the `cap_events` store |
+| analytics toolkit | Python | WP2: twelve deterministic tools reading the `cap_events` store |
 | report agent | Python + Claude | WP3: plans which tools to run and narrates the result |
 
 The C4 diagrams below predate the analytics tier and show the C++ ingestion
@@ -421,7 +421,7 @@ organized by layer.
 │       ├── store.py                        # DuckDB connection + period scoping
 │       ├── result.py                       # ToolResult: values + status + provenance
 │       ├── cli.py                          # WP4: arol report kpi|drift|anomalies, arol ask
-│       ├── tools/                          # WP2: the ten deterministic analyses
+│       ├── tools/                          # WP2: the twelve deterministic analyses
 │       │   ├── overview.py                 # Scope and data quality
 │       │   ├── success.py                  # The flagship KPI: success rates
 │       │   ├── torque.py                   # Per-head torque distribution
@@ -1709,8 +1709,13 @@ Tuning the local model — smaller narrator input, cheapest planning tier:
 }
 ```
 
-`num_ctx` must be at least 4096 and is rejected below it: the planner prompt
-alone is ~2,600 tokens, Ollama defaults to 2048, and it **truncates silently**
+With a local model the narrator does not read the raw results: it is handed the
+deterministic findings and the question, and writes the answer that the report
+prints above them (see `docs/agent-decision-flow.md`, *Narration*).
+`narrator_max_items` therefore only caps the lists a hosted model is sent.
+
+`num_ctx` must be at least 6144 and is rejected below it: the planner prompt
+alone is ~3,600 tokens, Ollama defaults to 2048, and it **truncates silently**
 rather than erroring — which looks exactly like a stupid model.
 
 `think` (Ollama only) controls a thinking model's reasoning pass: `false` skips
@@ -1753,14 +1758,14 @@ it, `--pdf` logs how to install it and writes Markdown and HTML as normal.
 
 The project has **213 C++ unit tests** across 22 Google Test files — 202 in the
 default build plus the 11-case GPU/CPU differential behind `-DMAS_ENABLE_CUDA=ON`
-— plus **366
+— plus **491
 Python tests** for the analytics tier. Every test count in this
 README is asserted by `python/tests/test_readme_counts.py`, so adding a test and
 forgetting this paragraph fails the suite rather than quietly dating it.
 
 ```bash
 cd build && ctest -C Release --output-on-failure # 202 C++ tests in the default build; the 11-case GPU/CPU differential is compiled only with -DMAS_ENABLE_CUDA=ON (and skips without a device)
-cd python && ../.venv/bin/python -m pytest -q    # 366 Python tests (see the three gates below)
+cd python && ../.venv/bin/python -m pytest -q    # 491 Python tests (see the three gates below)
 ```
 
 Three gates apply to the Python suite. Two are data gates: **6 tests** need the
@@ -1856,7 +1861,7 @@ a number.
 
 ## Roadmap
 
-- [x] **Python analytics agents** — ten deterministic analysis tools, an LLM planner, a narrator whose figures and tables are rendered from the tool results, and the `arol` CLI. See [Analytics CLI and Reports](#analytics-cli-and-reports).
+- [x] **Python analytics agents** — twelve deterministic analysis tools, an LLM planner, a narrator whose figures and tables are rendered from the tool results, and the `arol` CLI. See [Analytics CLI and Reports](#analytics-cli-and-reports).
 - [x] **CUDA cleaning pipeline and the three-way benchmark** — the transform is element-wise, proved by test, so it ports to the GPU; the portable driver measures Python, C++ and CUDA on one machine. See [CUDA cleaning benchmark](#cuda-cleaning-benchmark).
 - [x] **Run the CUDA sweep on real hardware** — done on an RTX 4070 Laptop (CUDA 13.3, Windows 11): first sweep 2026-08-10, re-measured 2026-08-13 with the corrected timers and 2026-08-16 on the post-review kernel with the pool's real machine id in the store rows. `--verify` caught a real 1-ulp GPU parse defect on the first run. Clean phase measured 1.08× the 8-thread C++ and 6.6× the single-thread; 1.08× end to end because the store dominates — see [docs/bench/results.md](docs/bench/results.md).
 - [x] **Attack the merge bottleneck** — the benchmark's headline finding. `DuckDbEventStore::merge_all()` replaces the per-row `INSERT OR IGNORE` probes with one set-based dedup over the union: 65.9 s → 22.8 s in isolation (2.89×), ~2.1× across the M2 sweep, same rows; end to end on actively-cooled hardware the design lands at **3.83×** the sequential baseline (537.8 s → 140.4 s, MAS N=16, resweep 2026-08-13). Partitioned Parquet output or a concurrent-writer store remain the larger redesigns

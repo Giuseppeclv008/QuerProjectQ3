@@ -2,6 +2,7 @@ import duckdb
 import pytest
 from analytics.config import Config
 from analytics.tools.anomaly import anomalies
+from tests.conftest import CAP_EVENTS_DDL
 
 
 @pytest.fixture
@@ -368,3 +369,43 @@ def test_the_sample_is_stable_when_many_heads_share_one_timestamp(tmp_path):
     con.close()
     stride = -(-len(full) // 6)
     assert shape(hits) == [(h, t) for h, t in full[::stride]][:6]
+
+
+def test_out_of_band_readings_are_counted_per_head_most_first(tmp_path):
+    path = tmp_path / "byhead.duckdb"
+    con = duckdb.connect(str(path))
+    con.execute(CAP_EVENTS_DDL)
+    rows = [  # head, second, torque -- band is [1.5, 2.5]
+        (3, 1, 2.9), (3, 2, 1.2), (3, 3, 2.7),     # head 3: three outside
+        (5, 4, 2.8), (5, 5, 2.0),                  # head 5: one outside
+        (7, 6, 2.0),                               # head 7: none
+    ]
+    for h, sec, tq in rows:
+        con.execute("INSERT INTO cap_events VALUES ('MCC',?,?,?,?,0.0,1,false,false,false)",
+                    [h, f"2026-02-01 00:00:{sec:02d}", sec, tq])
+    con.close()
+    cfg = Config(store_path=str(path), torque_min=1.5, torque_max=2.5)
+    r = anomalies(cfg, period="2026-02", method="threshold")
+    assert r.values["threshold_by_head"] == [{"head_id": 3, "count": 3},
+                                             {"head_id": 5, "count": 1}]
+
+
+def test_the_per_head_count_is_exact_when_the_itemised_list_is_capped(tmp_path):
+    path = tmp_path / "capped.duckdb"
+    con = duckdb.connect(str(path))
+    con.execute(CAP_EVENTS_DDL)
+    for sec in range(1, 6):                        # five outside readings, one head
+        con.execute("INSERT INTO cap_events VALUES ('MCC',2,?,?,2.9,0.0,1,false,false,false)",
+                    [f"2026-02-01 00:00:{sec:02d}", sec])
+    con.close()
+    cfg = Config(store_path=str(path), torque_min=1.5, torque_max=2.5,
+                 max_anomaly_items=2)
+    v = anomalies(cfg, period="2026-02", method="threshold").values
+    assert v["listed"]["threshold_hits"] < 5
+    assert v["threshold_by_head"] == [{"head_id": 2, "count": 5}]
+
+
+def test_the_per_head_count_is_empty_when_the_threshold_method_did_not_run(anomaly_store):
+    cfg = Config(store_path=anomaly_store, torque_min=1.5, torque_max=2.5)
+    r = anomalies(cfg, period="2026-02", method="deviation")
+    assert r.values["threshold_by_head"] == []

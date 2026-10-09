@@ -11,8 +11,10 @@ from dataclasses import dataclass
 from analytics.tools.anomaly import anomalies
 from analytics.tools.compare import compare_periods
 from analytics.tools.correlation import head_correlation
+from analytics.tools.filter import closure_filter
 from analytics.tools.gaps import event_gaps
 from analytics.tools.idle import idle_periods
+from analytics.tools.methodology import TOPICS, methodology
 from analytics.tools.overview import overview
 from analytics.tools.speed import capping_speed
 from analytics.tools.success import success_rates
@@ -76,8 +78,9 @@ TOOLS = {
              "outcome": _enum(["successful", "failed", "all"],
                               "which closures to measure; default 'successful'"),
              "by": _enum(["head"], "set to 'head' for per-head breakdown; null = overall")},
-            "Not change over time (that is trend) and not whether a closure "
-            "passed: a statistic over the whole period.",
+            "Not change over time (that is trend), not whether a closure passed, "
+            "and not how many readings fall outside the band (anomalies counts "
+            "those): a statistic over the whole period.",
         ),
         ToolSpec(
             "capping_speed", capping_speed,
@@ -104,7 +107,9 @@ TOOLS = {
             "anomalies", anomalies,
             "Deterministic anomaly detection: rejected closures, torque outside the "
             "configured operating band, and per-head robust deviation (median +/- k*MAD). "
-            "Answers 'any torque outside the expected range', 'abnormal intervals'.",
+            "Counts the out-of-band readings per head, most first. Answers 'any "
+            "torque outside the expected range', 'which heads have the most "
+            "out-of-band readings', 'abnormal intervals'.",
             {"period": _PERIOD,
              "method": _enum(["threshold", "deviation", "both"],
                              "detection method; default 'both'")},
@@ -154,12 +159,44 @@ TOOLS = {
             "compare_periods", compare_periods,
             "Month-by-month or week-by-week comparison of the whole machine: "
             "capping operations, caps per day, rejects and reject rate, no-load "
-            "cycles and their share, active days, and the change from the first "
-            "bucket to the last. Answers 'did it get worse', 'compare March and "
-            "April'.",
+            "cycles and their share, active days, the torque mean and spread, and "
+            "the change from the first bucket to the last. Answers 'did it get "
+            "worse', 'compare March and April'.",
             {"period": _PERIOD,
              "by": _enum(["month", "week"], "bucket size; default 'month'")},
             "Not per head and not why a period differs: it compares totals.",
+        ),
+        ToolSpec(
+            "closure_filter", closure_filter,
+            "Counts, exactly, the capping operations that match a filter the "
+            "operator names -- torque above and/or below a value in Nm, one "
+            "outcome, one head -- with the count per head and the first events "
+            "listed. Answers 'how many closures had torque above X Nm', 'list the "
+            "failed events below a threshold', 'all failed events of head 3'.",
+            {"period": _PERIOD,
+             "above": {"type": ["number", "null"],
+                       "description": "torque strictly above this value, Nm; null = no limit"},
+             "below": {"type": ["number", "null"],
+                       "description": "torque strictly below this value, Nm; null = no limit"},
+             "outcome": _enum(["successful", "failed", "all"],
+                              "which closures; default 'all'"),
+             "head": {"type": ["integer", "null"], "minimum": 1,
+                      "description": "one head only; null = every head"}},
+            "Not the configured band (that is anomalies) and not why a closure "
+            "has its torque: it counts against the values given, and lists no "
+            "more than the first 20 events.",
+        ),
+        ToolSpec(
+            "methodology", methodology,
+            "How the data was prepared and a closure is judged, as documented: "
+            "preprocessing of the raw rows, how duplicated closures are avoided, "
+            "the assumptions of the cleaning, and what classifies a closure as "
+            "successful or rejected. Answers 'what preprocessing was applied', "
+            "'how were duplicates removed', 'which assumptions were made', 'what "
+            "classifies a successful closure'.",
+            {"topic": _enum(list(TOPICS), "one topic; null = all four")},
+            "Not a measurement of the store: it restates the pipeline's rules "
+            "and says nothing about how often one applied.",
         ),
     ]
 }

@@ -13,6 +13,12 @@ machine ran when it ran (~150k in March), and active_days sits beside both so
 a month that worked on few days is visible rather than averaged away. The
 reject rate uses the success_rates denominator (successful + rejected), so the
 two tools agree.
+
+Torque comes with the volume: mean, median and sigma of the bucket's capping
+operations. trend reads a monotone drift per head and cannot see a step, and
+the three months of 2026 hold one: mean 1.9996 Nm in February, 2.0531 in
+March and 2.0203 in April, with sigma 0.0213, 0.1163 and 0.0861. A first-to-last
+comparison of the mean would have missed it.
 """
 from datetime import date, datetime, timedelta
 
@@ -66,7 +72,10 @@ def compare_periods(cfg, period=None, by="month"):
                COUNT(*) FILTER (WHERE {REJECT_SQL} AND app_torque > 0) AS rejected,
                COUNT(*) FILTER (WHERE status = ? AND app_torque = 0)  AS no_load,
                COUNT(DISTINCT CAST(ts AS DATE))
-                   FILTER (WHERE app_torque > 0)                      AS active_days
+                   FILTER (WHERE app_torque > 0)                      AS active_days,
+               AVG(app_torque) FILTER (WHERE app_torque > 0)          AS torque_mean,
+               MEDIAN(app_torque) FILTER (WHERE app_torque > 0)       AS torque_median,
+               STDDEV_SAMP(app_torque) FILTER (WHERE app_torque > 0)  AS torque_stddev
         FROM cap_events
         WHERE {where}
         GROUP BY 1 ORDER BY 1
@@ -94,6 +103,7 @@ def compare_periods(cfg, period=None, by="month"):
          "bucket_start": r[0], "caps": r[2], "successful": r[3],
          "rejected": r[4], "no_load_cycles": r[5],
          "calendar_days": days, "active_days": r[6],
+         "torque_mean": r[7], "torque_median": r[8], "torque_stddev": r[9],
          "caps_per_day": _ratio(r[2], days),
          "caps_per_active_day": _ratio(r[2], r[6]),
          "reject_rate": _ratio(r[4], r[3] + r[4]),
@@ -116,6 +126,8 @@ def compare_periods(cfg, period=None, by="month"):
             "reject_rate": diff("reject_rate"),
             "no_load_share": diff("no_load_share"),
             "active_days": diff("active_days"),
+            "torque_mean": diff("torque_mean"),
+            "torque_stddev": diff("torque_stddev"),
         }
     # First-to-last hides a dip in the middle (February to April looks like
     # -19%; March alone fell by three quarters), so the weakest bucket is
@@ -139,5 +151,8 @@ def compare_periods(cfg, period=None, by="month"):
             "no-load cycles)",
             "a bucket is a calendar month or ISO week clipped to the period, so "
             "the first and last may be partial",
+            "torque level and spread are over the bucket's capping operations "
+            "(torque > 0), all heads together; a step in either can be a change "
+            "of product or setting as well as a change in the machine",
         ],
     )

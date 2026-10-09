@@ -83,6 +83,17 @@ def idle_periods(cfg, period=None, min_seconds=None):
          "cycles": r[3], "duration_seconds": int(r[4])}
         for r in rows
     ]
+    # Summaries a reader can use without the (long, head-ordered) list: the
+    # longest run, and each head's total, most first. Without them a consumer
+    # that only sees a sample of `periods` names the longest of the sample.
+    per_head = {}
+    for p in periods:
+        n, total = per_head.get(p["head_id"], (0, 0))
+        per_head[p["head_id"]] = (n + 1, total + p["duration_seconds"])
+    by_head = [{"head_id": h, "periods": n, "total_seconds": total}
+               for h, (n, total) in sorted(per_head.items(),
+                                           key=lambda kv: (-kv[1][1], kv[0]))]
+    longest = max(periods, key=lambda p: p["duration_seconds"])
     # rows_scanned is the provenance denominator: every closure the run-detection
     # examined in scope, not just the no-load cycles inside qualifying periods.
     scanned = con.execute(
@@ -92,6 +103,8 @@ def idle_periods(cfg, period=None, min_seconds=None):
         "idle_periods",
         {"periods": periods,
          "total_idle_seconds": sum(p["duration_seconds"] for p in periods),
+         "longest_period": longest,
+         "by_head": by_head,
          "min_seconds": threshold},
         period=period,
         rows_scanned=scanned,

@@ -1850,3 +1850,210 @@ evidence for this pass is the unit suite and the figures above. Without a
 model the keyword router still picks one of the three canned plans, which do
 not include the two new tools (rewriting them was out of scope), so the stop
 and month-by-month figures reach a report only through a model plan.
+
+## 2026-10-08 — First live run after the change, and two gaps it showed
+
+The first probe question ("Did the machine get worse…", 2026-02..2026-04) ran
+through `scripts/arol ask` on `qwen3:14b` against `events_3mo.duckdb`. The plan
+was `compare_periods`, `trend`, `success_rates`, `torque_stats`,
+`idle_periods(min_seconds=60)`. Every figure in the report was recomputed
+independently and matches: the three months of `compare_periods` (529,439,
+126,124 and 430,459 caps per day; 748, 204 and 143 rejects; no-load share
+32.5%, 65.7%, 40.3%; 28, 26 and 29 active days), the weakest head (29, 99.9867%
+against a median of 99.9972%) and the idle figures (135,570 runs, 30,488.7
+head-hours at 60 s; 67,105 and 26,939.7 at the 300 s default).
+
+What the report got wrong or missed:
+
+- **A step in torque, invisible to `trend`.** The probe table above says "no
+  drift", which is true of the Mann-Kendall test and incomplete about the data.
+  Mean torque over capping operations is 1.9996 Nm in February, 2.0531 in March
+  and 2.0203 in April; sigma is 0.0213, 0.1163 and 0.0861. Inside March, 1–8
+  March has a median of 1.999 Nm (sigma 0.094), 9–30 March 1.748 (sigma 0.137)
+  and 31 March 2.198 (sigma 0.004). Every head shows it. The report's "head 22
+  is the most variable (sigma 0.0731)" was therefore a tie: heads 22, 9, 5 and 8
+  sit between 0.0725 and 0.0731 over the three months.
+- **No answer to "most out-of-band readings".** The model chose `torque_stats`,
+  which does not count them, and `anomalies` returned only a total (234). The
+  per-head counts are head 22 at 26, head 35 at 16, head 7 at 13, all 36 heads
+  at least one.
+- **A threshold the question did not name.** The plan set `min_seconds=60`
+  despite the planner rule. It is now visible ("idle threshold 60s (config
+  default 300s)"), but the figures do not compare with runs at 300 s.
+- **Narration still the template** (`narrative source: template`), the fourth
+  run in four. The excerpt that the narrator now logs has not been read yet.
+
+Two additions close the first two gaps: `compare_periods` returns the mean,
+median and sigma of each bucket's capping-operation torque, and the report names
+a step when one bucket's sigma is at least twice another's; `anomalies` returns
+`threshold_by_head`, the exact out-of-band count per head, most first.
+
+## 2026-10-09 — Correction: the deviation hits are not sensor noise; and why the narrator was always rejected
+
+**Correction.** The entry of 2026-10-08 says that with the robust band held at
+`mad_floor` on all 36 heads, the 1,433,066 deviation hits of March (36.7% of
+capping operations) "are mostly sensor quantisation", and the report template
+repeated it ("mostly reflects sensor noise"). That does not hold. Measured with
+the tool itself, the deviation hits are 162,019 of 14,824,304 capping
+operations in February (1.1%) and 3,437,769 of 16,823,611 in March–April
+(20.4%): about 95% of the three-month total sits in the two months where mean
+torque moved (1.9996 Nm in February, 2.0531 in March, 2.0203 in April; sigma
+0.0213, 0.1163, 0.0861). A band held at the floor is a fixed ±0.03 Nm from the
+head's median, not a measure of its spread, and the share outside it follows
+the torque level. The template no longer calls it noise.
+
+**Why `qwen3:14b` was rejected on every run.** All seven `ask` reports so far
+carried `narrative source: template`. The model was called once by hand on the
+March stops (`event_gaps` and `idle_periods`) and its reply was findings as one
+paragraph of prose with no list marker (the bullet check rejected it, rightly),
+written from a prompt of 43,483 characters of results. Counted by Ollama
+(`prompt_eval_count`), that is about 20,000 tokens against `num_ctx` 8192: the
+tokenizer reads digits one at a time, so this JSON costs 2.05 to 2.11
+characters per token, not 3 or 4. Ollama drops what does not fit without
+saying so. The reply ignored `event_gaps` (342.6 h of stops) altogether,
+invented "active periods", called the longest period of a truncated sample the
+longest of all (4,641 s, when it is 40,447 s on head 5), and read idle
+head-seconds as machine time ("not in use for the majority of the period").
+The template it fell back to was the better text.
+
+**What fixing the format showed.** With the findings asked for as a list of
+strings (so the bullets are made by the report) and the prompt cut to fit,
+`qwen3:14b` narrated, and on the five-step plan of the first probe question it
+wrote statements that contradict the numbers it was given: "all 36 heads show
+torque drifts" (every `drifting` was false), "caps per day improved" (they fell
+18.7%), "234 out-of-band readings in February" (234 is the three-month total),
+"reject rate dropped by 39.4%" (an absolute difference of 0.0039 percentage
+points, misread). A format check cannot catch these, and the model was reading
+raw JSON fields. Handed the template's own sentences instead of the JSON, the
+same model answered the three probe questions correctly in 3 to 11 seconds.
+
+**Resulting design.** A hosted model keeps the raw results: it is asked for
+lists of strings, the report makes the bullets, truncated lists carry a note
+that they are a sample, and each result carries what its tool does not measure.
+A local model (`provider: ollama`) is given the deterministic findings and the
+operator's question and writes one to three statements; the report prints them
+under an "Answer" bullet with every deterministic finding beneath, and the
+checks are the template's. An answer that states a number the findings do not
+carry, is empty, or only announces its findings is rejected, and the template
+stands alone. The prompt for the local path says what the model got wrong on
+the raw results: say nothing about drift unless a finding does, give a stop as
+hours with no events (machine stopped or data missing), never answer "did it
+get worse" with a bare yes or no, and idle totals are head-hours. Known limit:
+the model still sometimes writes "was stopped for 342.6 hours" for the gap
+total; the "Stops" finding printed below it carries the caveat.
+
+**Template.** The report also shows the rejects beside the weakest head or day,
+names a tie at the top instead of one of the tied days (19 of 54 days at
+100%), states whether the reject rate fell, rose or held between the first and
+last bucket, gives the longest idle period and the spread of idle totals across
+heads (`idle_periods` now returns `longest_period` and `by_head`), and proposes
+checking the longest gap against the plant's stop log.
+
+## 2026-10-09 — The 43 example queries of the brief, run through `ask` on `qwen3:14b`
+
+Every example query of the brief (slides 13–15: 39 queries; slides 16–18: the
+three expected outputs, which repeat three of them) was run through
+`scripts/arol ask` against `events_3mo.duckdb`, February for the ones that say
+"the month", March for the two about change within the month, the whole store
+for the ones about the dataset. Each answer was graded against figures
+recomputed with SQL on the store: right and supported, partial or honest about a
+gap, or wrong or not produced.
+
+| | first run | after |
+|---|---|---|
+| right and supported | 9 | 22 |
+| partial, or honest about a gap | 11 | 10 |
+| wrong or not produced | 23 | 11 |
+
+**Why the first run failed, and what changed.** The tools already computed what
+the brief asks for; the report did not print it. The overview counted
+successful and failed closures and never said so (a model answered "how many
+ended well?" with the total of capping operations, and "how many failed?" with
+"none"). The overall torque statistics (mean 1.9996 Nm, min 1.282, max 2.740,
+sigma 0.0211 for February: the brief's own expected output) were computed and
+not printed, so five questions got "no analysis returned usable data". There
+was no table per head or per day. The report now prints the outcomes, the
+torque statistics of the outcome asked for, the share of all rejects held by the
+weakest head with the median head beside it, the range of the other heads'
+sigma, and a table per head and per day (also handed to a local model, cut to
+fit `num_ctx`, the daily ones first). Two defects of the narrator were found by
+the run: the number check rejected a figure repeated from the question
+("1.5 to 2.5 Nm") or a rounded one (29239.26 for 29,239.2584), and a rule about
+heads "within about 1%" was echoed in answers it had nothing to do with.
+
+**Still wrong or not produced (11):**
+
+- 2 (closures per head): the plan used only the overview, so no table.
+- 18 (did torque change over the month): the plan used only `trend`, which
+  reads a steady drift and answers "no change" for March, where the median goes
+  from 1.999 Nm to 1.748 (9–30 March) and 2.198 (31 March).
+- 22 (torque above 2.5 Nm): answers 130, the count outside the band on either
+  side; the figure is 3. No tool counts against a threshold the operator gives.
+- 25 (which head behaves differently): names head 9, whose sigma is 0.0213 Nm
+  against 0.0208–0.0212 for the rest.
+- 33 (which signals to monitor): swaps rejects and out-of-band readings between
+  heads 22 and 35.
+- 36 and 38 (histogram, failed closures over time): no such figure exists.
+- 40–43 (preprocessing, duplicates, cleaning assumptions, classification of a
+  successful closure): the answer is "not in the findings", though the methods
+  are documented.
+
+Right to the decimal in the second run: 10 (mean, min, max, sigma and median of
+the successful closures), 13 (1.9996 Nm against 1.9106 for failed, sigma
+0.0211 against 0.2328), 16 (100 rejects on 25 February, the day with the most),
+27 (head 1: 45 rejects, 99.9891%; head 2: 4 rejects, 99.9990%) and 31 (head 4
+has 4 rejects, 30th of 36, which refutes the premise of the question).
+
+## 2026-10-09 — The 43 queries again, after the filter, the method, the figures and the plan check
+
+Third and last run of the example queries of the brief, graded the same way
+(figures recomputed with SQL on the store). 43 queries, 43 plans written by the
+model, 43 answers written by the model: no router plan and no template fallback.
+
+| | first run | after the tables | now |
+|---|---|---|---|
+| right and supported | 9 | 22 | 38 |
+| partial, or honest about a gap | 11 | 10 | 4 |
+| wrong or not produced | 23 | 11 | 1 |
+
+**What was added.**
+
+- `closure_filter`: a count against a value the operator names (torque above or
+  below, an outcome, a head), exact, with the first 20 events. February 2026: 3
+  closures above 2.5 Nm (heads 2, 12 and 35), 70 failed closures below 1.5 Nm
+  (26 heads), 10 failed closures on head 3 (all status 65, 1 to 21 February) —
+  each matches the SQL.
+- `methodology`: the four meta queries (preprocessing, duplicates, cleaning
+  assumptions, what classifies a successful closure) answered from the documented
+  pipeline, each claim pinned to README.txt in a test.
+- A histogram of the torque (`torque_stats` returns the 0.01 Nm classes) and a
+  chart of the rejects per day, and the model is told which figures the report
+  draws, so "plot X" is answered with the file or with "no figure shows it".
+- A torque trend in a model's plan gets `compare_periods` added (by week for a
+  month, by month for a longer period), and the report says so under *Planning*.
+  Without it the answer to "did the torque change over March?" was "no" (the
+  drift test reads a steady trend); with it, 2.1985 Nm in the first week against
+  1.7064 in the week of 23 March, both as `torque_stats` computes them.
+- The report names a step in torque level, ranks the heads and days by number of
+  rejects (not by rate), says whether the most variable head stands out (head 22
+  in February is 17% above the median of the others, head 9 is 1.4%), and ignores
+  a bucket that holds under 1% of the period's capping operations (the eight
+  hours of 31 January had produced a "sigma 37 times narrower than March's").
+- `num_ctx` must now be at least 6144: the planner's prompt, with twelve tools,
+  is 3,585 tokens as Ollama counts them.
+
+**Still wrong or weak (5).**
+
+- 25 (which head behaves differently): the model names head 9 although the
+  finding printed beside it says "No head stands out" (1.4% above the median of
+  the others). The sentence is the model's; the finding is the template's.
+- 4 (missing or invalid torque): "no invalid values", then "234 outside the
+  configured band"; the project calls those invalid, the model does not.
+- 19 (time of day against failures) and 29 (torque against success): no tool
+  computes either. 19 says the findings do not mention time of day; 29 answers
+  "no correlation" from a comparison of weeks that is not a test of it.
+- 32 (summarise the main issues): "high reject rates on specific heads" for a
+  head at 0.013%, and the share beyond the robust band (11.4%) called "widespread
+  torque anomalies", which is the March step and not a count of bad closures.
+- Small slips inside correct answers: 38 gives 2026-02-01 as the day with the
+  fewest rejects (it is a partial day).

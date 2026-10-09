@@ -225,3 +225,80 @@ def test_the_question_is_kept_on_the_router_fallback_too(tiny_cfg, monkeypatch):
     p = planner.plan(tiny_cfg, "why did it stop?", "2026-02")
     assert p.source == "router"
     assert p.question == "why did it stop?"
+
+
+def _plan_with(*steps):
+    from analytics.agent.plan import Plan
+    return Plan(goal="g", steps=list(steps), source="llm")
+
+
+def _trend(signal="torque", period="2026-03"):
+    from analytics.agent.plan import PlanStep
+    return PlanStep("trend", {"period": period, "signal": signal, "by": "day"}, "r")
+
+
+def test_a_torque_trend_gets_the_week_by_week_comparison_added():
+    # March 2026: the drift test said nothing drifts while the median torque went
+    # 1.999 -> 1.748 -> 2.198 Nm.
+    fixed = planner._with_level_check(_plan_with(_trend()))
+    assert [s.tool for s in fixed.steps] == ["trend", "compare_periods"]
+    assert fixed.steps[1].args == {"period": "2026-03", "by": "week"}
+    assert "compare_periods by week was added" in fixed.note
+
+
+def test_a_range_of_months_is_compared_month_by_month():
+    for period in ("2026-02..2026-04", None):
+        fixed = planner._with_level_check(_plan_with(_trend(period=period)))
+        assert fixed.steps[1].args == {"period": period, "by": "month"}
+
+
+def test_the_added_step_is_one_the_registry_accepts():
+    from analytics.agent.plan import effective_args
+    from analytics.agent.registry import validate_step
+    step = planner._with_level_check(_plan_with(_trend())).steps[1]
+    assert validate_step(step.__class__(step.tool, effective_args(step), step.rationale)) is None
+
+
+def test_a_plan_that_already_compares_periods_is_left_alone():
+    from analytics.agent.plan import PlanStep
+    plan = _plan_with(_trend(), PlanStep("compare_periods", {"period": "2026-03", "by": "month"}, "r"))
+    assert planner._with_level_check(plan) is plan
+
+
+def test_other_trends_and_other_plans_are_left_alone():
+    from analytics.agent.plan import PlanStep
+    for plan in (_plan_with(_trend(signal="success_rate")),
+                 _plan_with(PlanStep("overview", {}, "r"))):
+        assert planner._with_level_check(plan) is plan
+
+
+def test_an_existing_note_is_kept(tiny_cfg):
+    plan = _plan_with(_trend())
+    plan = plan.__class__(plan.goal, plan.steps, plan.source, "an earlier note")
+    assert planner._with_level_check(plan).note.startswith("an earlier note; compare_periods")
+
+
+def test_the_fixed_router_plan_for_a_drift_report_is_not_amended(tiny_cfg, monkeypatch):
+    # `arol report drift` runs a trend on torque and must stay byte-reproducible.
+    monkeypatch.setattr(planner, "_client", lambda cfg: None)
+    plan = planner.plan(tiny_cfg, "did the torque drift?", "2026-02")
+    assert plan.source == "router"
+    assert "compare_periods" not in [s.tool for s in plan.steps]
+
+
+def test_a_model_plan_that_trends_torque_comes_back_with_the_comparison(tiny_cfg):
+    import json
+    from dataclasses import replace
+    cfg = replace(tiny_cfg, planning="plan")
+    payload = {"goal": "torque", "steps": [
+        {"tool": "trend", "args": {"period": "2026-02", "signal": "torque", "by": "day",
+                                   "window": None}, "rationale": "r"}]}
+    plan = planner.plan(cfg, "did the torque change?", "2026-02", client=_FakeClient(payload))
+    assert plan.source == "llm"
+    assert [s.tool for s in plan.steps] == ["trend", "compare_periods"]
+
+
+def test_the_rules_send_per_head_and_histogram_questions_to_the_right_tool():
+    rules = planner.SYSTEM
+    assert "for each head" in rules and "which overview does not" in rules
+    assert "histogram of torque" in rules and "without `by`" in rules
