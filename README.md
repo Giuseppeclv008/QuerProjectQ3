@@ -428,7 +428,10 @@ organized by layer.
 │       │   ├── speed.py                    # Capping speed (pieces/hour)
 │       │   ├── idle.py                     # Idle periods (gaps-and-islands)
 │       │   ├── gaps.py                     # Machine stops: holes in the event stream
-│       │   ├── compare.py                  # Month/week side-by-side comparison
+│       │   ├── compare.py                  # Month/week side-by-side comparison, with the torque level and spread
+│       │   ├── filter.py                   # Closures above/below a torque value, of one outcome or head: exact count + first events
+│       │   ├── factors.py                  # Reject rate by hour of day (chi-square) and by torque (correlation, band zones)
+│       │   ├── methodology.py              # The documented pipeline: preprocessing, duplicates, assumptions, classification
 │       │   ├── anomaly.py                  # Threshold + robust (median +/- k*1.4826*MAD, floored) detection
 │       │   ├── trend.py                    # Mann-Kendall drift
 │       │   └── correlation.py              # Per-head torque correlation
@@ -437,12 +440,12 @@ organized by layer.
 │       │   ├── registry.py                 # The tools as data -> LLM + plan JSON schemas
 │       │   ├── router.py                   # Keyword router and the three canned plans
 │       │   ├── llm.py                      # The one place this project calls the API
-│       │   ├── planner.py                  # Claude -> a registry-validated plan
-│       │   ├── narrator.py                 # Claude -> prose around figures rendered from ToolResults
+│       │   ├── planner.py                  # Model -> a registry-validated plan (+ the torque level check)
+│       │   ├── narrator.py                 # Hosted: prose around the raw results. Local: an answer from the verified findings
 │       │   └── executor.py                 # Runs a plan; every failure becomes a value
 │       └── report/
-│           ├── render.py                   # The six mandated sections + tool-call trace
-│           ├── plots.py                    # Five matplotlib figures, driven only by ToolResults
+│           ├── render.py                   # The six mandated sections, the tables, the tool-call trace
+│           ├── plots.py                    # Eight matplotlib figures, driven only by ToolResults
 │           └── export.py                   # Self-contained HTML; best-effort PDF
 │   └── tests/                              # golden report + mocked-LLM agent tests (count guarded by test_readme_counts.py)
 │
@@ -1483,40 +1486,56 @@ scripts/arol report anomalies --period 2026-02
 
 Each writes a self-contained directory: `report.md` (source of truth),
 `report.html` (portable, plots inlined as data URIs), `trace.json` (every tool
-call with its arguments and row counts), and PNGs.
+call with its arguments and row counts), the tables (a row per head or per
+day, where the plan has them), and PNGs.
 
 These three verbs run **fixed plans with no model in the loop** — the same store
 and period gives the same report every time, apart from the generation timestamp
 in the header. Committed examples are under
 [`docs/reports/`](docs/reports/), and every number in them was reconciled
 against a direct DuckDB query in the [validation log](docs/validation-log.md)
-when it was generated. They are current: all four were regenerated on
-2026-08-19 against a rebuilt store, and re-verified against it since.
+when it was generated (2026-08-19, against a rebuilt store). The report has
+gained findings and tables since: regenerate the examples with
+[`scripts/demo.sh`](scripts/demo.sh) before relying on their layout.
 [`docs/reports/README.md`](docs/reports/README.md) is the staleness registry —
-which artifact is invalidated by what, and what changes when it is rebuilt;
-its table is empty exactly when the committed reports match the code.
+which artifact is invalidated by what, and what changes when it is rebuilt.
 
 ### Ask a question
 
 ```bash
-export ANTHROPIC_API_KEY=...
+ollama serve && ollama pull qwen3:14b      # once; the local model is the default
 scripts/arol ask "which head behaves differently, and why?" --period 2026-02
 ```
 
-Claude chooses which tools to run and writes the narrative. **Every figure,
-plot, trace row and limits entry is rendered from the tool results**, computed
-by the same deterministic SQL the `report` verbs use, regardless of what the
-model says. The honest boundary: the model's prose itself (the Findings
-narrative, next-checks, and the plan's goal line) is quoted as written, and a
-number the model writes into a sentence is not machine-checked against the
-values -- a lying narrative would be contradicted by the trace on the same
-page, not silently corrected (see
-[`docs/agent-decision-flow.md`](docs/agent-decision-flow.md), "Where the
+The model chooses which tools to run and writes the answer. The report opens
+with an **Answer** bullet (a few statements from the model), and beneath it come
+the deterministic findings, the tables and the figures. **Every figure, table,
+plot, trace row and limits entry is rendered from the tool results**, computed by
+the same deterministic SQL the `report` verbs use, regardless of what the model
+says.
+
+The honest boundary: the model's words appear in the *Goal* line, the step
+rationales and the answer (with a hosted model, in *Findings* and *Next checks*).
+With a local model every number in the answer must be in the findings, the tables
+or the question, or the answer is rejected and the deterministic summary stands;
+with a hosted model that is asked, not checked. Neither catches a sentence that is
+wrong without a number, which stays visible next to the finding it contradicts
+(see [`docs/agent-decision-flow.md`](docs/agent-decision-flow.md), "Where the
 model's words can appear").
 
-With no API key, no network, a refusal, or a malformed plan, `ask` falls back to
-a keyword router and the report's *Confidence and limits* section names the
-reason. A model failure costs readability, never correctness.
+The questions it handles are those of the project brief (slides 13-18 of the
+proposal): counts and rates, overall and per head; torque statistics, the
+distribution and out-of-range readings; trends, daily breakdowns and the hour of
+the day; filters ("how many closures above 2.5 Nm", "the failed events of head
+3"); comparisons between heads; explanations, where it says what the data cannot
+answer (causes, operators, lots); charts; and how the data was cleaned.
+[`python/tests/test_brief_queries_live.py`](python/tests/test_brief_queries_live.py)
+asks all 43 and checks the answers against SQL (opt-in, see *Testing*).
+
+With no model reachable (Ollama not running, no hosted credential), a refusal, or
+a malformed plan, `ask` falls back to a keyword router and the report's
+*Confidence and limits* section names the reason. A model failure costs
+readability, never correctness.
 
 ### Running the model on the Anthropic API
 
@@ -1572,10 +1591,12 @@ limits section. A hosted-model outage changes what the report says about
 itself; it does not lose the analysis, because no figure or number was ever
 the model's to compute.
 
-**Cost.** The planner prompt is ~1,850 tokens at `--planning plan` and ~16 at
-`classify` (table below), so a single `ask` is cents at Opus list pricing
-($5/$25 per million input/output tokens) and less on Sonnet or Haiku. Drop to
-`--planning classify` if you are running many questions.
+**Cost.** The planner prompt is ~4,000 tokens at `--planning plan` and ~90 at
+`classify` (table below), and a hosted narrator is sent the raw results on top, so
+by list price a single `ask` is cents at Opus ($5/$25 per million input/output
+tokens) and less on Sonnet or Haiku. That is an estimate: the hosted path has not
+been run since the toolset grew. Drop to `--planning classify` if you are running
+many questions.
 
 ### Running the model locally
 
@@ -1597,12 +1618,13 @@ can route reliably long before it can compose a plan:
 
 | `--planning` | the model produces | prompt | works on |
 |---|---|---:|---|
-| `plan` (default) | the whole sequence, arguments included | ~1,850 tok | a capable model |
-| `select` | which tools to run; their defaults supply the arguments | ~410 tok | a mid-size local model |
-| `classify` | one of the three report types; its fixed plan runs | ~16 tok | almost anything |
+| `plan` (default) | the whole sequence, arguments included | ~3,990 tok | a capable model |
+| `select` | which tools to run; their defaults supply the arguments | ~1,260 tok | a mid-size local model |
+| `classify` | one of the three report types; its fixed plan runs | ~90 tok | almost anything |
 
 All three produce registry-validated steps, so the tier is a cost choice, not a
-correctness one.
+correctness one. The sizes are as Ollama counts them, with thirteen tools; they
+were ~1,850, ~410 and ~16 with eight. That is why `num_ctx` has a floor of 6144.
 
 **Measured on qwen2.5:7b** (Apple M3, 16 GB) — see the
 [validation log](docs/validation-log.md):
@@ -1616,8 +1638,16 @@ correctness one.
   and replaced by the deterministic summary, with the reason printed in the
   report's limits section.
 
-A local model is slower: expect ~2 s to classify but ~3 min for a full `ask` on
-the three-month store, most of it narration.
+On qwen2.5:7b a local model was slow: ~2 s to classify but ~3 min for a full
+`ask` on the three-month store, most of it narration.
+
+**Measured on qwen3:14b** (the default; 2026-10-09, see the
+[validation log](docs/validation-log.md)): an `ask` takes 6 to 36 s across the 43
+example queries of the brief (median 11 s), 41 of the 43 answers are right and
+supported when checked against SQL, and 2 are marked weak. Handed the raw results
+as JSON, this model's narration was rejected on every run and, once accepted, said
+things the numbers contradicted ("all 36 heads drift"); handed the verified
+sentences instead, it answers.
 
 A committed run of the whole loop on this model is in
 [`docs/reports/ask-live-sample/`](docs/reports/ask-live-sample/) (RTX 4070

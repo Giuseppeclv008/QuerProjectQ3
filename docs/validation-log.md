@@ -2036,7 +2036,7 @@ model, 43 answers written by the model: no router plan and no template fallback.
   1.7064 in the week of 23 March, both as `torque_stats` computes them.
 - The report names a step in torque level, ranks the heads and days by number of
   rejects (not by rate), says whether the most variable head stands out (head 22
-  in February is 17% above the median of the others, head 9 is 1.4%), and ignores
+  in February is 16.9% above the median of the others, head 9 is 1.5%), and ignores
   a bucket that holds under 1% of the period's capping operations (the eight
   hours of 31 January had produced a "sigma 37 times narrower than March's").
 - `num_ctx` must now be at least 6144: the planner's prompt, with twelve tools,
@@ -2045,7 +2045,7 @@ model, 43 answers written by the model: no router plan and no template fallback.
 **Still wrong or weak (5).**
 
 - 25 (which head behaves differently): the model names head 9 although the
-  finding printed beside it says "No head stands out" (1.4% above the median of
+  finding printed beside it says "No head stands out" (1.5% above the median of
   the others). The sentence is the model's; the finding is the template's.
 - 4 (missing or invalid torque): "no invalid values", then "234 outside the
   configured band"; the project calls those invalid, the model does not.

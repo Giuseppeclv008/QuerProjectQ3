@@ -105,8 +105,8 @@ def _share(fraction):
 
 
 # The most variable head "stands out" when its sigma is this many percent above
-# the median sigma of the others: head 22 in February 2026 is 17% (a head that
-# logged readings at 0.002 Nm), head 9 is 1.4% (nothing).
+# the median sigma of the others: head 22 in February 2026 is 16.9% (a head that
+# logged readings at 0.002 Nm), head 9 is 1.5% (nothing).
 _STANDOUT_PCT = 10.0
 
 # How a torque_stats `outcome` reads in a sentence.
