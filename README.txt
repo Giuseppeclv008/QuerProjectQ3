@@ -138,11 +138,11 @@ Tell the tool where the store is. Save this as arol.json:
 
   { "store_path": "unified.duckdb", "machine_id": "MCC" }
 
-Then:
+Then (./arol.json is read automatically; --config FILE picks another):
 
-  scripts/arol report kpi       --period 2026-02            --config arol.json
-  scripts/arol report drift     --period 2026-02..2026-04   --config arol.json
-  scripts/arol report anomalies --period 2026-02            --config arol.json
+  scripts/arol report kpi       --period 2026-02
+  scripts/arol report drift     --period 2026-02..2026-04
+  scripts/arol report anomalies --period 2026-02
 
   kpi        success rate, production speed, idle time, per head
   drift      how torque and success rate move over time, head by head
@@ -158,11 +158,11 @@ The three report commands use no model: same store and period, same report.
 
 Ask a question in plain English (a model picks which analyses to run):
 
-  scripts/arol ask "which head behaves differently, and why?" --period 2026-02 --config arol.json
+  scripts/arol ask "which head behaves differently, and why?" --period 2026-02
 
+  Local model (default): ollama serve && ollama pull qwen3:14b
   Hosted model:  export ANTHROPIC_API_KEY=...
-  Local model:   ollama pull qwen2.5:7b
-                 add   --provider ollama --model qwen2.5:7b
+                 add   --provider anthropic --model claude-opus-5
   The numbers always come from the analyses, never from the model. With no key
   or no model reachable, ask falls back to a keyword router and the report
   says so. Answers go to reports/ask/<timestamp>/.
@@ -171,9 +171,10 @@ Ask a question in plain English (a model picks which analyses to run):
 5. PARAMETERS
 -------------
 
-clean [--format duckdb|parquet] <input.csv> <output> <machine_id>
+clean [--format duckdb|parquet] <input> <output> <machine_id>
 
-  input        one raw day-file
+  input        one raw day-file: .csv, .parquet, or .json/.jsonl/.ndjson
+               (format by extension; Parquet/JSON columns matched by name)
   output       *.duckdb = store; any other name = CSV file;
                with --format parquet = folder
   --format     duckdb (default) or parquet
@@ -206,14 +207,15 @@ mas_export <store.duckdb> <out.parquet> [--since TS] [--until TS]
 arol report <kpi|drift|anomalies> [options]
 arol ask "<question>" [options]
 
-  --config FILE   JSON settings (below). Without it: store events.duckdb in
-                  the current folder and the default values
+  --config FILE   JSON settings (below). Without it: ./arol.json if present,
+                  else store events.duckdb in the current folder and the
+                  default values
   --period P      YYYY-MM or YYYY-MM..YYYY-MM. Without it: the whole store
   --out DIR       where report folders are written [reports]
   --pdf           also write a PDF (needs WeasyPrint)
   -v              more detail on screen
   Only used by ask:
-  --provider      anthropic (default) or ollama
+  --provider      ollama (default) or anthropic
   --model         model name, e.g. qwen2.5:7b
   --planning      plan (the model composes the analyses, default),
                   select (it only picks tools) or classify (it picks one report)
@@ -228,7 +230,8 @@ arol.json (all keys are optional; defaults in brackets)
   idle_min_seconds      no-load for longer than this = idle       [300]
   idle_max_gap_seconds  a hole in the data longer than this ends
                         an idle period                            [600]
-  provider, model       model used by ask       [anthropic, claude-opus-5]
+  provider, model       model used by ask       [ollama, qwen3:14b]
+  think                 Ollama reasoning pass   [false; null for qwen2.5]
   ollama_host, num_ctx  local model address and context size
                                               [http://localhost:11434, 8192]
 

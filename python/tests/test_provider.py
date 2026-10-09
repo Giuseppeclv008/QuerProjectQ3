@@ -29,13 +29,13 @@ def test_an_unknown_planning_tier_is_rejected_at_config_time():
 def test_ollama_rejects_a_context_too_small_for_the_planner_prompt():
     """Ollama's default num_ctx is 2048 and it truncates silently rather than
     erroring, so a too-small window would look like a stupid model."""
-    with pytest.raises(ConfigError, match="num_ctx must be >= 4096"):
+    with pytest.raises(ConfigError, match="num_ctx must be >= 6144"):
         Config(store_path="x", provider="ollama", num_ctx=2048)
 
 
 def test_the_default_provider_is_unchanged():
     cfg = Config(store_path="x")
-    assert (cfg.provider, cfg.planning) == ("anthropic", "plan")
+    assert (cfg.provider, cfg.model, cfg.planning) == ("ollama", "qwen3:14b", "plan")
 
 
 # --------------------------------------------------------------- the schema
@@ -97,6 +97,42 @@ def test_the_ollama_request_omits_every_anthropic_only_field():
     assert body["format"] == {"x": 1}
     assert body["options"]["num_ctx"] == 8192
     assert body["messages"][0] == {"role": "system", "content": "sys"}
+
+
+def test_think_defaults_to_off_for_the_default_qwen3_model():
+    client = _FakeOllama('{"ok": true}')
+    llm.json_call(Config(store_path="x"), client, "s", "p", {})
+    assert client.bodies[0]["think"] is False
+
+
+def test_think_null_leaves_it_to_the_model():
+    """None sends nothing, so Ollama applies the model's own default -- the
+    setting for a non-thinking model such as qwen2.5."""
+    client = _FakeOllama('{"ok": true}')
+    llm.json_call(_ollama_cfg(think=None), client, "s", "p", {})
+    assert "think" not in client.bodies[0]
+
+
+@pytest.mark.parametrize("think", [False, True, "low", "medium", "high"])
+def test_a_configured_think_reaches_the_ollama_request(think):
+    client = _FakeOllama('{"ok": true}')
+    llm.json_call(_ollama_cfg(think=think), client, "s", "p", {})
+    assert client.bodies[0]["think"] == think
+
+
+@pytest.mark.parametrize("think", ["max", "off", 0, 1.0, []])
+def test_an_unknown_think_value_is_rejected_at_config_time(think):
+    with pytest.raises(ConfigError, match="think must be"):
+        _ollama_cfg(think=think)
+
+
+def test_think_is_accepted_from_a_config_file(tmp_path):
+    from analytics.config import load_config
+    p = tmp_path / "arol.json"
+    p.write_text('{"store_path": "x", "think": false}')
+    assert load_config(str(p)).think is False
+    p.write_text('{"store_path": "x", "think": "low"}')
+    assert load_config(str(p)).think == "low"
 
 
 def test_an_ollama_reply_that_is_not_json_degrades_like_any_other():
@@ -231,3 +267,9 @@ def test_every_tier_produces_steps_the_executor_can_run(tiny_cfg):
         for step in p.steps:
             assert validate_step(
                 _replace(step, args=effective_args(step))) is None, (tier, step)
+
+
+def test_the_smallest_context_that_holds_the_planner_prompt_is_accepted():
+    assert Config(store_path="x", provider="ollama", num_ctx=6144).num_ctx == 6144
+    with pytest.raises(ConfigError, match="num_ctx must be >= 6144"):
+        Config(store_path="x", provider="ollama", num_ctx=4096)

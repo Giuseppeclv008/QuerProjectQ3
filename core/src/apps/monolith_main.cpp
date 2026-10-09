@@ -1,6 +1,6 @@
 #include "mas/apps/CliArgs.hpp"
 #include "mas/domain/Pipeline.hpp"
-#include "mas/store/CsvRawReader.hpp"
+#include "mas/store/RawInput.hpp"
 #include "mas/store/DuckDbEventStore.hpp"
 #include "mas/store/ParquetEventStore.hpp"
 #include "mas/store/EventStore.hpp"
@@ -171,12 +171,22 @@ int main(int argc, char** argv) {
     // misnamed day-file must never leave a partial store behind (clean_main
     // does the same probe and says why).
     for (int i = argi; i < argc; ++i) {
-        mas::CsvRawReader probe(argv[i]);
-        if (!probe.is_open()) {
+        // The GPU loader parses CSV text itself; it has no Parquet or JSON
+        // path, and a silent fallback to the CPU would falsify the engine
+        // stamp on the summary line.
+        if (engine == mas::Engine::Cuda &&
+            mas::raw_format_for(argv[i]) != mas::RawFormat::Csv) {
+            std::cerr << "error: --engine=cuda reads CSV only, got "
+                      << mas::raw_format_name(mas::raw_format_for(argv[i]))
+                      << " input " << argv[i] << "\n";
+            return 2;
+        }
+        const auto probe = mas::open_raw_reader(argv[i]);
+        if (!probe->is_open()) {
             std::cerr << "error: cannot open input " << argv[i]
-                      << (probe.header_error().empty()
+                      << (probe->header_error().empty()
                               ? ""
-                              : (": " + probe.header_error()))
+                              : (": " + probe->header_error()))
                       << "\n";
             return 2;
         }

@@ -9,7 +9,7 @@ Two tiers, each usable on its own:
 
 1. **Ingestion (C++)** — collapses a 1 Hz polling stream of 89 CSV day-files
    into reconstructed cap closures in DuckDB. 55.1M events over three months.
-2. **Analytics and reporting (Python)** — eight deterministic analysis tools, an
+2. **Analytics and reporting (Python)** — thirteen deterministic analysis tools, an
    LLM that chooses which of them to run and writes the prose, and the `arol`
    CLI. **No figure, table, or plot is computed by the model**; all of them
    come from the same parameterised SQL whether the model is involved or not
@@ -302,7 +302,7 @@ database stores, and the testing/validation scripts.
 | `chaos_e2e.sh` | Bash | Resilience test: SIGKILL a worker, verify full recovery |
 | `run_bench.sh` | Bash | Performance sweep across architectures, threads, and volumes |
 | `arol` | Python CLI | WP4 BOT interface: three fixed report types plus free-text `ask` |
-| analytics toolkit | Python | WP2: eight deterministic tools reading the `cap_events` store |
+| analytics toolkit | Python | WP2: thirteen deterministic tools reading the `cap_events` store |
 | report agent | Python + Claude | WP3: plans which tools to run and narrates the result |
 
 The C4 diagrams below predate the analytics tier and show the C++ ingestion
@@ -332,10 +332,12 @@ organized by layer.
 │   │   │   ├── CapEvent.hpp                # RawRow, CapEvent, NUM_HEADS, is_reject
 │   │   │   ├── CapEventExtractor.hpp       # Stateful per-head dedup engine
 │   │   │   ├── CapEventExtractorFlat.hpp   # Element-wise form + column loader (GPU precondition)
-│   │   │   └── Pipeline.hpp                # clean_file() orchestrator
+│   │   │   ├── Pipeline.hpp                # clean_file() orchestrator
+│   │   │   └── RawReader.hpp               # Raw day-file reader interface (any format)
 │   │   ├── store/                          # Storage layer (persistence)
 │   │   │   ├── EventStore.hpp              # IEventStore abstract interface (DIP seam)
 │   │   │   ├── CsvRawReader.hpp            # Raw telemetry CSV streaming reader
+│   │   │   ├── RawInput.hpp                # Parquet/JSON raw reader + open_raw_reader()
 │   │   │   ├── CsvEventStore.hpp           # CSV file persistence backend
 │   │   │   └── DuckDbEventStore.hpp        # DuckDB persistence backend (PIMPL)
 │   │   ├── agent/                          # Agent layer (MAS coordination)
@@ -357,6 +359,7 @@ organized by layer.
 │       │   └── Pipeline.cpp
 │       ├── store/                          # Store implementations
 │       │   ├── CsvRawReader.cpp
+│       │   ├── RawInput.cpp
 │       │   ├── CsvEventStore.cpp
 │       │   ├── DuckDbEventStore.cpp
 │       │   ├── ParquetEventStore.cpp
@@ -377,7 +380,7 @@ organized by layer.
 │           ├── bench_cpu_main.cpp          # → bench_cpu       (store-free contender)
 │           └── cuda_clean_main.cpp         # → mas_cuda_clean  (GPU contender, --verify)
 │
-├── tests/                                  # Google Test unit tests (21 files, 203 tests)
+├── tests/                                  # Google Test unit tests (22 files, 213 tests)
 │   ├── test_cap_event.cpp
 │   ├── test_cap_event_extractor.cpp
 │   ├── test_cap_event_extractor_flat.cpp   # The GPU precondition, proved against the stateful one
@@ -392,6 +395,7 @@ organized by layer.
 │   ├── test_duckdb_event_store.cpp
 │   ├── test_parquet_event_store.cpp
 │   ├── test_parquet_export.cpp
+│   ├── test_raw_input.cpp                  # Parquet/JSON input == CSV input
 │   ├── test_zmq_smoke.cpp
 │   ├── test_zmq_transport.cpp
 │   ├── test_zmq_e2e.cpp                    # Coordinator + worker over real sockets
@@ -417,12 +421,17 @@ organized by layer.
 │       ├── store.py                        # DuckDB connection + period scoping
 │       ├── result.py                       # ToolResult: values + status + provenance
 │       ├── cli.py                          # WP4: arol report kpi|drift|anomalies, arol ask
-│       ├── tools/                          # WP2: the eight deterministic analyses
+│       ├── tools/                          # WP2: the thirteen deterministic analyses
 │       │   ├── overview.py                 # Scope and data quality
 │       │   ├── success.py                  # The flagship KPI: success rates
 │       │   ├── torque.py                   # Per-head torque distribution
 │       │   ├── speed.py                    # Capping speed (pieces/hour)
 │       │   ├── idle.py                     # Idle periods (gaps-and-islands)
+│       │   ├── gaps.py                     # Machine stops: holes in the event stream
+│       │   ├── compare.py                  # Month/week side-by-side comparison, with the torque level and spread
+│       │   ├── filter.py                   # Closures above/below a torque value, of one outcome or head: exact count + first events
+│       │   ├── factors.py                  # Reject rate by hour of day (chi-square) and by torque (correlation, band zones)
+│       │   ├── methodology.py              # The documented pipeline: preprocessing, duplicates, assumptions, classification
 │       │   ├── anomaly.py                  # Threshold + robust (median +/- k*1.4826*MAD, floored) detection
 │       │   ├── trend.py                    # Mann-Kendall drift
 │       │   └── correlation.py              # Per-head torque correlation
@@ -431,12 +440,12 @@ organized by layer.
 │       │   ├── registry.py                 # The tools as data -> LLM + plan JSON schemas
 │       │   ├── router.py                   # Keyword router and the three canned plans
 │       │   ├── llm.py                      # The one place this project calls the API
-│       │   ├── planner.py                  # Claude -> a registry-validated plan
-│       │   ├── narrator.py                 # Claude -> prose around figures rendered from ToolResults
+│       │   ├── planner.py                  # Model -> a registry-validated plan (+ the torque level check)
+│       │   ├── narrator.py                 # Hosted: prose around the raw results. Local: an answer from the verified findings
 │       │   └── executor.py                 # Runs a plan; every failure becomes a value
 │       └── report/
-│           ├── render.py                   # The six mandated sections + tool-call trace
-│           ├── plots.py                    # Five matplotlib figures, driven only by ToolResults
+│           ├── render.py                   # The six mandated sections, the tables, the tool-call trace
+│           ├── plots.py                    # Eight matplotlib figures, driven only by ToolResults
 │           └── export.py                   # Self-contained HTML; best-effort PDF
 │   └── tests/                              # golden report + mocked-LLM agent tests (count guarded by test_readme_counts.py)
 │
@@ -598,7 +607,7 @@ nothing attached to it:
 | Target | Sources | Links |
 |--------|---------|-------|
 | `mas_clean_core` | `CapEventExtractor`, `CapEventExtractorFlat`, `CsvRawReader` | **nothing** — C++20 stdlib only (`psapi` on Windows) |
-| `mas_store` | `CsvEventStore`, `DuckDbEventStore`, `ParquetEventStore`, `ParquetExport`, `Pipeline` | `mas_clean_core` + DuckDB |
+| `mas_store` | `CsvEventStore`, `DuckDbEventStore`, `ParquetEventStore`, `ParquetExport`, `RawInput`, `Pipeline` | `mas_clean_core` + DuckDB |
 | `mas_agent` | `Message`, `CleaningWorker`, `Coordinator` | `mas_store` |
 | `mas_transport` | `ZmqTransport` | cppzmq |
 | `mas_core` | *(INTERFACE alias)* | `mas_agent` — kept so no call site changed |
@@ -616,7 +625,7 @@ nothing is what lets the benchmark build on a machine with no DuckDB at all.
 | `CapEvent` / `RawRow` | [`CapEvent.hpp`](core/include/mas/domain/CapEvent.hpp) | Domain value types. `NUM_HEADS=36`; a failure is any status with the reject bit set (`is_reject`), not a single code (the old `FAULT_STATUS=65` constant is gone). |
 | `CapEventExtractor` | [`CapEventExtractor.hpp`](core/include/mas/domain/CapEventExtractor.hpp) · [`.cpp`](core/src/domain/CapEventExtractor.cpp) | Stateful per-head dedup. Maintains `last_count_[36]`. Not thread-safe. |
 | `extract_flat()` / `RawColumns` / `load_columns()` | [`CapEventExtractorFlat.hpp`](core/include/mas/domain/CapEventExtractorFlat.hpp) · [`.cpp`](core/src/domain/CapEventExtractorFlat.cpp) | Element-wise form of the same transform, plus a whole-file CSV→columns loader. Stdlib only, no state across rows. Tolerates CRLF; validates the 109-column header. |
-| `clean_file()` | [`Pipeline.hpp`](core/include/mas/domain/Pipeline.hpp) · [`.cpp`](core/src/domain/Pipeline.cpp) | Orchestrator: CsvRawReader → CapEventExtractor → IEventStore in ≥8192-event batches (8192 is a floor: the flush check runs per row, which appends up to 36 events). |
+| `clean_file()` | [`Pipeline.hpp`](core/include/mas/domain/Pipeline.hpp) · [`.cpp`](core/src/domain/Pipeline.cpp) | Orchestrator: `open_raw_reader()` (CSV, Parquet or JSON) → CapEventExtractor → IEventStore in ≥8192-event batches (8192 is a floor: the flush check runs per row, which appends up to 36 events). |
 
 ### Store Layer
 
@@ -625,7 +634,8 @@ nothing is what lets the benchmark build on a machine with no DuckDB at all.
 | Component | File(s) | Description |
 |-----------|---------|-------------|
 | `IEventStore` | [`EventStore.hpp`](core/include/mas/store/EventStore.hpp) | Abstract `write(span<CapEvent>)` interface (DIP seam). |
-| `CsvRawReader` | [`CsvRawReader.hpp`](core/include/mas/store/CsvRawReader.hpp) · [`.cpp`](core/src/store/CsvRawReader.cpp) | Streams raw 109-column CSVs. Skips malformed rows with counter. |
+| `CsvRawReader` | [`CsvRawReader.hpp`](core/include/mas/store/CsvRawReader.hpp) · [`.cpp`](core/src/store/CsvRawReader.cpp) | Streams raw 109-column CSVs. Skips malformed rows with counter. Implements `RawReader` ([`RawReader.hpp`](core/include/mas/domain/RawReader.hpp)). |
+| `TabularRawReader`, `open_raw_reader()` | [`RawInput.hpp`](core/include/mas/store/RawInput.hpp) · [`.cpp`](core/src/store/RawInput.cpp) | Parquet and JSON raw day-files through DuckDB, streamed. Columns matched by name; same row-validity policy as CSV. `open_raw_reader()` picks the reader by extension and is what `clean_file()` and every probe use. |
 | `CsvEventStore` | [`CsvEventStore.hpp`](core/include/mas/store/CsvEventStore.hpp) · [`.cpp`](core/src/store/CsvEventStore.cpp) | CSV file backend. Writes header on construction. |
 | `DuckDbEventStore` | [`DuckDbEventStore.hpp`](core/include/mas/store/DuckDbEventStore.hpp) · [`.cpp`](core/src/store/DuckDbEventStore.cpp) | DuckDB backend (PIMPL). Staging → merge. `merge_from()` with best-effort DETACH, `merge_all()` (the bulk path mas_merge takes). `export_parquet()` was deliberately removed — the header explains why (COPY ... TO truncates; the guarded `export_store_to_parquet` is the one export path). |
 | `ParquetEventStore` | [`ParquetEventStore.hpp`](core/include/mas/store/ParquetEventStore.hpp) · [`.cpp`](core/src/store/ParquetEventStore.cpp) | Experimental Parquet backend: one file per input, no index, no WAL. Buffers in memory, writes on `close()` through a temp + atomic rename; `abandon()` for a clean that failed. |
@@ -820,10 +830,12 @@ that gets handed over.
 ### `clean` — Single-File Batch Pipeline
 
 ```
-usage: clean [--format duckdb|parquet] <raw_in.csv> <events_out.csv|.duckdb|out_dir> <machine_id>
+usage: clean [--format duckdb|parquet] <raw_in.csv|.parquet|.json> <events_out.csv|.duckdb|out_dir> <machine_id>
 ```
 
-Processes a single raw CSV day-file. Output selection:
+Processes a single raw day-file. The input format is its extension:
+`.parquet`, `.json` / `.jsonl` / `.ndjson`, anything else is CSV (see
+[Raw input formats](#raw-input-formats)). Output selection:
 - `--format parquet` → the second argument is a *directory*; writes
   `<dir>/<input basename without extension>.parquet` via `ParquetEventStore`. Nothing is written
   at all if the clean fails, so a short file never reads as a whole day.
@@ -907,6 +919,31 @@ usage: mas_merge <dst.duckdb> <machine_id> <src1.duckdb> [src2.duckdb ...]
 ```
 
 Merges one or more per-worker stores into a unified destination. **Crash-tolerant:** a corrupt source store (from a killed worker) is skipped with a warning instead of aborting. Idempotent: running twice produces the same result.
+
+### Raw input formats
+
+The brief asks for pools in "CSV / JSON / Parquet" (§3.1). Every tool that
+takes a raw day-file — `clean`, `mas_monolith`, `mas_coordinator`/`mas_worker` —
+accepts all three; the format is the extension (case-insensitive):
+
+| Extension | Reader |
+|---|---|
+| `.parquet` | `TabularRawReader` via DuckDB `read_parquet` |
+| `.json`, `.jsonl`, `.ndjson` | `TabularRawReader` via DuckDB `read_json` (array or newline-delimited records) |
+| anything else | `CsvRawReader` (unchanged, no DuckDB) |
+
+The file must carry exactly the 109 AROL columns (`timestamp`, `H01 Count` …
+`H36 Status`). Parquet and JSON columns are matched **by name**, so their order
+does not matter; a missing or extra column refuses the file and names the
+column. Every cell goes through the same `parse_row_fields()` policy as a CSV
+cell, so a null, non-numeric or out-of-range value skips that row (counted in
+the "skipped N malformed rows" warning), not the file. Timestamps are
+normalised to the pool's `2026-02-27T16:00:00.000` spelling, whether the file
+stores a Parquet `TIMESTAMP` or a string like `2026-02-27 16:00:00`.
+
+Verified on a real day (2026-02-28, 806,785 events): the CSV, a Parquet and a
+JSON conversion of it produce stores identical row for row. `--engine=cuda`
+stays CSV-only (the GPU loader parses CSV text) and refuses other inputs.
 
 ### `mas_export` — Parquet Export
 
@@ -1303,7 +1340,7 @@ cmake --build build --parallel
 | `MAS_BUILD_TESTS` | `ON` | Build the GoogleTest suite. `OFF` drops the last dependency that needs network. |
 
 The default triple (`OFF, ON, OFF, ON`) is the build this project has always
-had: **192 tests green**. With `MAS_BENCH_ONLY=ON` **no tests are built at
+had: **202 tests green**. With `MAS_BENCH_ONLY=ON` **no tests are built at
 all** — the suite is a googletest fetch and the bench build's contract is
 "downloads nothing", so `_deps/` is never created:
 
@@ -1437,57 +1474,74 @@ python3 -m venv .venv
 ### Generate a report
 
 ```bash
-# First write a config naming your store (the repo ships no arol.json;
-# a missing --config file exits 2 with the message naming it):
+# First write a config naming your store (the repo ships no arol.json).
+# ./arol.json is read automatically; --config FILE points elsewhere, and a
+# missing --config file exits 2 with the message naming it:
 cat > arol.json <<'JSON'
 { "store_path": "events_3mo.duckdb", "machine_id": "MCC" }
 JSON
-scripts/arol report kpi       --period 2026-02          --config arol.json
-scripts/arol report drift     --period 2026-02..2026-04 --config arol.json
-scripts/arol report anomalies --period 2026-02          --config arol.json
+scripts/arol report kpi       --period 2026-02
+scripts/arol report drift     --period 2026-02..2026-04
+scripts/arol report anomalies --period 2026-02
 ```
 
 Each writes a self-contained directory: `report.md` (source of truth),
 `report.html` (portable, plots inlined as data URIs), `trace.json` (every tool
-call with its arguments and row counts), and PNGs.
+call with its arguments and row counts), the tables (a row per head or per
+day, where the plan has them), and PNGs.
 
 These three verbs run **fixed plans with no model in the loop** — the same store
 and period gives the same report every time, apart from the generation timestamp
 in the header. Committed examples are under
 [`docs/reports/`](docs/reports/), and every number in them was reconciled
 against a direct DuckDB query in the [validation log](docs/validation-log.md)
-when it was generated. They are current: all four were regenerated on
-2026-08-19 against a rebuilt store, and re-verified against it since.
+when it was generated (2026-08-19, against a rebuilt store). The report has
+gained findings and tables since: regenerate the examples with
+[`scripts/demo.sh`](scripts/demo.sh) before relying on their layout.
 [`docs/reports/README.md`](docs/reports/README.md) is the staleness registry —
-which artifact is invalidated by what, and what changes when it is rebuilt;
-its table is empty exactly when the committed reports match the code.
+which artifact is invalidated by what, and what changes when it is rebuilt.
 
 ### Ask a question
 
 ```bash
-export ANTHROPIC_API_KEY=...
+ollama serve && ollama pull qwen3:14b      # once; the local model is the default
 scripts/arol ask "which head behaves differently, and why?" --period 2026-02
 ```
 
-Claude chooses which tools to run and writes the narrative. **Every figure,
-plot, trace row and limits entry is rendered from the tool results**, computed
-by the same deterministic SQL the `report` verbs use, regardless of what the
-model says. The honest boundary: the model's prose itself (the Findings
-narrative, next-checks, and the plan's goal line) is quoted as written, and a
-number the model writes into a sentence is not machine-checked against the
-values -- a lying narrative would be contradicted by the trace on the same
-page, not silently corrected (see
-[`docs/agent-decision-flow.md`](docs/agent-decision-flow.md), "Where the
+The model chooses which tools to run and writes the answer. The report opens
+with an **Answer** bullet (a few statements from the model), and beneath it come
+the deterministic findings, the tables and the figures. **Every figure, table,
+plot, trace row and limits entry is rendered from the tool results**, computed by
+the same deterministic SQL the `report` verbs use, regardless of what the model
+says.
+
+The honest boundary: the model's words appear in the *Goal* line, the step
+rationales and the answer (with a hosted model, in *Findings* and *Next checks*).
+With a local model every number in the answer must be in the findings, the tables
+or the question, or the answer is rejected and the deterministic summary stands;
+with a hosted model that is asked, not checked. Neither catches a sentence that is
+wrong without a number, which stays visible next to the finding it contradicts
+(see [`docs/agent-decision-flow.md`](docs/agent-decision-flow.md), "Where the
 model's words can appear").
 
-With no API key, no network, a refusal, or a malformed plan, `ask` falls back to
-a keyword router and the report's *Confidence and limits* section names the
-reason. A model failure costs readability, never correctness.
+The questions it handles are those of the project brief (slides 13-18 of the
+proposal): counts and rates, overall and per head; torque statistics, the
+distribution and out-of-range readings; trends, daily breakdowns and the hour of
+the day; filters ("how many closures above 2.5 Nm", "the failed events of head
+3"); comparisons between heads; explanations, where it says what the data cannot
+answer (causes, operators, lots); charts; and how the data was cleaned.
+[`python/tests/test_brief_queries_live.py`](python/tests/test_brief_queries_live.py)
+asks all 43 and checks the answers against SQL (opt-in, see *Testing*).
+
+With no model reachable (Ollama not running, no hosted credential), a refusal, or
+a malformed plan, `ask` falls back to a keyword router and the report's
+*Confidence and limits* section names the reason. A model failure costs
+readability, never correctness.
 
 ### Running the model on the Anthropic API
 
-`provider: anthropic` is the default, so `ask` already talks to the hosted API
-and the only thing missing on a fresh clone is a credential. The client is
+`provider: ollama` is the default, so the hosted API is opt-in: pass
+`--provider anthropic` (or set it in `arol.json`) and supply a credential. The client is
 constructed with no key argument
 ([`agent/llm.py`](python/analytics/agent/llm.py)), so the SDK resolves
 credentials itself — first match wins:
@@ -1500,25 +1554,27 @@ export ANTHROPIC_API_KEY=sk-ant-...
 ant auth login
 ant auth status     # says which credential source is active
 
-scripts/arol ask "which head behaves differently?" --period 2026-02
+scripts/arol ask "which head behaves differently?" --period 2026-02 \
+  --provider anthropic
 ```
 
 The `anthropic` package is already pinned in
 [`python/requirements.txt`](python/requirements.txt), so the venv built above
 needs nothing extra.
 
-**Choosing the model.** The default is `claude-opus-5`; `--model` overrides it
-without touching the config:
+**Choosing the model.** `--model` picks the hosted model without touching the
+config; `claude-opus-5` is the one this section was written against:
 
 ```bash
 scripts/arol ask "any anomalies in February?" --period 2026-02 \
-  --model claude-sonnet-5
+  --provider anthropic --model claude-sonnet-5
 ```
 
 | field | default | what it does |
 |---|---|---|
-| `provider` | `anthropic` | `anthropic` or `ollama`; the only field that has to change to move between hosted and local |
-| `model` | `claude-opus-5` | any current model id — `claude-sonnet-5` and `claude-haiku-4-5` are the cheaper tiers |
+| `provider` | `ollama` | `ollama` or `anthropic`; the only field that has to change to move between local and hosted |
+| `model` | `qwen3:14b` | with `anthropic`, any current model id — `claude-sonnet-5` and `claude-haiku-4-5` are the cheaper tiers |
+| `think` | `false` | Ollama only; skips qwen3's reasoning pass. Set `null` for a non-thinking model (qwen2.5) |
 | `effort` | `high` | `low`..`max`; Anthropic-only, and deliberately never sent to Ollama, which rejects it |
 | `max_tokens` | `16000` | a reply cut off here is reported as exactly that, not as malformed JSON |
 | `api_timeout_s` | `120.0` | passed straight to the client |
@@ -1536,21 +1592,22 @@ limits section. A hosted-model outage changes what the report says about
 itself; it does not lose the analysis, because no figure or number was ever
 the model's to compute.
 
-**Cost.** The planner prompt is ~1,850 tokens at `--planning plan` and ~16 at
-`classify` (table below), so a single `ask` is cents at Opus list pricing
-($5/$25 per million input/output tokens) and less on Sonnet or Haiku. Drop to
-`--planning classify` if you are running many questions.
+**Cost.** The planner prompt is ~4,000 tokens at `--planning plan` and ~90 at
+`classify` (table below), and a hosted narrator is sent the raw results on top, so
+by list price a single `ask` is cents at Opus ($5/$25 per million input/output
+tokens) and less on Sonnet or Haiku. That is an estimate: the hosted path has not
+been run since the toolset grew. Drop to `--planning classify` if you are running
+many questions.
 
 ### Running the model locally
 
-`ask` works against a hosted model or one running on your machine. The only
-field that changes is `provider`:
+`ask` works against a model running on your machine (the default) or a hosted
+one. The only field that changes is `provider`:
 
 ```bash
-ollama serve && ollama pull qwen2.5:7b
+ollama serve && ollama pull qwen3:14b
 
-scripts/arol ask "which head behaves differently?" --period 2026-02 \
-  --provider ollama --model qwen2.5:7b
+scripts/arol ask "which head behaves differently?" --period 2026-02
 ```
 
 Nothing below the planner knows the difference: both paths return the same plan
@@ -1562,12 +1619,13 @@ can route reliably long before it can compose a plan:
 
 | `--planning` | the model produces | prompt | works on |
 |---|---|---:|---|
-| `plan` (default) | the whole sequence, arguments included | ~1,850 tok | a capable model |
-| `select` | which tools to run; their defaults supply the arguments | ~410 tok | a mid-size local model |
-| `classify` | one of the three report types; its fixed plan runs | ~16 tok | almost anything |
+| `plan` (default) | the whole sequence, arguments included | ~3,990 tok | a capable model |
+| `select` | which tools to run; their defaults supply the arguments | ~1,260 tok | a mid-size local model |
+| `classify` | one of the three report types; its fixed plan runs | ~90 tok | almost anything |
 
 All three produce registry-validated steps, so the tier is a cost choice, not a
-correctness one.
+correctness one. The sizes are as Ollama counts them, with thirteen tools; they
+were ~1,850, ~410 and ~16 with eight. That is why `num_ctx` has a floor of 6144.
 
 **Measured on qwen2.5:7b** (Apple M3, 16 GB) — see the
 [validation log](docs/validation-log.md):
@@ -1581,8 +1639,16 @@ correctness one.
   and replaced by the deterministic summary, with the reason printed in the
   report's limits section.
 
-A local model is slower: expect ~2 s to classify but ~3 min for a full `ask` on
-the three-month store, most of it narration.
+On qwen2.5:7b a local model was slow: ~2 s to classify but ~3 min for a full
+`ask` on the three-month store, most of it narration.
+
+**Measured on qwen3:14b** (the default; 2026-10-09, see the
+[validation log](docs/validation-log.md)): an `ask` takes 6 to 36 s across the 43
+example queries of the brief (median 11 s), 41 of the 43 answers are right and
+supported when checked against SQL, and 2 are marked weak. Handed the raw results
+as JSON, this model's narration was rejected on every run and, once accepted, said
+things the numbers contradicted ("all 36 heads drift"); handed the verified
+sentences instead, it answers.
 
 A committed run of the whole loop on this model is in
 [`docs/reports/ask-live-sample/`](docs/reports/ask-live-sample/) (RTX 4070
@@ -1650,14 +1716,17 @@ No path, band, or threshold is hard-coded. `arol.json`:
   "mad_k": 3.0,
   "idle_min_seconds": 300,
   "idle_max_gap_seconds": 600,
-  "provider": "anthropic",
-  "model": "claude-opus-5",
-  "effort": "high",
+  "provider": "ollama",
+  "model": "qwen3:14b",
+  "think": false,
   "planning": "plan"
 }
 ```
 
-For a local model, three fields change and the rest stay:
+For the hosted API instead: `"provider": "anthropic"`, `"model": "claude-opus-5"`,
+`"effort": "high"`.
+
+Tuning the local model — smaller narrator input, cheapest planning tier:
 
 ```json
 {
@@ -1671,9 +1740,28 @@ For a local model, three fields change and the rest stay:
 }
 ```
 
-`num_ctx` must be at least 4096 and is rejected below it: the planner prompt
-alone is ~2,600 tokens, Ollama defaults to 2048, and it **truncates silently**
+With a local model the narrator does not read the raw results: it is handed the
+deterministic findings and the question, and writes the answer that the report
+prints above them (see `docs/agent-decision-flow.md`, *Narration*).
+`narrator_max_items` therefore only caps the lists a hosted model is sent.
+
+`num_ctx` must be at least 6144 and is rejected below it: the planner prompt
+alone is ~3,600 tokens, Ollama defaults to 2048, and it **truncates silently**
 rather than erroring — which looks exactly like a stupid model.
+
+`think` (Ollama only) controls a thinking model's reasoning pass: `false` skips
+it for speed (qwen3, gpt-oss), `true` forces it, `"low"`/`"medium"`/`"high"`
+set gpt-oss's level. The default is `false`, matching the default qwen3:14b.
+With `null`, nothing is sent and the model's own default applies — set that
+for non-thinking models such as qwen2.5:
+
+```json
+{
+  "provider": "ollama",
+  "model": "qwen2.5:7b",
+  "think": null
+}
+```
 
 A configuration problem (unreadable config, unknown report type) exits 2 before
 any work starts. An analysis gap — an empty period, a head with too
@@ -1699,19 +1787,19 @@ it, `--pdf` logs how to install it and writes Markdown and HTML as normal.
 
 ## Testing
 
-The project has **203 C++ unit tests** across 21 Google Test files — 192 in the
+The project has **213 C++ unit tests** across 22 Google Test files — 202 in the
 default build plus the 11-case GPU/CPU differential behind `-DMAS_ENABLE_CUDA=ON`
-— plus **310
+— plus **580
 Python tests** for the analytics tier. Every test count in this
 README is asserted by `python/tests/test_readme_counts.py`, so adding a test and
 forgetting this paragraph fails the suite rather than quietly dating it.
 
 ```bash
-cd build && ctest -C Release --output-on-failure # 192 C++ tests in the default build; the 11-case GPU/CPU differential is compiled only with -DMAS_ENABLE_CUDA=ON (and skips without a device)
-cd python && ../.venv/bin/python -m pytest -q    # 310 Python tests (see the three gates below)
+cd build && ctest -C Release --output-on-failure # 202 C++ tests in the default build; the 11-case GPU/CPU differential is compiled only with -DMAS_ENABLE_CUDA=ON (and skips without a device)
+cd python && ../.venv/bin/python -m pytest -q    # 580 Python tests (see the four gates below)
 ```
 
-Three gates apply to the Python suite. Two are data gates: **6 tests** need the
+Four gates apply to the Python suite. Two are data gates: **6 tests** need the
 rebuilt 3-month store (`../events_3mo.duckdb`, from `scripts/build_store.sh`)
 and skip without it, and **2 tests** need a real extracted day-file and skip
 without that. The third is a credentials gate: **2 tests** need
@@ -1721,13 +1809,27 @@ account — see
 `python/tests/test_anthropic_schema_live.py`, which is the only test in the
 suite that leaves the machine.
 
-So a fresh clone shows 10 skips; a machine with the pool extracted but no store
-shows 8; and adding a key removes 2 more.
+A fourth gate is opt-in. **43 tests** need the store and a model on Ollama: each
+asks the real agent one of the brief's example queries and checks the answer
+against figures computed from the store with SQL of its own
+(`python/tests/test_brief_queries_live.py`). They take about nine minutes and
+skip, saying why, unless `AROL_LIVE_QUERIES=1` is set:
+
+```bash
+cd python && AROL_LIVE_QUERIES=1 ../.venv/bin/python -m pytest -q tests/test_brief_queries_live.py
+```
+
+Two of the queries are marked `xfail` because their answers are known to be weak
+(`docs/validation-log.md`); an unexpected pass there means one has been fixed.
+
+So a fresh clone shows 53 skips; a machine with the pool extracted but no store
+shows 51; adding a key removes 2 more; and running with the store, a model and
+`AROL_LIVE_QUERIES=1` removes the 43.
 
 The C++ side has gates too, and this is the only place that says so: **4 C++
 tests** can skip in the default build. Two are pool-gated — the real-day-file
 half of `CapEventExtractorFlat` (765,711 events) and the whole of
-`test_bench_cpu_parity.cpp` — so on a fresh clone **192 tests green** means 190
+`test_bench_cpu_parity.cpp` — so on a fresh clone **202 tests green** means 200
 executed. The other two skip only where creating a symlink is denied
 (`test_atomic_publish.cpp`, `test_parquet_export.cpp`).
 
@@ -1740,6 +1842,7 @@ way).
 
 | Test File | What It Tests |
 |-----------|---------------|
+| `test_raw_input.cpp` | Parquet and JSON input: same rows and same events as the CSV twin, columns matched by name, missing/extra column refused and named, bad cells skip the row, out-of-order counted, missing and corrupt files |
 | `test_cap_event.cpp` | The status bitmask: a closure is rejected iff its status is odd (bit 0), across every condition in the brief's slide-6 table |
 | `test_cap_event_extractor.cpp` | Increment, aggregated, reset, held-dedup, first-observation seeding |
 | `test_cap_event_extractor_flat.cpp` | The GPU precondition: `extract_flat` and the stateful extractor emit identical events, all nine fields, on the edge cases and on a real day-file. Plus header validation (wrong count *and* wrong name) and CRLF/LF equivalence |
@@ -1803,7 +1906,7 @@ a number.
 
 ## Roadmap
 
-- [x] **Python analytics agents** — eight deterministic analysis tools, an LLM planner, a narrator whose figures and tables are rendered from the tool results, and the `arol` CLI. See [Analytics CLI and Reports](#analytics-cli-and-reports).
+- [x] **Python analytics agents** — thirteen deterministic analysis tools, an LLM planner, a narrator whose figures and tables are rendered from the tool results, and the `arol` CLI. See [Analytics CLI and Reports](#analytics-cli-and-reports).
 - [x] **CUDA cleaning pipeline and the three-way benchmark** — the transform is element-wise, proved by test, so it ports to the GPU; the portable driver measures Python, C++ and CUDA on one machine. See [CUDA cleaning benchmark](#cuda-cleaning-benchmark).
 - [x] **Run the CUDA sweep on real hardware** — done on an RTX 4070 Laptop (CUDA 13.3, Windows 11): first sweep 2026-08-10, re-measured 2026-08-13 with the corrected timers and 2026-08-16 on the post-review kernel with the pool's real machine id in the store rows. `--verify` caught a real 1-ulp GPU parse defect on the first run. Clean phase measured 1.08× the 8-thread C++ and 6.6× the single-thread; 1.08× end to end because the store dominates — see [docs/bench/results.md](docs/bench/results.md).
 - [x] **Attack the merge bottleneck** — the benchmark's headline finding. `DuckDbEventStore::merge_all()` replaces the per-row `INSERT OR IGNORE` probes with one set-based dedup over the union: 65.9 s → 22.8 s in isolation (2.89×), ~2.1× across the M2 sweep, same rows; end to end on actively-cooled hardware the design lands at **3.83×** the sequential baseline (537.8 s → 140.4 s, MAS N=16, resweep 2026-08-13). Partitioned Parquet output or a concurrent-writer store remain the larger redesigns

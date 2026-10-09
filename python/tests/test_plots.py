@@ -284,3 +284,49 @@ def test_anomalies_over_time_plots_all_three_groups(tmp_path, monkeypatch):
     assert "(2)" in count_for("rejected"), labels
     assert "(1)" in count_for("torque band"), labels
     assert "(2)" in count_for("robust deviation"), labels
+
+
+def test_torque_histogram_writes_a_png(tiny_cfg, tmp_path):
+    from analytics.tools.torque import torque_stats
+    result = torque_stats(tiny_cfg, period="2026-02", outcome="successful")
+    name = plots.torque_histogram(result, tmp_path)
+    assert name == "torque_histogram.png" and (tmp_path / name).stat().st_size > 0
+
+
+def test_torque_histogram_is_not_drawn_for_a_per_head_result(tiny_cfg, tmp_path):
+    from analytics.tools.torque import torque_stats
+    result = torque_stats(tiny_cfg, period="2026-02", by="head")
+    assert plots.torque_histogram(result, tmp_path) is None
+
+
+def test_failed_closures_per_day_writes_a_png(tiny_cfg, tmp_path):
+    result = success_rates(tiny_cfg, period="2026-02", by="day")
+    name = plots.failed_closures_per_day(result, tmp_path)
+    assert name == "failed_closures_per_day.png" and (tmp_path / name).stat().st_size > 0
+
+
+def test_failed_closures_per_day_is_not_drawn_when_nothing_failed(tiny_cfg, tmp_path):
+    # An empty chart reads as "zero", which is a claim the table already makes.
+    result = ToolResult.ok("success_rates", [
+        {"day": "2026-02-01", "total": 10, "successful": 10, "failed": 0, "success_rate": 1.0}])
+    assert plots.failed_closures_per_day(result, tmp_path) is None
+
+
+def _hour_values(rejected=748):
+    hours = [{"hour": h, "closures": 1000, "rejected": rejected // 24,
+              "reject_rate": (rejected // 24) / 1000} for h in range(24)]
+    return {"by": "hour_of_day", "hours": hours, "closures": 24000, "rejected": rejected,
+            "reject_rate": rejected / 24000, "p_value": 0.02}
+
+
+def test_failure_by_hour_writes_a_png(tmp_path):
+    name = plots.failure_by_hour(ToolResult.ok("failure_correlation", _hour_values()), tmp_path)
+    assert name == "failure_by_hour.png" and (tmp_path / name).stat().st_size > 0
+
+
+def test_failure_by_hour_is_not_drawn_when_nothing_was_rejected(tmp_path):
+    assert plots.failure_by_hour(ToolResult.ok("failure_correlation", _hour_values(0)), tmp_path) is None
+
+
+def test_failure_by_hour_is_not_drawn_for_the_torque_result(tmp_path):
+    assert plots.failure_by_hour(ToolResult.ok("failure_correlation", {"by": "torque"}), tmp_path) is None

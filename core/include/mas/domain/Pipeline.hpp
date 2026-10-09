@@ -13,7 +13,8 @@ struct CleanFileStats {
     std::size_t out_of_order_rows = 0;  // accepted, but ts <= previous row's
 };
 
-// Read raw telemetry CSV at in_path, write every extracted cap event to
+// Read the raw telemetry day-file at in_path (CSV, Parquet or JSON, by
+// extension -- see RawInput.hpp), write every extracted cap event to
 // `store` in batches. Returns the number of events written, or -1 if
 // in_path cannot be opened. Store exceptions propagate to the caller.
 long long clean_file(const std::string& in_path, IEventStore& store,

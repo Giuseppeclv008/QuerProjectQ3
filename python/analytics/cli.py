@@ -33,6 +33,10 @@ from analytics.report import export, render
 
 log = logging.getLogger("arol")
 
+# Picked up from the current directory when --config is not given, so the
+# common case -- one store per checkout -- needs no flag on every command.
+DEFAULT_CONFIG = "arol.json"
+
 
 def _build_parser():
     # The options live on a parent parser rather than on the top-level one so
@@ -41,7 +45,8 @@ def _build_parser():
     # accept a top-level option once a subcommand has been read.
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--config", default=None,
-                        help="JSON config file (defaults apply if omitted)")
+                        help=f"JSON config file (default: ./{DEFAULT_CONFIG} if present, "
+                             "else built-in defaults)")
     common.add_argument("--out", default="reports",
                         help="directory to write report directories into")
     common.add_argument("--period", default=None,
@@ -54,7 +59,7 @@ def _build_parser():
     common.add_argument("--provider", choices=list(Config.PROVIDERS), default=None,
                         help="where the model runs (default: from config)")
     common.add_argument("--model", default=None,
-                        help="model name, e.g. claude-opus-5 or qwen2.5:7b")
+                        help="model name, e.g. qwen2.5:7b or claude-opus-5")
     common.add_argument("--planning", choices=list(Config.PLANNING), default=None,
                         help="how much of the planning the model does "
                              "(plan=compose it, select=pick tools, classify=pick a report)")
@@ -85,7 +90,10 @@ def main(argv=None):
     configure(args.verbose)
 
     try:
-        cfg = load_config(args.config)
+        path = args.config
+        if path is None and os.path.isfile(DEFAULT_CONFIG):
+            path = DEFAULT_CONFIG
+        cfg = load_config(path)
         # A CLI override beats the file. Re-running __post_init__ through
         # replace() means an invalid override is rejected the same way an
         # invalid config file is, rather than failing later at call time.

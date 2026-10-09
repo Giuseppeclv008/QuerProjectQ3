@@ -16,7 +16,26 @@ def test_every_wp2_tool_is_registered():
     assert set(registry.TOOLS) == {
         "overview", "success_rates", "torque_stats", "capping_speed",
         "idle_periods", "anomalies", "trend", "head_correlation",
+        "event_gaps", "compare_periods", "closure_filter", "methodology",
+        "failure_correlation",
     }
+
+
+def test_every_tool_says_what_it_does_not_measure():
+    # The sentence reaches the planner and the report's limits section; a
+    # tool without one is a tool a reader can take for more than it is.
+    for name, spec in registry.TOOLS.items():
+        assert spec.not_measured.strip(), f"{name} has no not_measured sentence"
+        schema = next(s for s in registry.tool_schemas() if s["name"] == name)
+        assert spec.not_measured in schema["description"]
+
+
+def test_the_new_tools_reuse_existing_parameter_names():
+    # The flat plan schema merges arguments by NAME, so a new tool that
+    # invented `threshold` or `granularity` would widen the schema for every
+    # tool. Both reuse names the registry already had.
+    assert set(registry.TOOLS["event_gaps"].params) == {"period", "min_seconds"}
+    assert set(registry.TOOLS["compare_periods"].params) == {"period", "by"}
 
 
 def test_every_registered_param_exists_on_the_callable():
@@ -80,7 +99,8 @@ def test_plan_schema_unions_enums_that_clash_across_tools():
     # the model could never legally emit the KPI report's success_rates(by="head").
     args = (registry.plan_json_schema()["properties"]["steps"]["items"]
             ["properties"]["args"]["properties"])
-    assert set(args["by"]["enum"]) == {"head", "day", "overall", "hour", None}
+    assert set(args["by"]["enum"]) == {"head", "day", "overall", "hour",
+                                       "month", "week", "hour_of_day", "torque", None}
 
 
 def test_plan_schema_requires_every_argument_key():

@@ -79,9 +79,10 @@ def anomalies(cfg, period=None, method="both"):
 
     # rows_scanned is the provenance denominator: how many closures this tool
     # examined in scope, so "0 anomalies" is distinguishable from "no data".
-    scanned = con.execute(
-        f"SELECT COUNT(*) FROM cap_events WHERE {where}", params
-    ).fetchone()[0]
+    scanned, capping_operations = con.execute(
+        f"SELECT COUNT(*), COUNT(*) FILTER (WHERE app_torque > 0) "
+        f"FROM cap_events WHERE {where}", params
+    ).fetchone()
 
     cap = cfg.max_anomaly_items
     fault_rows, n_faults = _sample(
@@ -94,8 +95,16 @@ def anomalies(cfg, period=None, method="both"):
          "reason": "reject: " + ", ".join(decode(r[3])["conditions"] or ["unspecified"])}
         for r in fault_rows
     ]
+    # Exact, unlike `faults`, which is capped: grouped on the raw status and
+    # decoded here, so every reject counts once per condition its status sets.
+    faults_by_condition = {}
+    for status, n in con.execute(
+            f"SELECT status, COUNT(*) FROM cap_events "
+            f"WHERE {REJECT_SQL} AND {where} GROUP BY status", params).fetchall():
+        for condition in decode(status)["conditions"] or ["unspecified"]:
+            faults_by_condition[condition] = faults_by_condition.get(condition, 0) + n
 
-    threshold_hits, n_threshold = [], 0
+    threshold_hits, n_threshold, threshold_by_head = [], 0, []
     if method in ("threshold", "both"):
         rows, n_threshold = _sample(
             con,
@@ -109,8 +118,21 @@ def anomalies(cfg, period=None, method="both"):
              "reason": f"torque outside band [{cfg.torque_min}, {cfg.torque_max}]"}
             for r in rows
         ]
+        # "Which heads have the most out-of-band readings" is a question about
+        # heads, and `threshold_hits` is capped and ordered by time, so the
+        # per-head count is its own exact grouping, most readings first.
+        threshold_by_head = [
+            {"head_id": int(h), "count": int(n)}
+            for h, n in con.execute(
+                f"""SELECT head_id, COUNT(*) FROM cap_events
+                    WHERE app_torque > 0 AND (app_torque < ? OR app_torque > ?)
+                      AND {where}
+                    GROUP BY head_id ORDER BY COUNT(*) DESC, head_id""",
+                [cfg.torque_min, cfg.torque_max] + params).fetchall()
+        ]
 
     deviation_hits, n_deviation, fallbacks = [], 0, {}
+    heads_at_floor, heads_total = 0, 0
     if method in ("deviation", "both"):
         # MEDIAN(|x - median|) per head, then flag |x - median| > k * scale,
         # where scale is the sigma-consistent spread 1.4826*MAD: raw MAD is
@@ -186,6 +208,15 @@ def anomalies(cfg, period=None, method="both"):
                 scale_ctes + " SELECT head_id, basis FROM scale WHERE basis <> 'mad'",
                 params + [cfg.mad_floor]).fetchall()
         }
+        # A head whose band is the floor is measured against a fixed distance
+        # from its median (k * mad_floor), not against its own spread: on the
+        # real store all 36 are. The count is then the share of readings that
+        # far from the median, and it is not noise: 1.1% of capping operations
+        # in February 2026, 20.4% in March-April where torque stepped. A change
+        # in that share is a change in torque level.
+        heads_total, heads_at_floor = con.execute(
+            scale_ctes + " SELECT COUNT(*), COUNT(*) FILTER (WHERE s <= ?) FROM scale",
+            params + [cfg.mad_floor, cfg.mad_floor]).fetchone()
 
     return ToolResult.ok(
         "anomalies",
@@ -196,6 +227,15 @@ def anomalies(cfg, period=None, method="both"):
             # Heads whose deviation band is not the usual k*MAD one, and what it
             # is instead ("iqr" or "exact"). Empty when every head had MAD > 0.
             "deviation_fallbacks": fallbacks,
+            "capping_operations": capping_operations,
+            "faults_by_condition": faults_by_condition,
+            # Exact out-of-band readings per head, most first; empty when the
+            # threshold method did not run.
+            "threshold_by_head": threshold_by_head,
+            # Heads whose deviation scale is held at cfg.mad_floor, out of the
+            # heads measured. 0/0 when the deviation method did not run.
+            "deviation_heads_at_floor": heads_at_floor,
+            "deviation_heads": heads_total,
             # Exact totals, independent of how many were itemised above.
             "counts": {
                 "faults": n_faults,

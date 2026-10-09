@@ -63,8 +63,7 @@ class OllamaClient:
     """A minimal Ollama chat client.
 
     Deliberately stdlib-only. Ollama's chat endpoint is one POST, and the
-    `ollama` package would add a dependency for a provider a user may never
-    enable -- while `anthropic` is already required for the default path.
+    `ollama` package would add a dependency the default path does not need.
     """
 
     def __init__(self, host, timeout):
@@ -90,17 +89,21 @@ def _ollama_client(cfg):
 
 
 def _ollama_call(cfg, client, system, prompt, schema):
+    body = {
+        "model": cfg.model,
+        "stream": False,
+        # Ollama constrains generation to the schema via a grammar. It does
+        # not accept Anthropic's output_config/thinking, so they are absent.
+        "format": schema,
+        "options": {"num_ctx": cfg.num_ctx, "temperature": 0},
+        "messages": [{"role": "system", "content": system},
+                     {"role": "user", "content": prompt}],
+    }
+    # Only when configured: the model's own default otherwise.
+    if cfg.think is not None:
+        body["think"] = cfg.think
     try:
-        response = client.chat({
-            "model": cfg.model,
-            "stream": False,
-            # Ollama constrains generation to the schema via a grammar. It does
-            # not accept Anthropic's output_config/thinking, so they are absent.
-            "format": schema,
-            "options": {"num_ctx": cfg.num_ctx, "temperature": 0},
-            "messages": [{"role": "system", "content": system},
-                         {"role": "user", "content": prompt}],
-        })
+        response = client.chat(body)
     except Exception as exc:                       # noqa: BLE001
         return None, f"the call failed: {exc}"
 

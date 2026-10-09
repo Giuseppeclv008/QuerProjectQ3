@@ -9,8 +9,13 @@ silently making it unreachable.
 from dataclasses import dataclass
 
 from analytics.tools.anomaly import anomalies
+from analytics.tools.compare import compare_periods
 from analytics.tools.correlation import head_correlation
+from analytics.tools.factors import failure_correlation
+from analytics.tools.filter import closure_filter
+from analytics.tools.gaps import event_gaps
 from analytics.tools.idle import idle_periods
+from analytics.tools.methodology import TOPICS, methodology
 from analytics.tools.overview import overview
 from analytics.tools.speed import capping_speed
 from analytics.tools.success import success_rates
@@ -37,6 +42,10 @@ class ToolSpec:
     fn: object
     description: str
     params: dict          # param name -> JSON-schema fragment
+    # What the tool does NOT measure, in one sentence. Shown to the planner
+    # beside the description and printed in the report whenever the tool ran,
+    # so a reader cannot take an answer for more than it is.
+    not_measured: str = ""
 
 
 TOOLS = {
@@ -48,6 +57,8 @@ TOOLS = {
             "how many succeeded/failed/no-load, which heads fired, the time range "
             "covered, and counts of null torque, out-of-band torque, and counter resets.",
             {"period": _PERIOD},
+            "Not a rate or a trend: it counts the period as a whole, and says "
+            "nothing about when within it anything happened.",
         ),
         ToolSpec(
             "success_rates", success_rates,
@@ -56,6 +67,8 @@ TOOLS = {
             "is lowest', 'show a daily breakdown'.",
             {"period": _PERIOD,
              "by": _enum(["head", "day", "overall"], "grouping; default 'head'")},
+            "Not why a closure was rejected, nor production volume: no-load "
+            "cycles and closures without a verdict are outside the rate.",
         ),
         ToolSpec(
             "torque_stats", torque_stats,
@@ -66,6 +79,9 @@ TOOLS = {
              "outcome": _enum(["successful", "failed", "all"],
                               "which closures to measure; default 'successful'"),
              "by": _enum(["head"], "set to 'head' for per-head breakdown; null = overall")},
+            "Not change over time (that is trend), not whether a closure passed, "
+            "and not how many readings fall outside the band (anomalies counts "
+            "those): a statistic over the whole period.",
         ),
         ToolSpec(
             "capping_speed", capping_speed,
@@ -73,6 +89,8 @@ TOOLS = {
             "over active buckets. Answers 'how fast is the machine running'.",
             {"period": _PERIOD,
              "bucket": _enum(["hour", "day"], "bucket size; default 'hour'")},
+            "Not downtime: hours with no closure are skipped, so the rate is "
+            "how fast the machine ran while it ran.",
         ),
         ToolSpec(
             "idle_periods", idle_periods,
@@ -83,15 +101,21 @@ TOOLS = {
             {"period": _PERIOD,
              "min_seconds": {"type": ["integer", "null"], "minimum": 1,
                              "description": "minimum run length in seconds; null = config default"}},
+            "Not machine downtime: a stopped machine emits no events and "
+            "cannot appear here (event_gaps measures that).",
         ),
         ToolSpec(
             "anomalies", anomalies,
             "Deterministic anomaly detection: rejected closures, torque outside the "
             "configured operating band, and per-head robust deviation (median +/- k*MAD). "
-            "Answers 'any torque outside the expected range', 'abnormal intervals'.",
+            "Counts the out-of-band readings per head, most first. Answers 'any "
+            "torque outside the expected range', 'which heads have the most "
+            "out-of-band readings', 'abnormal intervals'.",
             {"period": _PERIOD,
              "method": _enum(["threshold", "deviation", "both"],
                              "detection method; default 'both'")},
+            "Not causes: the data holds no operator, cap lot, supplier or "
+            "maintenance record, so a flag says when and where, never why.",
         ),
         ToolSpec(
             "trend", trend,
@@ -103,6 +127,8 @@ TOOLS = {
              "by": _enum(["day", "hour"], "bucket size; default 'day'"),
              "window": {"type": ["integer", "null"], "minimum": 1,
                         "description": "rolling window in buckets; null = 7"}},
+            "Not production volume or downtime: a drift is a monotone trend in "
+            "one head's torque or success rate.",
         ),
         ToolSpec(
             "head_correlation", head_correlation,
@@ -114,6 +140,79 @@ TOOLS = {
                        "items": {"type": "integer", "minimum": 1},
                        "description": "heads to compare; null = every head in the store"},
              "by": _enum(["day", "hour"], "bucket size; default 'day'")},
+            "Not level: correlation ignores a per-head offset, so a head "
+            "running steadily lower than the rest scores as normal.",
+        ),
+        ToolSpec(
+            "event_gaps", event_gaps,
+            "Machine-wide holes in the event stream: stretches with no event "
+            "from any head, longer than a threshold. The closest measure of "
+            "downtime the store holds -- total hours, count, and the longest. "
+            "Answers 'how long was the machine stopped', 'when did it stop'.",
+            {"period": _PERIOD,
+             "min_seconds": {"type": ["integer", "null"], "minimum": 1,
+                             "description": "shortest gap counted, in seconds; "
+                                            "null = config default (600)"}},
+            "Not the cause of a stop, and not which head: silence is the "
+            "machine stopped or its data missing, and the two look the same.",
+        ),
+        ToolSpec(
+            "compare_periods", compare_periods,
+            "Month-by-month or week-by-week comparison of the whole machine: "
+            "capping operations, caps per day, rejects and reject rate, no-load "
+            "cycles and their share, active days, the torque mean and spread, and "
+            "the change from the first bucket to the last. Answers 'did it get "
+            "worse', 'compare March and April'.",
+            {"period": _PERIOD,
+             "by": _enum(["month", "week"], "bucket size; default 'month'")},
+            "Not per head and not why a period differs: it compares totals.",
+        ),
+        ToolSpec(
+            "closure_filter", closure_filter,
+            "Counts, exactly, the capping operations that match a filter the "
+            "operator names -- torque above and/or below a value in Nm, one "
+            "outcome, one head -- with the count per head and the first events "
+            "listed. Answers 'how many closures had torque above X Nm', 'list the "
+            "failed events below a threshold', 'all failed events of head 3'.",
+            {"period": _PERIOD,
+             "above": {"type": ["number", "null"],
+                       "description": "torque strictly above this value, Nm; null = no limit"},
+             "below": {"type": ["number", "null"],
+                       "description": "torque strictly below this value, Nm; null = no limit"},
+             "outcome": _enum(["successful", "failed", "all"],
+                              "which closures; default 'all'"),
+             "head": {"type": ["integer", "null"], "minimum": 1,
+                      "description": "one head only; null = every head"}},
+            "Not the configured band (that is anomalies) and not why a closure "
+            "has its torque: it counts against the values given, and lists no "
+            "more than the first 20 events.",
+        ),
+        ToolSpec(
+            "failure_correlation", failure_correlation,
+            "How the chance of a rejection varies with a factor: the hour of the "
+            "day (the reject rate of each hour, and a chi-square test of whether it "
+            "depends on the hour) or the closing torque (the correlation between "
+            "torque and success, and the reject rate below, inside and above the "
+            "torque band). Answers 'is there a correlation between time of day and "
+            "failure probability', 'does higher torque correlate with higher "
+            "success rate'.",
+            {"period": _PERIOD,
+             "by": _enum(["hour_of_day", "torque"], "the factor; default 'hour_of_day'")},
+            "Not a cause: a rate that varies with the hour or the torque says when "
+            "and where closures fail, not why, and the hour is the one the store "
+            "holds, with no time-zone conversion.",
+        ),
+        ToolSpec(
+            "methodology", methodology,
+            "How the data was prepared and a closure is judged, as documented: "
+            "preprocessing of the raw rows, how duplicated closures are avoided, "
+            "the assumptions of the cleaning, and what classifies a closure as "
+            "successful or rejected. Answers 'what preprocessing was applied', "
+            "'how were duplicates removed', 'which assumptions were made', 'what "
+            "classifies a successful closure'.",
+            {"topic": _enum(list(TOPICS), "one topic; null = all four")},
+            "Not a measurement of the store: it restates the pipeline's rules "
+            "and says nothing about how often one applied.",
         ),
     ]
 }
@@ -159,7 +258,7 @@ def tool_schemas():
     return [
         {
             "name": spec.name,
-            "description": spec.description,
+            "description": f"{spec.description} Does NOT measure: {spec.not_measured}",
             "input_schema": {
                 "type": "object",
                 "properties": dict(spec.params),

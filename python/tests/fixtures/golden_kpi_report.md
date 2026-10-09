@@ -25,8 +25,15 @@ Capping KPI report for 2026-02.
 
 - **Scope.** 6 capping operations across 3 heads, from 2026-02-01 00:00:00 to 2026-02-01 00:00:40. 2 no-load cycles are excluded from every rate below.
 - **Success rate.** 66.6667% (4 successful, 2 rejected). Lowest head: 2.
-- **Weakest head.** 2 at 33.3333% over 3 capping operations.
+- **Weakest head.** 2 at 33.3333% over 3 capping operations (2 rejected, 100.0% of all 2 rejects; the median head has 1). Median across 2 heads: 66.6667%; best: 1 at 100.0000%.
 - **Throughput.** 6 pieces/hour, averaged over 1 active bucket.
+
+### Success rate per head (table)
+
+| Head | Closures | Successful | Rejected | Success rate |
+|---|---|---|---|---|
+| 1 | 3 | 3 | 0 | 100.0000% |
+| 2 | 3 | 1 | 2 | 33.3333% |
 
 ### Success Rate Per Head
 
@@ -44,6 +51,10 @@ Capping KPI report for 2026-02.
 - `success_rates`: 6 rows scanned; filters: app_torque > 0 (capping operations only)
 - `capping_speed`: 6 rows scanned; filters: bucket=day, app_torque > 0 (only real caps produce pieces)
 - `idle_periods`: **insufficient_data** — no idle periods of >= 300s in period '2026-02'
+- **`overview` does not measure.** Not a rate or a trend: it counts the period as a whole, and says nothing about when within it anything happened.
+- **`success_rates` does not measure.** Not why a closure was rejected, nor production volume: no-load cycles and closures without a verdict are outside the rate.
+- **`capping_speed` does not measure.** Not downtime: hours with no closure are skipped, so the rate is how fast the machine ran while it ran.
+- **`idle_periods` does not measure.** Not machine downtime: a stopped machine emits no events and cannot appear here (event_gaps measures that).
 - **Assumption.** a capping operation is a closure with torque > 0; no-load cycles (status 2, torque 0) are excluded from success denominators.
 - **Assumption.** buckets with zero capping operations are never emitted, so a fully idle hour or day does not pull the mean down.
 - **Assumption.** counts are rows, i.e. polls at which a head's counter advanced; a poll that caught up on several caps (delta > 1) counts once. Measured undercount on real data: 0.0017% of caps.

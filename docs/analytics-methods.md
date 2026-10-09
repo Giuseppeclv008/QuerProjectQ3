@@ -148,6 +148,10 @@ define production speed as bottles closed per unit time
 
 ## `idle_periods` — downtime, separated from failure
 
+> This is no-load *cycling*, not the machine standing still: a stopped machine
+> writes no rows and cannot appear here. Stops are measured by
+> [`event_gaps`](#event_gaps--stops-as-holes-in-the-event-stream).
+
 **Question:** how much of the time was the machine not capping at all?
 
 A gaps-and-islands query over per-head runs of no-load cycles. Consecutive
@@ -207,6 +211,12 @@ Three counts, computed together:
   1.4826 · MAD` (default `k = 3`), with the scale floored at `mad_floor`
   (default 0.01 Nm).
 
+The threshold hits also come grouped by head (`threshold_by_head`, most readings
+first), because "which heads have the most out-of-band readings" is a question
+about heads and the itemised list is capped and ordered by time. The grouping is
+exact: over February–April 2026 it sums to the 234 threshold hits, with head 22
+at 26, head 35 at 16 and head 7 at 13, and all 36 heads having at least one.
+
 **Why MAD and not σ.** Standard deviation is computed from the very points you
 are trying to find. A handful of extreme outliers inflate σ enough that they fall
 inside their own band and hide themselves. The median and the median absolute
@@ -220,6 +230,14 @@ with no calibration for the reader. Multiplying by 1.4826 (the consistency
 constant) makes `k` mean sigma-equivalents; the 0.01 Nm floor keeps a
 quantised sensor's tiny-but-nonzero MAD from collapsing the band to sensor
 noise. Both are declared in every report's assumptions.
+
+**What the floor does to the count.** On the 2026 store the scale sits at the
+floor on all 36 heads, so the band is a fixed ±0.03 Nm around each head's
+median and not a multiple of the head's own spread. The deviation count is then
+the share of readings that far from the median, and it is not noise: 1.1% of
+capping operations in February (162,019 of 14,824,304), 20.4% in March–April
+(3,437,769 of 16,823,611), where the mean torque moved (see `compare_periods`).
+Read the share against another period; a step in it is a step in torque level.
 
 **When MAD is zero.** That same 50% breakdown point means MAD is exactly 0 for a
 head whose readings are more than half identical — routine for a quantised
@@ -319,6 +337,136 @@ Count, mean, median, standard deviation, min and max of applied torque per head
 Reported ordered by standard deviation descending, so the most variable head is
 first. Measured over three months: head 9, σ = 0.0729 Nm about a median of
 1.997 Nm.
+
+---
+
+## `event_gaps` — stops, as holes in the event stream
+
+**Question:** how long was the machine stopped, and when?
+
+A row exists only when a head's counter advanced, so a stopped machine leaves a
+hole rather than a row. The tool takes the distinct poll timestamps of the
+whole machine, measures the distance to the previous one with `LAG`, and keeps
+the distances longer than `min_seconds` (default `idle_max_gap_seconds`, 600).
+It returns every gap, their count and total, and the longest.
+
+Three things it does not claim, all stated in its assumptions. Silence is the
+machine stopped **or** its data not arriving — the store cannot tell the two
+apart. Time before the period's first event and after its last is not a gap.
+And a gap belongs to the whole machine: no head is named as its cause.
+
+Measured on March 2026: 227 gaps longer than 10 minutes, 342.6 h in total; 52
+longer than an hour, 254.9 h; the longest runs from 15 March 16:51 to 16 March
+21:30 (28.6 h).
+
+---
+
+## `compare_periods` — month against month
+
+**Question:** did the machine get better or worse?
+
+One row per calendar month or ISO week (`by`), clipped to the period, for the
+whole machine: capping operations; caps per calendar day and per active day
+(a day with at least one cap), with both day counts; rejects and the reject
+rate on the `success_rates` denominator; no-load cycles and their share of all
+cycles. It also returns the change from the first bucket to the last, and the
+lowest-volume bucket by name — first-to-last alone hides a dip in the middle.
+
+Each bucket also carries the mean, median and sigma of its capping operations'
+torque, all heads together. `trend` reads a monotone drift per head, so it cannot
+see a step in level or spread, and the store holds one: mean 1.9996 Nm in
+February, 2.0531 in March, 2.0203 in April, with sigma 0.0213, 0.1163 and 0.0861.
+Inside March the split is sharper still: 1–8 March has a median of 1.999 Nm,
+9–30 March 1.748 (sigma 0.137), and 31 March 2.198 (sigma 0.004). The report
+names the step when one bucket's sigma is at least twice another's. What the step
+is — a different product or setting, or the machine — the store cannot say.
+
+Measured over February–April 2026: 529,439 caps per day in February, 126,124
+in March, 430,459 in April; reject rate 0.0050%, 0.0052%, 0.0011%; no-load
+share 32.5%, 65.7%, 40.3%. February to April reads −18.7%; March is the
+collapse.
+
+---
+
+## `closure_filter` — a count against a value the operator gives
+
+**Question:** how many closures had torque above X Nm? which failed events are
+below a threshold? what are all the failed events of head 3?
+
+`anomalies` counts against the *configured* band; this counts against the values
+in the question: `above` and `below` (Nm, strict), an `outcome`
+(`successful`, `failed` or `all`) and one `head`, in any combination. It returns
+the exact count, the share of the capping operations in scope, the count per head
+(most first), and the first 20 matching events in time order, each with the
+rejection condition decoded. The limits are compared as the REAL the store holds,
+so a stored 2.2 is not "above" a limit of 2.2.
+
+Measured for February 2026: 3 closures above 2.5 Nm (heads 2, 12 and 35); 70
+failed closures below 1.5 Nm across 26 heads; 10 failed closures on head 3, from
+1 to 21 February, all status 65 (Bad Closure).
+
+---
+
+## `failure_correlation` — does the chance of a rejection depend on a factor
+
+**Question:** is there a correlation between the time of day and the probability
+of failure? does a higher torque go with a higher success rate?
+
+It works on the closures that carry a verdict (successful or rejected), the
+denominator of `success_rates`, and takes one factor in `by`:
+
+- **`hour_of_day`**: the reject rate of each of the 24 hours, and a chi-square
+  test of whether it depends on the hour. The statistic is
+  `sum((rejected - n*p)^2 / (n*p*(1-p)))` over the hours, with `p` the overall
+  reject rate and (hours - 1) degrees of freedom, and the p-value is the upper
+  tail of the chi-square distribution (the regularised incomplete gamma function,
+  checked against the published critical values). It is only computed where every
+  hour expects at least five rejects and five passes; with fewer there is no
+  p-value and the result says why. The hour is the one the store holds, without
+  any time-zone conversion.
+- **`torque`**: the correlation between the torque and the outcome (Pearson's r
+  against 1 for a success and 0 for a reject), the mean torque of each outcome,
+  and the reject rate below, inside and above the configured torque band.
+
+A small coefficient is not the same as no relationship when rejects are rare.
+Measured for February 2026, over 14,818,724 closures with a verdict: the reject
+rate runs from 3.16 per 100,000 closures at 21:00 to 8.64 at 17:00 (overall
+5.05), and the chi-square is 38.19 for 23 degrees of freedom, p = 0.024, so the
+rate does vary with the hour, weakly; the torque correlation is r = 0.030
+(negligible), the mean torque 1.9996 Nm for the successful closures and 1.9106
+for the rejected, and 70 of the 72 closures below 1.5 Nm were rejected, against
+678 of 14.8 million inside the band. Neither says why.
+
+---
+
+## `methodology` — how the data was prepared and a closure judged
+
+**Question:** what preprocessing was applied? how were duplicated closures
+detected? which assumptions were made in cleaning? what classifies a successful
+closure?
+
+The pipeline is documented, but nothing a result carries said so, and the brief
+asks the bot to be transparent about it. This tool returns four texts — the
+preprocessing of the raw rows, how duplicates are avoided, the assumptions of the
+cleaning, and the classification of a closure — restating `README.txt` (section 6)
+and the rules in `status.py` and the other tools' assumptions. Nothing in them is
+measured from the store, and the tool says so; a test pins each documented claim
+to the text it restates.
+
+---
+
+## What the report adds around the numbers
+
+The findings name the weakest head or day; the **tables** are every one. A table
+per head or per day is printed for `success_rates` (closures, successful,
+rejected, rate) and for `torque_stats` by head (mean, min, max, sigma, median),
+and the events of a `closure_filter` as a table of their own. The torque
+statistics of the overall `torque_stats` come with the **distribution** in 0.01 Nm
+classes, drawn as `torque_histogram.png`; `success_rates` by day draws
+`failed_closures_per_day.png`. A comparison across buckets names a **step in
+level** when the means are at least five times the steadiest bucket's sigma
+apart, ignoring any bucket that holds under 1% of the period's capping operations
+(the store starts on 31 January at 16:00, and its eight hours are not a month).
 
 ---
 

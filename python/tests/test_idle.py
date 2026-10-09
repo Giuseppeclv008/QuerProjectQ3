@@ -2,6 +2,7 @@ import duckdb
 import pytest
 from analytics.config import Config
 from analytics.tools.idle import idle_periods
+from tests.conftest import CAP_EVENTS_DDL
 
 
 @pytest.fixture
@@ -232,3 +233,32 @@ def test_a_gap_bound_below_the_minimum_removes_the_absorbed_window(tmp_path):
         "120 s segments, neither of which reaches the 300 s minimum"
     )
     assert split.values.get("periods", []) == []
+
+
+def test_the_longest_period_and_each_heads_total_come_with_the_list(tmp_path):
+    from datetime import datetime, timedelta
+    path = tmp_path / "byhead.duckdb"
+    con = duckdb.connect(str(path))
+    con.execute(CAP_EVENTS_DDL)
+    base, seq = datetime(2026, 2, 1), [0]
+
+    def row(head, at, torque, status):
+        seq[0] += 1
+        con.execute("INSERT INTO cap_events VALUES ('MCC',?,?,?,?,?,1,false,false,false)",
+                    [head, at, seq[0], torque, status])
+
+    def no_load_run(head, minute, seconds):
+        for s in range(0, seconds + 1, 10):
+            row(head, base + timedelta(minutes=minute, seconds=s), 0.0, 2.0)
+
+    no_load_run(2, 0, 100)                                   # head 2: 100 s ...
+    row(2, base + timedelta(minutes=10), 2.0, 0.0)           # ... a real cap ends it ...
+    no_load_run(2, 20, 40)                                   # ... and 40 s more
+    no_load_run(1, 0, 60)                                    # head 1: 60 s
+    con.close()
+
+    v = idle_periods(Config(store_path=str(path), idle_min_seconds=30),
+                     period="2026-02").values
+    assert (v["longest_period"]["head_id"], v["longest_period"]["duration_seconds"]) == (2, 100)
+    assert v["by_head"] == [{"head_id": 2, "periods": 2, "total_seconds": 140},
+                            {"head_id": 1, "periods": 1, "total_seconds": 60}]
