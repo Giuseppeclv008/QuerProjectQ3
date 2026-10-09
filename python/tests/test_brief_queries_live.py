@@ -23,7 +23,7 @@ the reason, when that variable is unset, when events_3mo.duckdb is absent, or wh
 Ollama does not hold the configured model. The helpers that read a report run in
 every build.
 
-Three queries are marked `xfail`: the answers they get are known to be weak
+Two queries are marked `xfail`: the answers they get are known to be weak
 (see docs/validation-log.md). A strict failure there would be noise; an XPASS is
 the signal that one has been fixed and the mark can go.
 """

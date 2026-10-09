@@ -284,7 +284,7 @@ Shows the MAS system boundary, external actors, and data flows.
 Shows the C4 containers — the diagram groups the eight executables into five containers — the ZeroMQ fabric (3 endpoints),
 database stores, and the testing/validation scripts.
 
-![C4 Container Diagram](docs/diagrams/C4_Container_short.png)
+![C4 Container Diagram](docs/diagrams/C4_Container_Short.png)
 
 **Containers:**
 | Container | Type | Purpose |
@@ -640,7 +640,7 @@ nothing is what lets the benchmark build on a machine with no DuckDB at all.
 | `DuckDbEventStore` | [`DuckDbEventStore.hpp`](core/include/mas/store/DuckDbEventStore.hpp) · [`.cpp`](core/src/store/DuckDbEventStore.cpp) | DuckDB backend (PIMPL). Staging → merge. `merge_from()` with best-effort DETACH, `merge_all()` (the bulk path mas_merge takes). `export_parquet()` was deliberately removed — the header explains why (COPY ... TO truncates; the guarded `export_store_to_parquet` is the one export path). |
 | `ParquetEventStore` | [`ParquetEventStore.hpp`](core/include/mas/store/ParquetEventStore.hpp) · [`.cpp`](core/src/store/ParquetEventStore.cpp) | Experimental Parquet backend: one file per input, no index, no WAL. Buffers in memory, writes on `close()` through a temp + atomic rename; `abandon()` for a clean that failed. |
 | `ParquetExport` | [`ParquetExport.hpp`](core/include/mas/store/ParquetExport.hpp) · [`.cpp`](core/src/store/ParquetExport.cpp) | `mas_export`'s engine. Opens the store READ_ONLY, refuses to overwrite the source, an existing file or the store's `.wal`, and verifies the row count it wrote. |
-| `BeatingStore` | [`BeatingStore.hpp`](core/include/mas/store/BeatingStore.hpp) | Decorator that fires a heartbeat callback after the inner `write()`, and only once its `every_` interval has elapsed — so a long clean does not look dead to the coordinator without beating 2,670× per day-file. Wraps either backend. |
+| `BeatingStore` | [`BeatingStore.hpp`](core/include/mas/store/BeatingStore.hpp) | Decorator that fires a heartbeat callback after the inner `write()`, and only once its `every_` interval has elapsed — so a long clean does not look dead to the coordinator, without beating on each of a day-file's ~93 writes (one per 8,192 events). Wraps either backend. |
 | `sql_quote` | [`SqlQuote.hpp`](core/include/mas/store/SqlQuote.hpp) | Header-only. Doubles embedded `'` — ATTACH, COPY and `read_parquet` take paths as SQL literals and DuckDB binds no parameters for them. |
 | `exec_or_throw` | [`DuckDbExec.hpp`](core/include/mas/store/DuckDbExec.hpp) | Header-only. DuckDB reports errors in the result rather than throwing; these three wrappers turn a missed `HasError()` from a silent wrong answer into an exception. |
 | `publish_atomically` | [`AtomicPublish.hpp`](core/include/mas/store/AtomicPublish.hpp) | Header-only. Write to a private sibling name, verify, rename into place, remove the temp on any throw. Shared by both Parquet writers, so a failed write cannot leave a partial file under a name readers glob. |
@@ -1031,7 +1031,7 @@ The MAS implements a heartbeat-driven liveness protocol:
 1. Hello heartbeat on `run()` entry
 2. One heartbeat per empty recv tick (1 s period in production)
 3. One heartbeat after each `WorkResult`
-4. The only silent window is during `clean_file()` execution
+4. While a file is being cleaned, at most one heartbeat per `kBeatEvery` (1 s): `BeatingStore` beats from inside the store's `write()` (the Parquet path wraps its own store the same way) and `clean_fn` gets a beat callback, so a long clean is not a silent window
 
 **Coordinator loop (per tick), after the registration gate:**
 1. **Lifecycle tick** — take one frame: a result, a claim (who holds which item), or a goodbye (200 ms timeout paces the loop)

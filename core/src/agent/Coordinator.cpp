@@ -212,7 +212,9 @@ DispatchSummary run_coordinator(const std::vector<WorkItem>& items,
                         // retry completes the item rather than duplicating it.
                         // Charged against the same cap that bounds
                         // death-driven re-dispatch, so a store that fails every
-                        // time still terminates. The budget is shared, and that
+                        // time -- or a Parquet/JSON input that breaks mid-file
+                        // after rows were written -- still terminates.
+                        // The budget is shared, and that
                         // has a cost worth naming: an item that survives two
                         // transient store faults has spent the resilience it
                         // would otherwise have had for its holder dying. One

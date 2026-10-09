@@ -135,7 +135,7 @@ def scope_clause(cfg, period):
     """The WHERE fragment every tool starts from: this machine, this period.
 
     Machine and period scoping live here, in one place, rather than being
-    re-derived (and eventually forgotten) by each of the thirteen tools.
+    re-derived (and eventually forgotten) by each tool that reads the store.
     """
     where, params = period_clause(period)
     return f"machine_id = ? AND {where}", [cfg.machine_id] + params

@@ -149,14 +149,14 @@ class Config:
             raise ConfigError(
                 f"max_anomaly_items must be >= 1, got {self.max_anomaly_items}"
             )
-        # The planner's prompt is ~3,600 tokens of rules and tool schemas before
-        # the question is added (12 tools; measured on qwen3:14b through Ollama's
+        # The planner's prompt is ~4,000 tokens of rules and tool schemas before
+        # the question is added (13 tools: 3,977 on qwen3:14b through Ollama's
         # prompt_eval_count), the plan it writes needs room too, and Ollama
         # silently truncates rather than erroring.
         if self.provider == "ollama" and self.num_ctx < 6144:
             raise ConfigError(
                 f"num_ctx must be >= 6144 for ollama (the planner prompt alone is "
-                f"~3,600 tokens and is truncated silently), got {self.num_ctx}"
+                f"~4,000 tokens and is truncated silently), got {self.num_ctx}"
             )
 
 

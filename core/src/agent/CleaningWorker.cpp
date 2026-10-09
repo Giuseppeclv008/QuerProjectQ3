@@ -67,7 +67,10 @@ int CleaningWorker::run() {
         // on disk; -1 there was a lie the summary told, reporting 0 events for
         // files whose rows mas_merge would go on to fold in. -2 says "partial,
         // retry me": the upsert is idempotent on (machine_id, head_id, ts), so
-        // re-running the item completes it rather than duplicating it.
+        // re-running the item completes it rather than duplicating it. One
+        // case breaks that: a Parquet or JSON day-file DuckDB stops reading
+        // mid-file (a corrupt row group) also fails with rows written, and
+        // its retries fail the same way until the redispatch cap ends them.
         long long events = -1;
         try {
             events = clean_fn_(item->in_path, beating, [this] { beat(); });

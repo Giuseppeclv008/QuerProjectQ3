@@ -375,8 +375,8 @@ def plan_json_schema(style="flat"):
 # anyOf/allOf, $ref, string formats, additionalProperties: false). The SDK
 # strips these only on the messages.parse() path; llm.py passes a raw dict
 # through output_config["format"]["schema"], so it reaches the API verbatim
-# -- and a rejected schema fails every `ask` into the keyword router, which
-# is exactly the flagship path never running. Nothing is lost by stripping:
+# -- and a rejected schema fails every hosted `ask` into the keyword
+# router: the hosted path never running. Nothing is lost by stripping:
 # validate_step() enforces minimum/maxItems strictly after the model answers.
 # Schema permissive, validation strict; never the other way round.
 _UNSUPPORTED_KEYWORDS = ("minimum", "maximum", "maxItems", "minItems",
