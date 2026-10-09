@@ -45,7 +45,8 @@ day-files are offset from midnight) and reconciled in
 - Four tiers, each independently testable:
   1. **C++ MAS ingestion** — CSV pool → dedup → closure reconstruction → DuckDB
   2. **`cap_events` store** — DuckDB, the single source of truth
-  3. **Python analytics toolkit (WP2)** — 8 pure functions, SQL in, typed result out
+  3. **Python analytics toolkit (WP2)** — 13 pure functions, SQL in (all but
+     `methodology`), typed result out
   4. **Report agent (WP3) + CLI (WP4)** — the LLM plans and narrates, never computes
 - The slide redraws the **C4 container view** from the README
   (`docs/diagrams/C4_Container.png`), each box tagged with its tier.
@@ -125,10 +126,21 @@ day-files are offset from midnight) and reconciled in
 
 ## 6. WP2 — the analytics toolkit
 
-- Eight pure functions: `overview`, `success_rates`, `torque_stats`,
-  `capping_speed`, `idle_periods`, `anomalies`, `trend`, `head_correlation`.
+- Thirteen pure functions: `overview`, `success_rates`, `torque_stats`,
+  `capping_speed`, `idle_periods`, `anomalies`, `trend`, `head_correlation`,
+  `event_gaps`, `compare_periods`, `closure_filter`, `failure_correlation`,
+  `methodology`.
 - Signature is uniform: `(Config, **kwargs) -> ToolResult`. Parameterised SQL in,
-  typed result out.
+  typed result out. `methodology` is the exception that runs no SQL: it restates
+  the documented pipeline rules (preprocessing, duplicates, cleaning assumptions,
+  classification), each claim pinned by a test.
+- *If asked, not on the slide:* the last five were added on 2026-10-08/09, each
+  for a question of the brief no tool answered: machine stops (`event_gaps`),
+  months or weeks side by side (`compare_periods`), an exact count against a
+  value the operator names (`closure_filter`), the reject rate against the hour
+  of day or the torque (`failure_correlation`), how the data was cleaned
+  (`methodology`). Every tool also states what it does *not* measure; the
+  planner sees it and the report's limits print it.
 - **`ToolResult` carries its own provenance**: status
   (`ok`/`insufficient_data`/`error`), values, period, rows scanned, every filter
   applied, every assumption made.
@@ -149,12 +161,23 @@ day-files are offset from midnight) and reconciled in
      tool registry itself*, so it cannot drift from what exists.
   2. **Registry validation** rejects an invented tool, an argument a tool does
      not take, or a value outside its allowed set.
-  3. **Router fallback** — no key, no network, a refusal, bad JSON or an invalid
-     step all fall back to a keyword router, and the reason is printed in the
-     report's limits section.
-- The narrator gets the results verbatim and writes two sections. The figures,
-  the trace and the limits are rendered from the `ToolResult`s underneath it, so
-  a narrator failure costs readability, never correctness.
+  3. **Router fallback** — no model reachable (Ollama down, no key, no
+     network), a refusal, bad JSON or an invalid step all fall back to a keyword
+     router, and the reason is printed in the report's limits section.
+- *In the flowchart, said if asked:* **the system amends one kind of plan.** A
+  model plan that trends torque gets `compare_periods` added (by week within a
+  month, by month over longer), because the drift test reads a steady trend and
+  misses a step in level: in March 2026 the median torque goes 1.999 → 1.748 →
+  2.198 Nm while no head drifts. The report says the step was added.
+- Two narrator paths. The local model (the default) is handed the deterministic
+  findings, the tables and the list of figures — never the raw results — and
+  writes one to three sentences under an **Answer** bullet, above the findings;
+  an answer that states a number the findings do not carry is rejected and the
+  template stands alone. A hosted model gets the results verbatim and writes
+  *Findings* and *Next checks*; there the number rule is asked, not checked.
+  Either way the figures, the trace and the limits are rendered from the
+  `ToolResult`s underneath, so a narrator failure costs readability, never
+  correctness.
 
 ---
 
@@ -175,9 +198,9 @@ day-files are offset from midnight) and reconciled in
 - Failure policy is deliberate: a **config** problem exits 2 before any work; an
   **analysis** gap produces a report that names the gap, because an unattended
   run must still land on disk.
-- **`ask` runs on a local model by default** (on `fix/agentic_call`, the branch
-  the demo runs from): Ollama with qwen3:14b, no API key, nothing leaves the
-  machine.
+- **`ask` runs on a local model by default** (the code default on `main` since
+  `fix/agentic_call` was merged, 2026-10-09): Ollama with qwen3:14b, no API key,
+  nothing leaves the machine.
 - *Said aloud, no longer on the slide:* another model: `"model"` in `arol.json`, or `--model` after
   the question. The hosted Anthropic API is wired in (`--provider anthropic`)
   but untested.
@@ -225,26 +248,38 @@ day-files are offset from midnight) and reconciled in
 
 - **`NUM_HEADS` is compile-time 36.** The brief's own example shows a 48-head
   machine; no 48-head data exists to test against. Known limit, roadmap item.
-- **GPU ingestion: CSV only** (on `fix/agentic_call`; on `main` all ingestion
-  is still CSV). The CPU path reads CSV, Parquet and JSON day-files through
+- **GPU ingestion: CSV only.** The CPU path reads CSV, Parquet and JSON day-files through
   `open_raw_reader()`: a real day (2026-02-28, 806,785 events) converted to
   Parquet and JSON gives stores identical row for row. `--engine=cuda` parses CSV
   text itself and refuses the other two (exit 2). The store was never CSV-bound:
-  DuckDB or Parquet, read by the same eight tools (`test_backend_parity.py`).
+  DuckDB or Parquet, read by the same thirteen tools (`test_backend_parity.py`).
 - **~0.02% of closures carry statuses we decode but have not seen AROL confirm** —
   12,461 No-Load-with-torque and 12 No-Closure rows. We treat them as carrying no
   pass/fail verdict and exclude them from the rate rather than guessing.
 - **The live agentic path is proven on a local model, not on the hosted one.**
-  `docs/reports/ask-live-sample/` is a committed `ask` run on qwen2.5:7b under
-  Ollama: plan source `llm`, one registry-validated step, executor → renderer
-  end to end on the real store. The live demo uses qwen3:14b, the default on
-  `fix/agentic_call`. What stays unverified is **schema acceptance
-  against the Anthropic API**, because no key has ever been used;
+  qwen3:14b, the default, was asked the brief's 43 example queries through
+  `arol ask`, and every answer was checked against figures recomputed with SQL
+  that shares no code with `analytics`: **41 pass, 2 known weak** (25 and 32,
+  marked `xfail`). The check is `python/tests/test_brief_queries_live.py`,
+  opt-in (`AROL_LIVE_QUERIES=1`, store and model needed; 8 min 45 s on the run
+  of 2026-10-09, `docs/validation-log.md`). `docs/reports/ask-live-sample/` is the
+  older committed run, on qwen2.5:7b. What stays unverified is **schema
+  acceptance against the Anthropic API**, because no key has ever been used;
   `test_anthropic_schema_live.py` sends the schemas and is gated on one.
-- **The 7B plans but cannot narrate.** Every narration it produced was rejected
-  by the no-bullet detector (3 of 3 in July, 2 of 2 in August) and replaced by
-  the deterministic summary, with the reason printed in the limits section. The
-  prose in the committed sample is the template's.
+- **Numbers checked, words not.** With the local model, any number in the answer
+  that the findings do not carry rejects the answer, and the deterministic
+  summary stands alone. A wrong claim built on right figures passes: asked
+  "Which capping head behaves differently from the others?" (query 25,
+  February), the model names head 9 while the finding printed beside it says
+  *No head stands out* (head 9's sigma is 1.5% above the median of the others).
+  The sentence is the model's, the finding the template's, and both are on the
+  page.
+- *If asked, no longer on the slide:* **why not the 7B.** qwen2.5:7b planned but
+  never narrated: every narration was rejected by the no-bullet detector (3 of 3
+  in July, 2 of 2 in August), so the prose in the committed sample is the
+  template's. Handed the raw results, qwen3:14b misread them ("all 36 heads show
+  torque drifts" when none did), which is why the local narrator now reads the
+  verified findings instead.
 - *If asked, no longer on the slide:* **PDF export needs native dependencies** (WeasyPrint + Cairo/Pango). Markdown
   and HTML always ship; `--pdf` degrades with an install hint.
 - **The merge is unfixed**, and it is the serial fraction that holds end-to-end
@@ -259,11 +294,16 @@ day-files are offset from midnight) and reconciled in
       scripts/demo.sh
 
   55.1 M rows, three report types, 12/12 tool steps `ok`, ~23 s.
-- Live `arol ask "..."` on qwen3:14b via local Ollama, from `fix/agentic_call` —
+- Live `arol ask "..."` on qwen3:14b via local Ollama, from `main` —
   show the plan the model chose. Then the same question with `--provider
   anthropic` and no key: it falls back to the router and *says so* in the
-  report. The flag is not optional: the branch defaults to Ollama, so unsetting
+  report. The flag is not optional: the code defaults to Ollama, so unsetting
   the key alone changes nothing and the model simply plans again.
+- *Open as of 2026-10-09, not settled here:* the ~23 s was timed before the
+  merge, and the tools now compute more, so re-time `demo.sh`. The question
+  in the demo checklist is the brief's query 25, which the live test marks
+  `xfail` (see section 10). The committed reports predate the Answer bullet
+  and the new tables (README, *Reports*).
 - Committed artifacts: [`docs/reports/`](../reports/) — `kpi-2026-02`,
   `drift-2026-02_2026-04`, `anomalies-2026-02`, and `ask-live-sample` (the live
   agentic run).
