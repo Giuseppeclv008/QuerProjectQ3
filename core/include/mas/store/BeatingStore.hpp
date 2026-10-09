@@ -10,8 +10,8 @@ namespace mas {
 // Beats while a file is being cleaned. Decorating the store rather than
 // spawning a thread is deliberate: ZeroMQ sockets are not thread-safe, so
 // beating from a second thread on the same PUSH socket would be a data race.
-// clean_file() writes every 8,192 events, which on a real day-file is roughly
-// every 30 ms.
+// clean_file() writes every 8,192 events: ~93 writes for a real day-file,
+// tens of milliseconds to a fraction of a second apart, by machine.
 class BeatingStore : public IEventStore {
 public:
     BeatingStore(IEventStore& inner, std::function<void()> beat,

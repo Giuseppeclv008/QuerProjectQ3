@@ -1647,8 +1647,8 @@ On qwen2.5:7b a local model was slow: ~2 s to classify but ~3 min for a full
 example queries of the brief (median 11 s), 41 of the 43 answers are right and
 supported when checked against SQL, and 2 are marked weak. Handed the raw results
 as JSON, this model's narration was rejected on every run and, once accepted, said
-things the numbers contradicted ("all 36 heads drift"); handed the verified
-sentences instead, it answers.
+things the numbers contradicted ("all 36 heads show torque drifts"); handed the
+verified sentences instead, it answers.
 
 A committed run of the whole loop is in
 [`docs/reports/ask-live-sample/`](docs/reports/ask-live-sample/) (qwen3:14b on
