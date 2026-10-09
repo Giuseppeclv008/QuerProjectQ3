@@ -252,7 +252,8 @@ day-files are offset from midnight) and reconciled in
   `open_raw_reader()`: a real day (2026-02-28, 806,785 events) converted to
   Parquet and JSON gives stores identical row for row. `--engine=cuda` parses CSV
   text itself and refuses the other two (exit 2). The store was never CSV-bound:
-  DuckDB or Parquet, read by the same thirteen tools (`test_backend_parity.py`).
+  DuckDB or Parquet, read through the same `cap_events` view by every tool that
+  queries it (`test_backend_parity.py` checks the original eight).
 - **~0.02% of closures carry statuses we decode but have not seen AROL confirm** —
   12,461 No-Load-with-torque and 12 No-Closure rows. We treat them as carrying no
   pass/fail verdict and exclude them from the rate rather than guessing.
