@@ -1495,9 +1495,9 @@ and period gives the same report every time, apart from the generation timestamp
 in the header. Committed examples are under
 [`docs/reports/`](docs/reports/), and every number in them was reconciled
 against a direct DuckDB query in the [validation log](docs/validation-log.md)
-when it was generated (2026-08-19, against a rebuilt store). The report has
-gained findings and tables since: regenerate the examples with
-[`scripts/demo.sh`](scripts/demo.sh) before relying on their layout.
+when it was generated (regenerated on 2026-10-09 against the same store, with the
+tables and findings the report prints now; regenerate them with
+[`scripts/demo.sh`](scripts/demo.sh) after changing what a report prints).
 [`docs/reports/README.md`](docs/reports/README.md) is the staleness registry —
 which artifact is invalidated by what, and what changes when it is rebuilt.
 
@@ -1650,16 +1650,17 @@ as JSON, this model's narration was rejected on every run and, once accepted, sa
 things the numbers contradicted ("all 36 heads drift"); handed the verified
 sentences instead, it answers.
 
-A committed run of the whole loop on this model is in
-[`docs/reports/ask-live-sample/`](docs/reports/ask-live-sample/) (RTX 4070
-Laptop, 2026-08-19): planning tier `plan`, `plan source: llm`, one
-registry-validated step (`head_correlation`) against the real three-month
-store — and the narration replaced by the deterministic summary, reason
-disclosed, exactly as measured above. The directory carries no figures: one
-step leaves no second series to plot, which
-[`docs/reports/README.md`](docs/reports/README.md) explains rather than hides.
-An earlier two-step run, and a first cold call that timed out into the router,
-are in the validation log. What no run on Ollama proves is that the Anthropic
+A committed run of the whole loop is in
+[`docs/reports/ask-live-sample/`](docs/reports/ask-live-sample/) (qwen3:14b on
+an Apple M5 Pro, 2026-10-09): planning tier `plan`, `plan source: llm`, two
+registry-validated steps against the real three-month store, and an *Answer*
+the model wrote and the checks accepted (head 29 with 117 rejected, head 35 with
+78). It was asked once and committed as it came; what the directory shows and
+what it does not is in [`docs/reports/README.md`](docs/reports/README.md). The
+sample it replaces (qwen2.5:7b, 2026-08-19: one step, and the narration
+replaced by the deterministic summary), an earlier two-step run, and a first
+cold call that timed out into the router are in the validation log. What no run
+on Ollama proves is that the Anthropic
 flat schema is accepted: Ollama takes a `format` grammar, not `output_config`,
 and no key was used — see the validation log, entries 2026-08-16 and
 2026-08-22.

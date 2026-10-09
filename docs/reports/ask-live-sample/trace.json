@@ -9,13 +9,25 @@
   "steps": [
     {
       "step": 1,
-      "tool": "head_correlation",
+      "tool": "success_rates",
       "args": {
-        "by": "day"
+        "by": "head"
       },
-      "rationale": "Compare heads to find outliers based on correlation.",
+      "rationale": "To identify which head has the lowest success rate, which may indicate an unusual number of failed closures.",
       "status": "ok",
       "rows_scanned": 31668727,
+      "message": ""
+    },
+    {
+      "step": 2,
+      "tool": "torque_stats",
+      "args": {
+        "outcome": "failed",
+        "by": "head"
+      },
+      "rationale": "To examine the distribution of torque for failed closures per head, which can help identify if a head has an unusual pattern of failures.",
+      "status": "ok",
+      "rows_scanned": 1095,
       "message": ""
     }
   ]

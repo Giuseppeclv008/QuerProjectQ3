@@ -2123,3 +2123,35 @@ the start and agrees at the end, and it fails exactly the queries that were
 wrong. What it does not do: it checks that figures are present and that named
 wrong phrasings are absent, not that every sentence of the answer is true. It
 cannot see the first sentence of 25, which is why 25 is marked, not fixed.
+
+## 2026-10-09 — The committed example reports regenerated
+
+`docs/reports/` still carried the layout of 2026-08-19: against what the code
+prints now, the three fixed reports were 45 to 47 lines short (31 to 39 of them
+table lines) and `anomalies-2026-02/` lacked one chart, and `docs/reports/README.md`
+called them current. All four directories were regenerated on a branch of their
+own, from `fix/agentic_call` at `a924624`.
+
+**Fixed reports.** `scripts/demo.sh events_3mo.duckdb`: 12/12 tool steps
+returned data (5 + 4 + 3), about 5 s on an Apple M5 Pro. They use no model, so
+every figure is the one it was (99.9781% for head 29, 25,046 idle periods and
+7,228.1 head-hours in February); what changed is what is printed around them.
+`trace.json` of each directory did not change.
+
+**`ask-live-sample/`.** `qwen3:14b` under Ollama 0.40.2 on the same Mac, no
+hosted key. Question "Is there a head with an unusual number of failed
+closures?", no `--period` (the whole store, so the numbers are the slide's: 117
+of the 1,095 rejects, head 35 at 78), planning tier `plan`. One unrelated
+warm-up question first (it took 24 s: the model was not loaded), then the run
+that is committed, 19 s, asked once and not repeated. The model planned
+`success_rates(by='head')` and `torque_stats(by='head', outcome='failed')`;
+both steps returned data; the narration was the model's and passed the checks.
+*Answer*: head 29 with 117 rejected (99.9867%), head 35 with 78, head 1 with
+69. Recomputed with SQL of its own, the rejects by head over the three months
+are 117, 78 and 69 (head 29 holds 10.7% of 1,095, 3.8 times the per-head mean of
+30.4).
+
+One finding in it is the model's choice and not a result: the torque
+variability of the failed closures, "head 7 is the most variable, 102.8% above
+the others". Head 7 has five rejects, and a standard deviation over five
+closures is not a measurement. It is left in the committed file as it came.
