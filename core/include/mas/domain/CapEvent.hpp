@@ -17,8 +17,8 @@ inline constexpr double MIN_FLOAT_VAL = std::numeric_limits<float>::lowest();
 // AROL Equatorque closure status, per the brief's slide-6 table: a bitmask, not
 // an enum. Bit 0 is the reject signal; bits 1..6 are the error conditions
 // (No Load, No Closure, No InTorque, No CapTurns, Following Error, Bad
-// Closure). The table's 14 rows are those 6 conditions plus "Closure OK", each
-// with and without the reject bit.
+// Closure). The table's 13 rows are "Closure OK" (status 0, no reject bit)
+// plus those 6 conditions, each with and without the reject bit.
 //
 // Measured over 2026-02-01 (765,711 closures), and confirmed across the full
 // three-month store:

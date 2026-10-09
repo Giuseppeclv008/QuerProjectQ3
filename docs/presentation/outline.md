@@ -1,4 +1,8 @@
-# Presentation outline — 13 slides
+# Presentation outline — 12 slides
+
+Numbering follows the deck: the title slide carries no number, so the problem
+is slide 1 and the demo slide 11; the deck closes on an unnumbered "Thank you".
+In PowerPoint or Canva a slide's page is its number plus one.
 
 Every bullet is written to be transcribed onto a slide as-is. Numbers are
 measured on `events_3mo.duckdb` (55,132,433 rows, machine `MCC`, 36 heads,
@@ -8,17 +12,18 @@ day-files are offset from midnight) and reconciled in
 
 ---
 
-## 1. Title
+## Title
 
 **Agentic AI for Telemetry Analysis on AROL Capping Machines**
 
 - System and Device Programming — Politecnico di Torino
 - Project proposed by AROL Group (Prof. Quer)
-- Team members and date
+- Presented by Francesco Ambrosino, Giuseppe Antonio Calvello and Stefano Alverino
+  (no date on the slide)
 
 ---
 
-## 2. The problem
+## 1. The problem
 
 - An AROL Equatorque capping machine polls **36 capping heads at ~1 Hz** and
   uploads one wide CSV per day: ~86,400 rows × 109 columns, ~1.6 GB/month
@@ -35,58 +40,68 @@ day-files are offset from midnight) and reconciled in
 
 ---
 
-## 3. Architecture
+## 2. Architecture
 
 - Four tiers, each independently testable:
   1. **C++ MAS ingestion** — CSV pool → dedup → closure reconstruction → DuckDB
   2. **`cap_events` store** — DuckDB, the single source of truth
   3. **Python analytics toolkit (WP2)** — 8 pure functions, SQL in, typed result out
-  4. **Report agent (WP3) + CLI (WP4)** — Claude plans and narrates, never computes
-- Show the **C4 container diagram** from the README.
-- Configuration (WP5) cuts across all of it: no path, band or threshold is
+  4. **Report agent (WP3) + CLI (WP4)** — the LLM plans and narrates, never computes
+- The slide redraws the **C4 container view** from the README
+  (`docs/diagrams/C4_Container.png`), each box tagged with its tier.
+- *Said aloud, no longer on the slide:* configuration (WP5) cuts across all of it: no path, band or threshold is
   hard-coded.
 
 ---
 
-## 4. WP1 — ingestion
+## 3. WP1 — ingestion
 
 - Closure detection by **counter delta per head**, not by any single column.
+- Four cases: normal increment, aggregated increment (delta > 1), counter reset,
+  stalled counter (no event).
 - Consecutive-duplicate elimination before reconstruction; idempotent
   reprocessing, so re-running a day-file cannot double-count.
 - Staging + merge write path into DuckDB; cross-worker merge unifies per-worker
   stores.
-- Result: **55,132,433 cap events** over three months, 36 heads.
+- Result: **55,132,433 closure events** over three months, 36 heads.
 - Validated against an **independent Python oracle** — the C++ output and a
   raw-CSV re-derivation agree exactly.
 
 ---
 
-## 5. Performance
+## 4. Performance
 
 - Three architectures benchmarked: single-file `clean`, multi-threaded monolith,
   distributed MAS (coordinator + workers over ZeroMQ).
-- Sweep: 1 / 7 / 28-day volumes × all architectures × 3 repeats — **81/81 runs
+- *Said aloud, no longer on the slide:* sweep: 1 / 7 / 28-day volumes × all architectures × 3 repeats — **81/81 runs
   oracle-exact**.
 - Resilience shown, not claimed: worker SIGKILL mid-run and coordinator death
   with an orphan worker both recover (chaos E2E).
 - **Headline finding: the merge is what is left to win.** MAS N=16 runs the
   month end-to-end at **3.83×** the sequential baseline (537.8 s → 140.4 s); the
-  clean phase alone parallelizes at **7.2×**. The gap between the two is a
-  65–73 s unification cost that is *flat* in N, because it now only moves rows —
+  clean phase alone parallelizes at **7.2×**. The gap between the two is the
+  unification cost, *flat* in N: 64.8 s at N=16 and 65–71 s from N=2 to N=16
+  (mono-MT 70–73 s), 46% of MAS N=16's wall clock. It now only moves rows —
   under the old key it grew with store count, and that growth was the defect
   doing work. Amdahl on the serial fraction, not a failure to scale.
-- Show the speedup chart. Name the fix (partitioned Parquet or a
-  concurrent-writer store) as roadmap, not as done.
+- The slide's chart is wall clock per architecture, clean + merge: mono-1T 537.8 s,
+  mono-MT T=8 157.3 s, MAS N=16 140.4 s, captioned *serial merge, not the
+  workers, caps the speedup*.
+- *Said aloud, no longer on the slide:* name the fix (partitioned Parquet or a concurrent-writer store)
+  as roadmap, not as done.
 
 ---
 
-## 6. The data, measured
+## 5. The data, measured
 
 - `status` is **a bitmask, not an enumeration** — bit 0 is the reject signal,
-  bits 1–6 are the conditions. Slide 6 of the brief lists 14 rows = 7 conditions
-  × {reject, no reject}.
+  bits 1–6 are the conditions. AROL's brief (its slide 6) lists 13 codes:
+  0 (Closure OK), then each condition without and with the reject bit —
+  2/3, 4/5, 8/9, 16/17, 32/33, 64/65.
 - A closure is a rejection **if and only if** its status is odd.
-- Measured over three months:
+- Measured over three months. The slide captions the table *MEASURED ·
+  FEB–APR 2026 · 55,132,433 CLOSURES / Only 5 of the 13 codes occur* — 0, 2, 4, 9
+  and 65; the other eight never appear in the pool:
 
   | status | torque>0 | count | decoded |
   |---|---|---:|---|
@@ -101,14 +116,14 @@ day-files are offset from midnight) and reconciled in
 
 - 1,071 + 24 + 1 = **1,096 rejects**, exactly what the odd-status rule returns.
   The bitmask is confirmed by the data, not assumed.
-- **This changed a number.** The earlier rule `status == 65` undercounts: February
+- *Said aloud, no longer on the slide:* **this changed a number.** The earlier rule `status == 65` undercounts: February
   has **748** rejected closures.
-- **Success rate excludes no-load cycles** — a head that only ever cycled with no
+- *Said aloud, no longer on the slide:* **success rate excludes no-load cycles** — a head that only ever cycled with no
   load performed zero capping operations and is omitted, not reported at 0%.
 
 ---
 
-## 7. WP2 — the analytics toolkit
+## 6. WP2 — the analytics toolkit
 
 - Eight pure functions: `overview`, `success_rates`, `torque_stats`,
   `capping_speed`, `idle_periods`, `anomalies`, `trend`, `head_correlation`.
@@ -124,7 +139,7 @@ day-files are offset from midnight) and reconciled in
 
 ---
 
-## 8. WP3 — the report agent
+## 7. WP3 — the report agent
 
 - Show the **decision flowchart** ([`docs/agent-decision-flow.md`](../agent-decision-flow.md)).
 - **The model plans and narrates; it never computes.** Every number comes from
@@ -143,7 +158,7 @@ day-files are offset from midnight) and reconciled in
 
 ---
 
-## 9. WP4 — the BOT
+## 8. WP4 — the BOT
 
 - Four commands:
 
@@ -160,20 +175,30 @@ day-files are offset from midnight) and reconciled in
 - Failure policy is deliberate: a **config** problem exits 2 before any work; an
   **analysis** gap produces a report that names the gap, because an unattended
   run must still land on disk.
+- **`ask` runs on a local model by default** (on `fix/agentic_call`, the branch
+  the demo runs from): Ollama with qwen3:14b, no API key, nothing leaves the
+  machine.
+- *Said aloud, no longer on the slide:* another model: `"model"` in `arol.json`, or `--model` after
+  the question. The hosted Anthropic API is wired in (`--provider anthropic`)
+  but untested.
 - Show a generated report — the six mandated sections and the tool-call trace.
 
 ---
 
-## 10. A finding
+## 9. A finding
 
 - The machine-level number looks perfect: **99.9950%** success over February
   (14,817,976 successful, 748 rejected).
 - Per head, it is not evenly spread. Over three months **head 29 accounts for 117
   of the 1,095 rejected capping operations** — against a per-head mean of 30.4,
-  and against 78 for the next-worst head (35). **3.8× the machine average.**
+  and against 78 for the next-worst head (35). **3.8× the per-head average.**
 - That is the actionable finding, and the headline rate hides it completely.
-  99.9950% and 99.9781% look like the same number until you count rejects per
-  head.
+  In February, 99.9950% (machine) and 99.9781% (head 29) look like the same
+  number until you count rejects per head.
+- **Checked, not trusted** (box on the slide): every figure on it was recomputed
+  with SQL written independently of the toolkit (`docs/validation-log.md`,
+  2026-08-22), and a standard-library Python oracle re-derives the closures from
+  the raw CSV and matches the C++ on every field.
 - **If asked "and head 35?"** — which is the natural question once 78 is on the
   slide. First-order Poisson check on a per-head mean of 30.4 (sigma ~5.5):
   head 29 sits ~15.7 sigma above the machine mean, which is not arguable. Head
@@ -182,77 +207,63 @@ day-files are offset from midnight) and reconciled in
   35 are *both* outliers against the machine, that 29 is the worse of the two,
   and that the gap between them is real but not overwhelming. Assumes
   independent uniform rates — a reasonable first approximation, not a model.
-- **Equally important: what we did *not* find.** No head exceeds the Mann-Kendall
+- *Said aloud, no longer on the slide:* **what we did *not* find.** No head exceeds the Mann-Kendall
   drift threshold on torque or on success rate over three months, and all 36
   heads correlate above 0.9999 on mean torque — none is out of step *in shape*.
   The machine is stable; head 29 is a discrete problem, not a trend.
-- **And what that correlation cannot see.** Pearson is invariant to a per-head
+- *Said aloud, no longer on the slide:* **what that correlation cannot see.** Pearson is invariant to a per-head
   offset, so a head running steadily below the others while moving with them
   scores ~1 and is reported as tracking. The report says so, and names the check
   that would catch it: per-head median torque (`torque_stats by head`).
-- Reporting the absence honestly is a feature. An earlier version of the report
+- *Said aloud, no longer on the slide:* reporting the absence honestly is a feature. An earlier version of the report
   always named a "least-correlated head", which on this data asserted that *the
   odd head out has a correlation of 1.000* — true arithmetic, false conclusion.
 
 ---
 
-## 11. Engineering
-
-- **580 Python tests, 213 C++ tests**, all green; test output pristine. Both
-  counts are asserted against the sources by `test_readme_counts.py`, so the
-  slide cannot drift from the suite.
-- **Golden-report regression**: a fixed store and a fixed plan must render
-  byte-identical Markdown, so a change in any tool's SQL shows up as a diff in a
-  committed file instead of a silent shift in a number nobody re-read.
-- **Orchestration tested with a mocked model** — no tokens, no network. Every
-  planner and narrator failure path (no key, API error, refusal, malformed JSON,
-  invalid step) is pinned.
-- **Independent oracle cross-check**: toolkit SQL against a raw-CSV
-  re-derivation.
-- **Every number in the three committed reports was reconciled by hand** against
-  a direct DuckDB query written independently of the toolkit. That reconciliation
-  is what found three reporting defects — none reproducible on the test fixture.
-- Config-driven throughout (WP5): no hard-coded path, band or threshold.
-
----
-
-## 12. Honest limits
+## 10. Honest limits
 
 - **`NUM_HEADS` is compile-time 36.** The brief's own example shows a 48-head
   machine; no 48-head data exists to test against. Known limit, roadmap item.
-- **The GPU engine ingests CSV only.** The CPU path reads CSV, Parquet and
-  JSON day-files (`open_raw_reader`, identical stores on a real day); the CUDA
-  loader parses CSV text itself and refuses the other two.
+- **GPU ingestion: CSV only** (on `fix/agentic_call`; on `main` all ingestion
+  is still CSV). The CPU path reads CSV, Parquet and JSON day-files through
+  `open_raw_reader()`: a real day (2026-02-28, 806,785 events) converted to
+  Parquet and JSON gives stores identical row for row. `--engine=cuda` parses CSV
+  text itself and refuses the other two (exit 2). The store was never CSV-bound:
+  DuckDB or Parquet, read by the same eight tools (`test_backend_parity.py`).
 - **~0.02% of closures carry statuses we decode but have not seen AROL confirm** —
   12,461 No-Load-with-torque and 12 No-Closure rows. We treat them as carrying no
   pass/fail verdict and exclude them from the rate rather than guessing.
 - **The live agentic path is proven on a local model, not on the hosted one.**
   `docs/reports/ask-live-sample/` is a committed `ask` run on qwen2.5:7b under
   Ollama: plan source `llm`, one registry-validated step, executor → renderer
-  end to end on the real store. What stays unverified is **schema acceptance
+  end to end on the real store. The live demo uses qwen3:14b, the default on
+  `fix/agentic_call`. What stays unverified is **schema acceptance
   against the Anthropic API**, because no key has ever been used;
   `test_anthropic_schema_live.py` sends the schemas and is gated on one.
 - **The 7B plans but cannot narrate.** Every narration it produced was rejected
   by the no-bullet detector (3 of 3 in July, 2 of 2 in August) and replaced by
   the deterministic summary, with the reason printed in the limits section. The
   prose in the committed sample is the template's.
-- **PDF export needs native dependencies** (WeasyPrint + Cairo/Pango). Markdown
+- *If asked, no longer on the slide:* **PDF export needs native dependencies** (WeasyPrint + Cairo/Pango). Markdown
   and HTML always ship; `--pdf` degrades with an install hint.
 - **The merge is unfixed**, and it is the serial fraction that holds end-to-end
   speedup at 3.83× while the clean phase alone reaches 7.2×.
 
 ---
 
-## 13. Demo
+## 11. Demo
 
 - One command reproduces everything:
 
       scripts/demo.sh
 
   55.1 M rows, three report types, 12/12 tool steps `ok`, ~23 s.
-- Live `arol ask "..."` — show the plan the model chose, then show the same
-  command with the key unset falling back to the router and *saying so* in the
-  report.
+- Live `arol ask "..."` on qwen3:14b via local Ollama, from `fix/agentic_call` —
+  show the plan the model chose. Then the same question with `--provider
+  anthropic` and no key: it falls back to the router and *says so* in the
+  report. The flag is not optional: the branch defaults to Ollama, so unsetting
+  the key alone changes nothing and the model simply plans again.
 - Committed artifacts: [`docs/reports/`](../reports/) — `kpi-2026-02`,
   `drift-2026-02_2026-04`, `anomalies-2026-02`, and `ask-live-sample` (the live
   agentic run).
@@ -272,7 +283,7 @@ collapsing distinct closures across the PLC's counter reset — see
 Re-derived from the rebuilt store, not carried over:
 
 - February success rate and counts, and the per-head rate for head 29
-- the three-month status distribution in section 6, and the 1,096 reject total
+- the three-month status distribution in section 5, and the 1,096 reject total
 - head 29's share of the rejects
 
 **The finding survived the rebuild but got smaller, and the smaller number is

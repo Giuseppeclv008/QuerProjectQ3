@@ -257,7 +257,7 @@ then confirm every number in Findings also appears in `trace.json`.
 
 > **[SUPERSEDED 2026-08-11.** Every figure in this section is computed on the store as it existed under `UNIQUE(machine_id, head_id, cap_seq)`, which was discarding real closures across the PLC's counter reset. See **"Event identity: the counter key was discarding real closures"** at the end of this file for the measurement and the corrected values.**]**
 
-The three-month per-head figures quoted on slide 10 of
+The three-month per-head figures quoted on slide 9 of
 `docs/presentation/outline.md`, and the query that produced them:
 
     .venv/bin/python -c "
