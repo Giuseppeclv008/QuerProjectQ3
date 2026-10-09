@@ -225,3 +225,29 @@ def failed_closures_per_day(result, out_dir, suffix=""):
     ax.set_xticklabels(days[::step], rotation=45, ha="right", fontsize="small")
     ax.grid(alpha=0.3, axis="y")
     return _save(fig, out_dir, f"failed_closures_per_day{suffix}.png")
+
+
+def failure_by_hour(result, out_dir, suffix=""):
+    """Bars: rejects per 100,000 closures for each hour of the day, with the overall rate."""
+    if not _usable(result) or not isinstance(result.values, dict):
+        return None
+    hours = result.values.get("hours")
+    if not hours or not result.values.get("rejected"):
+        return None            # no rejects: an empty chart would read as a claim
+    rates = [(h["reject_rate"] or 0) * 1e5 for h in hours]
+    overall = result.values["reject_rate"] * 1e5
+    worst = max(range(len(rates)), key=lambda i: rates[i])
+    colors = ["#c0392b" if i == worst else "#2c7fb8" for i in range(len(rates))]
+    p_value = result.values.get("p_value")
+    verdict = (f"chi-square p = {p_value:.3g}" if p_value is not None
+               else "too few rejects to test")
+    fig, ax = plt.subplots(figsize=_FIGSIZE)
+    ax.bar([f"{h['hour']:02d}" for h in hours], rates, color=colors)
+    ax.axhline(overall, color="#555555", linestyle="--", linewidth=1,
+               label=f"overall: {overall:.2f} per 100,000")
+    ax.set_xlabel("hour of day (as stored)")
+    ax.set_ylabel("rejects per 100,000 closures")
+    ax.set_title(f"Reject rate by hour of day ({verdict})")
+    ax.legend(loc="best", fontsize="small")
+    ax.grid(alpha=0.3, axis="y")
+    return _save(fig, out_dir, f"failure_by_hour{suffix}.png")

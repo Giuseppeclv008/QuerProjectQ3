@@ -2057,3 +2057,33 @@ model, 43 answers written by the model: no router plan and no template fallback.
   torque anomalies", which is the March step and not a count of bad closures.
 - Small slips inside correct answers: 38 gives 2026-02-01 as the day with the
   fewest rejects (it is a partial day).
+
+## 2026-10-09 — `failure_correlation`: time of day and torque against the outcome
+
+Queries 19 (a correlation between time of day and failure probability) and 29
+(does higher torque correlate with higher success rate) had no tool; the model
+answered from whatever was at hand ("no correlation", argued from a comparison of
+weeks). `failure_correlation` takes `by` = `hour_of_day` or `torque`, on the
+closures with a verdict (the `success_rates` denominator).
+
+- **Hour of day**, February 2026, 14,818,724 closures with a verdict: the reject
+  rate runs from 3.16 per 100,000 at 21:00 to 8.64 at 17:00 (overall 5.05); the
+  chi-square is 38.19 for 23 degrees of freedom, p = 0.024. The rate does vary
+  with the hour, weakly; the data say nothing about why. The p-value comes from
+  the regularised incomplete gamma function, written out (no scipy) and checked
+  against the published critical values (3.841 for 1 df, 35.172 for 23 df, both
+  at 0.05); a textbook 2x2 case is a test. No p-value is given where an hour
+  expects fewer than five rejects or passes.
+- **Torque**: r = 0.030 between the torque and the outcome (negligible), mean
+  torque 1.9996 Nm for the successful and 1.9106 for the rejected closures, and
+  70 of the 72 closures with a verdict below 1.5 Nm rejected, against 678 of
+  14,818,649 inside the band and 0 of 3 above. A correlation that small does not
+  mean the extremes are harmless, so the report prints both. (An earlier line in
+  this tool's reasoning, "55% below 1.5 Nm", counted closures with no verdict
+  too; with the same denominator as the success rate it is 97%.)
+
+Run again on the 43 queries: 19 and 29 now answer with those figures; every
+other answer is as in the previous run, with a plan that sometimes holds one more
+tool (the model adds `failure_correlation` to some "why" questions, to no harm).
+Tally: 40 right and supported, 2 partial (4, 32), 1 wrong (25). The planner
+prompt is 3,977 tokens with thirteen tools, inside the 6144 minimum for `num_ctx`.

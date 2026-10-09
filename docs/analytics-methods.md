@@ -406,6 +406,38 @@ failed closures below 1.5 Nm across 26 heads; 10 failed closures on head 3, from
 
 ---
 
+## `failure_correlation` — does the chance of a rejection depend on a factor
+
+**Question:** is there a correlation between the time of day and the probability
+of failure? does a higher torque go with a higher success rate?
+
+It works on the closures that carry a verdict (successful or rejected), the
+denominator of `success_rates`, and takes one factor in `by`:
+
+- **`hour_of_day`**: the reject rate of each of the 24 hours, and a chi-square
+  test of whether it depends on the hour. The statistic is
+  `sum((rejected - n*p)^2 / (n*p*(1-p)))` over the hours, with `p` the overall
+  reject rate and (hours - 1) degrees of freedom, and the p-value is the upper
+  tail of the chi-square distribution (the regularised incomplete gamma function,
+  checked against the published critical values). It is only computed where every
+  hour expects at least five rejects and five passes; with fewer there is no
+  p-value and the result says why. The hour is the one the store holds, without
+  any time-zone conversion.
+- **`torque`**: the correlation between the torque and the outcome (Pearson's r
+  against 1 for a success and 0 for a reject), the mean torque of each outcome,
+  and the reject rate below, inside and above the configured torque band.
+
+A small coefficient is not the same as no relationship when rejects are rare.
+Measured for February 2026, over 14,818,724 closures with a verdict: the reject
+rate runs from 3.16 per 100,000 closures at 21:00 to 8.64 at 17:00 (overall
+5.05), and the chi-square is 38.19 for 23 degrees of freedom, p = 0.024, so the
+rate does vary with the hour, weakly; the torque correlation is r = 0.030
+(negligible), the mean torque 1.9996 Nm for the successful closures and 1.9106
+for the rejected, and 70 of the 72 closures below 1.5 Nm were rejected, against
+678 of 14.8 million inside the band. Neither says why.
+
+---
+
 ## `methodology` — how the data was prepared and a closure judged
 
 **Question:** what preprocessing was applied? how were duplicated closures

@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from analytics.tools.anomaly import anomalies
 from analytics.tools.compare import compare_periods
 from analytics.tools.correlation import head_correlation
+from analytics.tools.factors import failure_correlation
 from analytics.tools.filter import closure_filter
 from analytics.tools.gaps import event_gaps
 from analytics.tools.idle import idle_periods
@@ -185,6 +186,21 @@ TOOLS = {
             "Not the configured band (that is anomalies) and not why a closure "
             "has its torque: it counts against the values given, and lists no "
             "more than the first 20 events.",
+        ),
+        ToolSpec(
+            "failure_correlation", failure_correlation,
+            "How the chance of a rejection varies with a factor: the hour of the "
+            "day (the reject rate of each hour, and a chi-square test of whether it "
+            "depends on the hour) or the closing torque (the correlation between "
+            "torque and success, and the reject rate below, inside and above the "
+            "torque band). Answers 'is there a correlation between time of day and "
+            "failure probability', 'does higher torque correlate with higher "
+            "success rate'.",
+            {"period": _PERIOD,
+             "by": _enum(["hour_of_day", "torque"], "the factor; default 'hour_of_day'")},
+            "Not a cause: a rate that varies with the hour or the torque says when "
+            "and where closures fail, not why, and the hour is the one the store "
+            "holds, with no time-zone conversion.",
         ),
         ToolSpec(
             "methodology", methodology,

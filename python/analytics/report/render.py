@@ -31,6 +31,7 @@ _PLOTTERS = {
     ("anomalies", None): plots.anomalies_over_time,
     ("success_rates", "day"): plots.failed_closures_per_day,
     ("torque_stats", None): plots.torque_histogram,
+    ("failure_correlation", "hour_of_day"): plots.failure_by_hour,
 }
 
 # The file stem each figure is written under (plots.py appends the suffix and
@@ -43,6 +44,7 @@ _FIGURE_STEMS = {
     ("trend", "drift"): "drift_ranking",
     ("anomalies", None): "anomalies_over_time",
     ("torque_stats", None): "torque_histogram",
+    ("failure_correlation", "hour_of_day"): "failure_by_hour",
 }
 
 
@@ -450,6 +452,51 @@ def summarise(execution):
                          if v["listed"] >= v["count"] else
                          f" The first {v['listed']} are listed in the table below.")
             lines.append(line)
+        elif result.tool == "failure_correlation":
+            if v.get("by") == "hour_of_day":
+                hi, lo, p_value = v["highest"], v["lowest"], v.get("p_value")
+                if p_value is None:
+                    verdict = v.get("note") or "no test could be run"
+                elif p_value < 0.05:
+                    verdict = (f"the differences between hours are larger than chance "
+                               f"gives (chi-square p = {p_value:.3g}); that says the "
+                               f"rate varies with the hour, not why")
+                else:
+                    verdict = (f"the differences between hours are within what chance "
+                               f"gives (chi-square p = {p_value:.3g})")
+                lines.append(
+                    f"- **Failure by hour of day.** The reject rate runs from "
+                    f"{lo['reject_rate'] * 1e5:.2f} per 100,000 closures at "
+                    f"{lo['hour']:02d}:00 to {hi['reject_rate'] * 1e5:.2f} at "
+                    f"{hi['hour']:02d}:00 (overall {v['reject_rate'] * 1e5:.2f}); "
+                    f"{verdict}.")
+            elif v.get("by") == "torque":
+                r = v.get("correlation")
+                if r is None:
+                    corr = "The correlation between torque and success is undefined"
+                else:
+                    size = abs(r)
+                    strength = ("negligible" if size < 0.1 else "weak" if size < 0.3
+                                else "moderate" if size < 0.5 else "strong")
+                    corr = (f"The correlation between torque and success is "
+                            f"r = {r:+.3f} ({strength}; {_fmt(v['closures'])} closures "
+                            f"with a verdict)")
+                means = ""
+                if v.get("mean_torque_successful") is not None \
+                        and v.get("mean_torque_rejected") is not None:
+                    means = (f"; mean torque {v['mean_torque_successful']:.4f} Nm for "
+                             f"successful and {v['mean_torque_rejected']:.4f} Nm for "
+                             f"rejected closures")
+                lo_band, hi_band = v["band"]
+                where = {"below": f"below {lo_band:g} Nm", "inside": "inside the band",
+                         "above": f"above {hi_band:g} Nm"}
+                zones = ", ".join(
+                    f"{where[z['zone']]} {_fmt(z['rejected'])} of {_fmt(z['closures'])} "
+                    f"rejected" + (f" ({_share(z['reject_rate'])})"
+                                   if z["reject_rate"] is not None else "")
+                    for z in v["zones"])
+                lines.append(f"- **Failure and torque.** {corr}{means}. By the band "
+                             f"{lo_band:g}-{hi_band:g} Nm: {zones}.")
         elif result.tool == "methodology":
             for item in v["topics"]:
                 lines.append(f"- **Method ({item['topic']}).** {item['text']}")
@@ -588,6 +635,21 @@ def tables(execution, max_rows=None, max_day_rows=None):
             header = ["Head", "Time", "Torque (Nm)", "Status", "Outcome"]
             rows = [[str(e["head_id"]), str(e["ts"]), f"{e['app_torque']:.3f}",
                      f"{e['status']:g}", e["outcome"]] for e in v["events"]]
+        elif result.tool == "failure_correlation" and isinstance(v, dict) and v.get("by") == "hour_of_day":
+            title = "Failure by hour of day"
+            header = ["Hour", "Closures", "Rejected", "Rejects per 100,000"]
+            rows = [[f"{h['hour']:02d}:00", _fmt(h["closures"]), _fmt(h["rejected"]),
+                     "n/a" if h["reject_rate"] is None else f"{h['reject_rate'] * 1e5:.2f}"]
+                    for h in v["hours"]]
+        elif result.tool == "failure_correlation" and isinstance(v, dict) and v.get("by") == "torque":
+            lo_band, hi_band = v["band"]
+            names = {"below": f"below {lo_band:g} Nm", "inside": f"{lo_band:g}-{hi_band:g} Nm",
+                     "above": f"above {hi_band:g} Nm"}
+            title = "Failure by torque zone"
+            header = ["Torque", "Closures", "Rejected", "Reject rate"]
+            rows = [[names[z["zone"]], _fmt(z["closures"]), _fmt(z["rejected"]),
+                     "n/a" if z["reject_rate"] is None else _share(z["reject_rate"])]
+                    for z in v["zones"]]
         elif not isinstance(v, list):
             continue
         elif result.tool == "success_rates":
@@ -635,6 +697,8 @@ def _figure_keys(result, args):
         return [("anomalies", None)]
     if result.tool == "torque_stats" and not args.get("by"):
         return [("torque_stats", None)]
+    if result.tool == "failure_correlation" and args.get("by", "hour_of_day") == "hour_of_day":
+        return [("failure_correlation", "hour_of_day")]
     return []
 
 

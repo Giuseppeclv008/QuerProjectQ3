@@ -302,3 +302,9 @@ def test_the_rules_send_per_head_and_histogram_questions_to_the_right_tool():
     rules = planner.SYSTEM
     assert "for each head" in rules and "which overview does not" in rules
     assert "histogram of torque" in rules and "without `by`" in rules
+
+
+def test_the_rules_send_outcome_against_a_factor_to_failure_correlation():
+    rules = planner.SYSTEM
+    assert "failure_correlation" in rules and "time of day" in rules
+    assert "head_correlation compares heads with each other, not an outcome with a factor" in rules

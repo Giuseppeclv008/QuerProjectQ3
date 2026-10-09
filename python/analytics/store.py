@@ -36,7 +36,7 @@ def connect(cfg):
     """A read-only connection whose `cap_events` is the configured store.
 
     A directory means a Parquet store: `cap_events` becomes a view over its
-    files, deduplicated on the event identity. The twelve tools cannot tell the
+    files, deduplicated on the event identity. The thirteen tools cannot tell the
     difference — none of their `FROM cap_events` change, which is what makes a
     comparison between the two backends a comparison of storage rather than of
     two different queries.
@@ -135,7 +135,7 @@ def scope_clause(cfg, period):
     """The WHERE fragment every tool starts from: this machine, this period.
 
     Machine and period scoping live here, in one place, rather than being
-    re-derived (and eventually forgotten) by each of the twelve tools.
+    re-derived (and eventually forgotten) by each of the thirteen tools.
     """
     where, params = period_clause(period)
     return f"machine_id = ? AND {where}", [cfg.machine_id] + params

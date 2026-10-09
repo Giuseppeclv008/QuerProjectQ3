@@ -310,3 +310,23 @@ def test_failed_closures_per_day_is_not_drawn_when_nothing_failed(tiny_cfg, tmp_
     result = ToolResult.ok("success_rates", [
         {"day": "2026-02-01", "total": 10, "successful": 10, "failed": 0, "success_rate": 1.0}])
     assert plots.failed_closures_per_day(result, tmp_path) is None
+
+
+def _hour_values(rejected=748):
+    hours = [{"hour": h, "closures": 1000, "rejected": rejected // 24,
+              "reject_rate": (rejected // 24) / 1000} for h in range(24)]
+    return {"by": "hour_of_day", "hours": hours, "closures": 24000, "rejected": rejected,
+            "reject_rate": rejected / 24000, "p_value": 0.02}
+
+
+def test_failure_by_hour_writes_a_png(tmp_path):
+    name = plots.failure_by_hour(ToolResult.ok("failure_correlation", _hour_values()), tmp_path)
+    assert name == "failure_by_hour.png" and (tmp_path / name).stat().st_size > 0
+
+
+def test_failure_by_hour_is_not_drawn_when_nothing_was_rejected(tmp_path):
+    assert plots.failure_by_hour(ToolResult.ok("failure_correlation", _hour_values(0)), tmp_path) is None
+
+
+def test_failure_by_hour_is_not_drawn_for_the_torque_result(tmp_path):
+    assert plots.failure_by_hour(ToolResult.ok("failure_correlation", {"by": "torque"}), tmp_path) is None

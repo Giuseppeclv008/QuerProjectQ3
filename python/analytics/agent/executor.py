@@ -5,7 +5,7 @@ Two things happen here that happen nowhere else:
 1. Every exception a tool can raise becomes a ToolResult.error. One real gap
    stayed open while a human typed the period -- store.period_clause raises
    ValueError on an unparseable one. A language model types it now, so the gap
-   is closed here, once, for all twelve tools rather than twelve times inside
+   is closed here, once, for all thirteen tools rather than thirteen times inside
    them.
 
 2. Nulls are stripped from the arguments. The plan schema is a closed object that

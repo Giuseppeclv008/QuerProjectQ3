@@ -55,6 +55,10 @@ without `by`: its result is drawn as a histogram.
 of one outcome, or of one head, plan closure_filter with those values in \
 above, below, outcome and head; a count against a value the question gives \
 is never anomalies.
+- If it asks whether failures or success depend on the time of day, or whether \
+a higher torque goes with more success, plan failure_correlation with by \
+hour_of_day or torque; head_correlation compares heads with each other, not an \
+outcome with a factor.
 - If it asks how the data was prepared, cleaned or deduplicated, which \
 assumptions were made, or how a closure is classed as successful, plan \
 methodology.

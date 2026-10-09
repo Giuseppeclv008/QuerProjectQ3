@@ -8,6 +8,8 @@ number nobody re-read.
 import json
 from pathlib import Path
 
+import pytest
+
 from analytics.agent.executor import Execution, execute
 from analytics.agent.plan import Plan, PlanStep
 from analytics.agent.router import canned_plan
@@ -838,3 +840,84 @@ def test_a_sliver_does_not_set_the_direction_of_the_reject_rate():
     # first -> last of the buckets that count is February -> March, a steady rate,
     # not a "rose" from a January that held eight hours.
     assert "**Reject rate.** Was steady: 0.0050% in 2026-02, 0.0052% in 2026-03." in s.findings
+
+
+def _hour_result(p_value=0.0243, note=""):
+    hours = [{"hour": h, "closures": 600000, "rejected": r, "reject_rate": r / 600000}
+             for h, r in ((17, 46), (21, 19))]
+    v = {"by": "hour_of_day", "hours": hours, "closures": 14818724, "rejected": 748,
+         "reject_rate": 748 / 14818724, "chi_square": 38.19, "degrees_of_freedom": 23,
+         "p_value": p_value, "highest": hours[0], "lowest": hours[1]}
+    if note:
+        v["note"] = note
+    return ToolResult.ok("failure_correlation", v)
+
+
+def test_a_rate_that_varies_with_the_hour_says_so_and_not_why():
+    findings = _summarise((PlanStep("failure_correlation", {}), _hour_result()))
+    assert ("**Failure by hour of day.** The reject rate runs from 3.17 per 100,000 "
+            "closures at 21:00 to 7.67 at 17:00 (overall 5.05); the differences between "
+            "hours are larger than chance gives (chi-square p = 0.0243); that says the "
+            "rate varies with the hour, not why.") in findings
+
+
+def test_a_rate_that_does_not_vary_with_the_hour_says_it_is_within_chance():
+    findings = _summarise((PlanStep("failure_correlation", {}), _hour_result(p_value=0.41)))
+    assert "within what chance gives (chi-square p = 0.41)" in findings
+
+
+def test_too_few_rejects_to_test_is_said_rather_than_a_p_value():
+    findings = _summarise((PlanStep("failure_correlation", {}), _hour_result(
+        p_value=None, note="too few rejects to test: an hour expects fewer than 5")))
+    assert "too few rejects to test" in findings and "chi-square" not in findings
+
+
+def _torque_result(r=0.0299):
+    return ToolResult.ok("failure_correlation", {
+        "by": "torque", "closures": 14818724, "correlation": r,
+        "mean_torque_successful": 1.9996, "mean_torque_rejected": 1.9106,
+        "band": [1.5, 2.5],
+        "zones": [{"zone": "below", "closures": 72, "rejected": 70, "reject_rate": 70 / 72},
+                  {"zone": "inside", "closures": 14818649, "rejected": 678,
+                   "reject_rate": 678 / 14818649},
+                  {"zone": "above", "closures": 3, "rejected": 0, "reject_rate": 0.0}]})
+
+
+def test_a_weak_correlation_with_torque_still_shows_the_band_where_closures_fail():
+    findings = _summarise((PlanStep("failure_correlation", {"by": "torque"}), _torque_result()))
+    assert "**Failure and torque.** The correlation between torque and success is r = +0.030 " \
+           "(negligible; 14,818,724 closures with a verdict)" in findings
+    assert "mean torque 1.9996 Nm for successful and 1.9106 Nm for rejected closures" in findings
+    assert "below 1.5 Nm 70 of 72 rejected (97.22%)" in findings
+    assert "inside the band 678 of 14,818,649 rejected (0.00458%)" in findings
+    assert "above 2.5 Nm 0 of 3 rejected (0%)" in findings
+
+
+@pytest.mark.parametrize("r, word", [(0.05, "negligible"), (-0.2, "weak"),
+                                     (0.4, "moderate"), (-0.7, "strong")])
+def test_the_strength_of_a_correlation_is_named(r, word):
+    findings = _summarise((PlanStep("failure_correlation", {"by": "torque"}), _torque_result(r=r)))
+    assert f"({word};" in findings
+
+
+def test_an_undefined_correlation_is_not_printed_as_a_number():
+    findings = _summarise((PlanStep("failure_correlation", {"by": "torque"}),
+                           _torque_result(r=None)))
+    assert "is undefined" in findings and "r =" not in findings
+
+
+def test_both_factors_get_a_table():
+    hour = render.tables(_plan_of((PlanStep("failure_correlation", {}), _hour_result())))
+    assert "### Failure by hour of day (table)" in hour
+    assert "| 17:00 | 600,000 | 46 | 7.67 |" in hour
+    torque = render.tables(_plan_of((PlanStep("failure_correlation", {"by": "torque"}),
+                                     _torque_result())))
+    assert "### Failure by torque zone (table)" in torque
+    assert "| below 1.5 Nm | 72 | 70 | 97.22% |" in torque
+    assert "| 1.5-2.5 Nm | 14,818,649 | 678 | 0.00458% |" in torque
+
+
+def test_the_hour_chart_is_planned_but_the_torque_one_is_not():
+    ex = _plan_of((PlanStep("failure_correlation", {}), _hour_result()),
+                  (PlanStep("failure_correlation", {"by": "torque"}), _torque_result()))
+    assert render.planned_figures(ex) == [("failure by hour", "failure_by_hour.png")]

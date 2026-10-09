@@ -17,6 +17,7 @@ def test_every_wp2_tool_is_registered():
         "overview", "success_rates", "torque_stats", "capping_speed",
         "idle_periods", "anomalies", "trend", "head_correlation",
         "event_gaps", "compare_periods", "closure_filter", "methodology",
+        "failure_correlation",
     }
 
 
@@ -99,7 +100,7 @@ def test_plan_schema_unions_enums_that_clash_across_tools():
     args = (registry.plan_json_schema()["properties"]["steps"]["items"]
             ["properties"]["args"]["properties"])
     assert set(args["by"]["enum"]) == {"head", "day", "overall", "hour",
-                                       "month", "week", None}
+                                       "month", "week", "hour_of_day", "torque", None}
 
 
 def test_plan_schema_requires_every_argument_key():
