@@ -264,7 +264,8 @@ day-files are offset from midnight) and reconciled in
   marked `xfail`). The check is `python/tests/test_brief_queries_live.py`,
   opt-in (`AROL_LIVE_QUERIES=1`, store and model needed; 8 min 45 s on the run
   of 2026-10-09, `docs/validation-log.md`). `docs/reports/ask-live-sample/` is the
-  older committed run, on qwen2.5:7b. What stays unverified is **schema
+  demo question asked once on qwen3:14b (2026-10-09): two steps, and a narration
+  the checks accepted. What stays unverified is **schema
   acceptance against the Anthropic API**, because no key has ever been used;
   `test_anthropic_schema_live.py` sends the schemas and is gated on one.
 - **Numbers checked, words not.** With the local model, any number in the answer
@@ -277,7 +278,7 @@ day-files are offset from midnight) and reconciled in
   page.
 - *If asked, no longer on the slide:* **why not the 7B.** qwen2.5:7b planned but
   never narrated: every narration was rejected by the no-bullet detector (3 of 3
-  in July, 2 of 2 in August), so the prose in the committed sample is the
+  in July, 2 of 2 in August), so the prose of the August sample was the
   template's. Handed the raw results, qwen3:14b misread them ("all 36 heads show
   torque drifts" when none did), which is why the local narrator now reads the
   verified findings instead.
@@ -294,20 +295,19 @@ day-files are offset from midnight) and reconciled in
 
       scripts/demo.sh
 
-  55.1 M rows, three report types, 12/12 tool steps `ok`, ~23 s.
-- Live `arol ask "..."` on qwen3:14b via local Ollama, from `main` —
-  show the plan the model chose. Then the same question with `--provider
-  anthropic` and no key: it falls back to the router and *says so* in the
+  55.1 M rows, three report types, 12/12 tool steps `ok`, ~5 s (5.2 s on
+  2026-10-09, warm).
+- Live on qwen3:14b via local Ollama, from `main`: `arol ask "Is there a head
+  with an unusual number of failed closures?"`, with no `--period`, so the whole
+  store and the figures of slide 9 (head 29 with 117 of the 1,095 rejects, head
+  35 with 78). Show the plan the model chose. It is the brief's query 26, which
+  the live test passes. Then the same question with `--provider anthropic` and
+  no key: it falls back to the router (the anomalies plan) and *says so* in the
   report. The flag is not optional: the code defaults to Ollama, so unsetting
   the key alone changes nothing and the model simply plans again.
-- *Open as of 2026-10-09, not settled here:* the ~23 s was timed before the
-  merge, and the tools now compute more, so re-time `demo.sh`. The question
-  in the demo checklist is the brief's query 25, which the live test marks
-  `xfail` (see section 10). The committed reports predate the Answer bullet
-  and the new tables (README, *Reports*).
 - Committed artifacts: [`docs/reports/`](../reports/) — `kpi-2026-02`,
-  `drift-2026-02_2026-04`, `anomalies-2026-02`, and `ask-live-sample` (the live
-  agentic run).
+  `drift-2026-02_2026-04`, `anomalies-2026-02`, and `ask-live-sample` (the demo
+  question on qwen3:14b, 19 s warm), all regenerated on 2026-10-09.
 - Close on the invariant: **the model chose the analyses; the SQL produced every
   number.**
 
