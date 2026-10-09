@@ -1758,17 +1758,17 @@ it, `--pdf` logs how to install it and writes Markdown and HTML as normal.
 
 The project has **213 C++ unit tests** across 22 Google Test files — 202 in the
 default build plus the 11-case GPU/CPU differential behind `-DMAS_ENABLE_CUDA=ON`
-— plus **525
+— plus **580
 Python tests** for the analytics tier. Every test count in this
 README is asserted by `python/tests/test_readme_counts.py`, so adding a test and
 forgetting this paragraph fails the suite rather than quietly dating it.
 
 ```bash
 cd build && ctest -C Release --output-on-failure # 202 C++ tests in the default build; the 11-case GPU/CPU differential is compiled only with -DMAS_ENABLE_CUDA=ON (and skips without a device)
-cd python && ../.venv/bin/python -m pytest -q    # 525 Python tests (see the three gates below)
+cd python && ../.venv/bin/python -m pytest -q    # 580 Python tests (see the four gates below)
 ```
 
-Three gates apply to the Python suite. Two are data gates: **6 tests** need the
+Four gates apply to the Python suite. Two are data gates: **6 tests** need the
 rebuilt 3-month store (`../events_3mo.duckdb`, from `scripts/build_store.sh`)
 and skip without it, and **2 tests** need a real extracted day-file and skip
 without that. The third is a credentials gate: **2 tests** need
@@ -1778,8 +1778,22 @@ account — see
 `python/tests/test_anthropic_schema_live.py`, which is the only test in the
 suite that leaves the machine.
 
-So a fresh clone shows 10 skips; a machine with the pool extracted but no store
-shows 8; and adding a key removes 2 more.
+A fourth gate is opt-in. **43 tests** need the store and a model on Ollama: each
+asks the real agent one of the brief's example queries and checks the answer
+against figures computed from the store with SQL of its own
+(`python/tests/test_brief_queries_live.py`). They take about nine minutes and
+skip, saying why, unless `AROL_LIVE_QUERIES=1` is set:
+
+```bash
+cd python && AROL_LIVE_QUERIES=1 ../.venv/bin/python -m pytest -q tests/test_brief_queries_live.py
+```
+
+Two of the queries are marked `xfail` because their answers are known to be weak
+(`docs/validation-log.md`); an unexpected pass there means one has been fixed.
+
+So a fresh clone shows 53 skips; a machine with the pool extracted but no store
+shows 51; adding a key removes 2 more; and running with the store, a model and
+`AROL_LIVE_QUERIES=1` removes the 43.
 
 The C++ side has gates too, and this is the only place that says so: **4 C++
 tests** can skip in the default build. Two are pool-gated — the real-day-file

@@ -2087,3 +2087,39 @@ other answer is as in the previous run, with a plan that sometimes holds one mor
 tool (the model adds `failure_correlation` to some "why" questions, to no harm).
 Tally: 40 right and supported, 2 partial (4, 32), 1 wrong (25). The planner
 prompt is 3,977 tokens with thirteen tools, inside the 6144 minimum for `num_ctx`.
+
+## 2026-10-09 — The 43 queries as an automatic test
+
+The hand grading of the 43 example queries is now a test:
+`python/tests/test_brief_queries_live.py`. Each query is asked through
+`arol ask` and its answer is checked for the figures it must carry, with the
+tools the plan must hold, and for the sentences it must not say. The expected
+figures are computed in the test, from the store, with SQL that shares no code
+with `analytics`, and formatted as the report prints them (14,817,976 successes,
+99.9781% for head 29, 3 closures above 2.5 Nm, 1.7064 Nm in the week of 23 March,
+and so on), so there is no number to keep up to date by hand. A plan that came
+from the router, or an answer the narrator rejected, is a failure with the
+reason. It is opt-in (`AROL_LIVE_QUERIES=1`: it needs the store and a model) and
+skips, saying why, otherwise; the helpers that read a report run in every build.
+
+Live run, qwen3:14b, 8 minutes 45: 41 queries pass and 2 are `xfail`, the two
+known to be weak (25: names head 9 although the finding beside it says no head
+stands out; 32: calls one head's 0.013% "high rejects" and the March step
+"widespread"). An unexpected pass there is the signal to drop the mark.
+
+To see whether the check can tell a better run from a worse one, it was applied to
+the reports saved from each earlier run of the 43 queries:
+
+| run | passes of 43 | queries it fails (besides 25 and 32) |
+|---|---|---|
+| first, before any fix | 11 | 31, among them 6 and 7 (the false "all closures succeeded", "none failed") |
+| tables per head and per day | 21 | 21, among them 18 and 22 |
+| filter, method, figures | 33 | 9: 2, 17, 18, 19, 28, 29, 33, 36, 39 |
+| plan check, level step | 39 | 19 and 29 (no tool for them yet) |
+| `failure_correlation` | 41 | none |
+
+It follows the hand grading (9, 22, 38, 40 right) a little more generously at
+the start and agrees at the end, and it fails exactly the queries that were
+wrong. What it does not do: it checks that figures are present and that named
+wrong phrasings are absent, not that every sentence of the answer is true. It
+cannot see the first sentence of 25, which is why 25 is marked, not fixed.
