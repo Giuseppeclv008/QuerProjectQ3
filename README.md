@@ -1572,7 +1572,7 @@ scripts/arol ask "any anomalies in February?" --period 2026-02 \
 
 | field | default | what it does |
 |---|---|---|
-| `provider` | `ollama` | `ollama` or `anthropic`; the only field that has to change to move between local and hosted |
+| `provider` | `ollama` | `ollama` or `anthropic`; moving between local and hosted changes this and `model` (the default model is a local one) |
 | `model` | `qwen3:14b` | with `anthropic`, any current model id — `claude-sonnet-5` and `claude-haiku-4-5` are the cheaper tiers |
 | `think` | `false` | Ollama only; skips qwen3's reasoning pass. Set `null` for a non-thinking model (qwen2.5) |
 | `effort` | `high` | `low`..`max`; Anthropic-only, and deliberately never sent to Ollama, which rejects it |
@@ -1602,7 +1602,7 @@ many questions.
 ### Running the model locally
 
 `ask` works against a model running on your machine (the default) or a hosted
-one. The only field that changes is `provider`:
+one. Locally there is nothing to set beyond pulling the model:
 
 ```bash
 ollama serve && ollama pull qwen3:14b
@@ -1727,15 +1727,15 @@ No path, band, or threshold is hard-coded. `arol.json`:
 For the hosted API instead: `"provider": "anthropic"`, `"model": "claude-opus-5"`,
 `"effort": "high"`.
 
-Tuning the local model — smaller narrator input, cheapest planning tier:
+Tuning the local model — a smaller model, cheapest planning tier:
 
 ```json
 {
   "provider": "ollama",
   "model": "qwen2.5:7b",
+  "think": null,
   "ollama_host": "http://localhost:11434",
   "num_ctx": 8192,
-  "narrator_max_items": 20,
   "max_anomaly_items": 5000,
   "planning": "classify"
 }
@@ -1747,7 +1747,7 @@ prints above them (see `docs/agent-decision-flow.md`, *Narration*).
 `narrator_max_items` therefore only caps the lists a hosted model is sent.
 
 `num_ctx` must be at least 6144 and is rejected below it: the planner prompt
-alone is ~3,600 tokens, Ollama defaults to 2048, and it **truncates silently**
+alone is ~4,000 tokens, Ollama defaults to 2048, and it **truncates silently**
 rather than erroring — which looks exactly like a stupid model.
 
 `think` (Ollama only) controls a thinking model's reasoning pass: `false` skips

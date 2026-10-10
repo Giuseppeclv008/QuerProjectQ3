@@ -2,7 +2,8 @@
 
 If a tool exists in analytics.tools but not here, the agent can never call it.
 If it exists here with the wrong signature, the executor blows up at run time
-instead of at import time. Both are pinned below.
+instead of at import time. The signatures are pinned below; the names against a
+hand-kept list of the thirteen, so a new tool goes into that list too.
 """
 import inspect
 

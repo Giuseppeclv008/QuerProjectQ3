@@ -3,8 +3,9 @@
 The same entries do three jobs: they generate the schema the model plans against,
 they validate what it plans, and they dispatch the call. That is deliberate -- a
 tool the model can name is by construction a tool that exists with those exact
-arguments, and adding a WP2 tool without registering it fails a test rather than
-silently making it unreachable.
+arguments. The thirteen names are pinned by a test, so dropping or renaming one
+fails it; a new WP2 tool still has to be registered here by hand, or the model
+can never reach it.
 """
 from dataclasses import dataclass
 

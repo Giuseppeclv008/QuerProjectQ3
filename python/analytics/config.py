@@ -51,10 +51,12 @@ class Config:
 
     # WP3: the model that plans and narrates. It never computes a number.
     #
-    # `provider` is the only field that has to change to move between a hosted
-    # model and one running on the machine. Everything downstream -- the tools,
-    # the executor, the renderer -- is untouched by the choice, because the model
-    # only ever decides which analyses to run and how to word them.
+    # `provider` and `model` are the fields that change to move between a hosted
+    # model and one running on the machine (the default model is a local one, so
+    # switching the provider alone sends its name to the other side). Everything
+    # downstream -- the tools, the executor, the renderer -- is untouched by the
+    # choice, because the model only ever decides which analyses to run and how
+    # to word them.
     provider: str = "ollama"        # ollama | anthropic
     model: str = "qwen3:14b"
     max_tokens: int = 16000
@@ -65,7 +67,7 @@ class Config:
 
     # ollama only.
     ollama_host: str = "http://localhost:11434"
-    num_ctx: int = 8192             # Ollama defaults to 2048; the planner needs ~3.6k
+    num_ctx: int = 8192             # Ollama defaults to 2048; the planner needs ~4k
     # Ollama's `think`: false skips a thinking model's reasoning (qwen3,
     # gpt-oss...) for speed; "low"/"medium"/"high" set gpt-oss's level. None
     # sends nothing, leaving the model's own default -- which is what a
@@ -81,8 +83,9 @@ class Config:
     #   classify -- choose one of the three report types; use its canned plan
     planning: str = "plan"
 
-    # Ceiling on how many items of a list-valued result reach the narrator. Sized
-    # for a large context; drop it to ~20 for a local model.
+    # Ceiling on how many items of a list-valued result reach a hosted narrator,
+    # the only one sent the raw results. A local model is handed the findings
+    # and tables instead, cut to fit num_ctx, so this does not apply to it.
     narrator_max_items: int = 120
 
     # Most individual hits any one anomaly category will itemise. A hit list is

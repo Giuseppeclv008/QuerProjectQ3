@@ -146,8 +146,8 @@ def _bounded(value, limit):
     February alone gives `anomalies` 162,019 deviation hits and `idle_periods`
     25,046 periods. Serialising those whole builds a prompt no request can
     carry, so `ask` would fail on every question about real data. The cap
-    (cfg.narrator_max_items, configurable because a local model's context is a
-    fraction of a hosted one's) passes every grouping through whole and
+    (cfg.narrator_max_items; only the hosted path sends raw results, so only it
+    is capped here) passes every grouping through whole and
     truncates only the hit lists: the tools return their counts alongside, and
     the narrator is forbidden to compute anything from the items.
 
