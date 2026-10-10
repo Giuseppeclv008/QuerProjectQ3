@@ -188,7 +188,7 @@ day-files are offset from midnight) and reconciled in
       arol report kpi       --period 2026-02
       arol report drift     --period 2026-02..2026-04
       arol report anomalies --period 2026-02
-      arol ask "which head behaves differently, and why?"
+      arol ask "Is there a head with an unusual number of failed closures?"
 
 - **The three `report` verbs have no model in them.** Same store, same period,
   the same report every time, bar the generation timestamp — that is what makes
@@ -300,8 +300,9 @@ day-files are offset from midnight) and reconciled in
 - Live on qwen3:14b via local Ollama, from `main`: `arol ask "Is there a head
   with an unusual number of failed closures?"`, with no `--period`, so the whole
   store and the figures of slide 9 (head 29 with 117 of the 1,095 rejects, head
-  35 with 78). Show the plan the model chose. It is the brief's query 26, which
-  the live test passes. Then the same question with `--provider anthropic` and
+  35 with 78). Show the plan the model chose. It is the brief's query 26: the
+  live test passes it on February, and over the whole store the evidence is
+  the committed run below. Then the same question with `--provider anthropic` and
   no key: it falls back to the router (the anomalies plan) and *says so* in the
   report. The flag is not optional: the code defaults to Ollama, so unsetting
   the key alone changes nothing and the model simply plans again.
