@@ -148,7 +148,7 @@ Then (./arol.json is read automatically; --config FILE picks another):
   drift      how torque and success rate move over time, head by head
   anomalies  readings outside the torque band, unusual heads, rejected caps
 
-Each command prints a folder (reports/kpi, reports/drift, ...) containing:
+Each command prints a folder (docs/reports/kpi, docs/reports/drift, ...) containing:
   report.md      the report (source of truth)
   report.html    the same, one portable file with the plots inside
   trace.json     every analysis that was run, with its arguments
@@ -165,7 +165,7 @@ Ask a question in plain English (a model picks which analyses to run):
                  add   --provider anthropic --model claude-opus-5
   The numbers always come from the analyses, never from the model. With no key
   or no model reachable, ask falls back to a keyword router and the report
-  says so. Answers go to reports/ask/<timestamp>/.
+  says so. Answers go to docs/reports/ask/<timestamp>/.
 
 
 5. PARAMETERS
