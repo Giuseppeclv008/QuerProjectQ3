@@ -300,12 +300,16 @@ day-files are offset from midnight) and reconciled in
 - Live on qwen3:14b via local Ollama, from `main`: `arol ask "Is there a head
   with an unusual number of failed closures?"`, with no `--period`, so the whole
   store and the figures of slide 9 (head 29 with 117 of the 1,095 rejects, head
-  35 with 78). Show the plan the model chose. It is the brief's query 26: the
-  live test passes it on February, and over the whole store the evidence is
-  the committed run below. Then the same question with `--provider anthropic` and
-  no key: it falls back to the router (the anomalies plan) and *says so* in the
-  report. The flag is not optional: the code defaults to Ollama, so unsetting
-  the key alone changes nothing and the model simply plans again.
+  35 with 78). Show the plan the model chose, then the report it writes: the
+  model's Answer on top, every number in it checked against the deterministic
+  findings below, the table per head, the chart and the limits. It is the
+  brief's query 26: the live test passes it on February, and over the whole
+  store the evidence is the committed run below.
+- **The hosted API with no key** (`--provider anthropic`): the same question
+  falls back to the router (the anomalies plan) and the report says so.
+  *On the slide, said in one sentence, not run live.* If it is ever run, the
+  flag is not optional: the code defaults to Ollama, so unsetting the key alone
+  changes nothing and the model simply plans again.
 - Committed artifacts: [`docs/reports/`](../reports/) — `kpi-2026-02`,
   `drift-2026-02_2026-04`, `anomalies-2026-02`, and `ask-live-sample` (the demo
   question on qwen3:14b, 19 s warm), all regenerated on 2026-10-09.
