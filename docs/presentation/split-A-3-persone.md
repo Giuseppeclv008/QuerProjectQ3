@@ -13,8 +13,8 @@ Chi prepara non è sempre chi parla: vedi [§ Slide corali](#slide-corali--chi-p
 | | Ruolo | Slide proprie | Anche a voce | Parlato |
 |---|---|---|---|---|
 | P1 | Ingestion core + semantica del dato | 3, 5, 9 (la dice P2) | titolo, 1, 8 (testo di P3) | **6:15** |
-| P2 | Runtime distribuito, performance, evidenza sperimentale | 4 | 2, 9 (testo di P1), primo bullet della 11 | **5:05** |
-| P3 | Analytics, agente, BOT, limiti | 6, 7, 10 | 11 | **6:10** |
+| P2 | Runtime distribuito, performance, evidenza sperimentale | 4 | 2, 9 (testo di P1); alla 11 guida il terminale | **4:40** |
+| P3 | Analytics, agente, BOT, limiti | 6, 7, 10 | 11 | **6:35** |
 
 ## Budget — il tetto è 20 minuti
 
@@ -36,22 +36,22 @@ di 2:30 serve al rallentamento naturale davanti alla commissione. I tempi qui so
 | 8. WP4 — il BOT | P1 (testo di P3) | 1:25 |
 | 9. Un risultato | P2 (testo di P1) | 1:35 |
 | 10. Limiti | P3 | 1:15 |
-| 11. Demo | P3, primo bullet P2 | 2:10 |
+| 11. Demo | P3 (P2 al terminale) | 2:10 |
 | | | **17:30** |
 
 Se si sfora, si taglia dalla **3** e dalla **7**: sono le due che si allargano da sole. Non
 dalla 11, che è l'unica parte non recuperabile a voce.
 
 **La 8 la dice P1, la 9 la dice P2.** Se ognuna la dicesse chi la scrive, il parlato sarebbe
-6:25 / 3:30 / 7:35; così è 6:15 / 5:05 / 6:10.
+6:25 / 3:05 / 8:00; così è 6:15 / 4:40 / 6:35.
 **I testi restano di chi li ha scritti.** La 8 è di P3: le domande di dettaglio su `cli.py`,
 `render.py`, exit code e rendering **tornano a P3**. La 9 è di P1: le domande sul dato **tornano
 a P1**, quelle su come i tool calcolano i numeri a P3. Chi presenta non possiede.
 
-Demo (slide 11): **parla P3, guida il terminale P2**, con una eccezione — il primo bullet
-(`scripts/demo.sh`, 55,1 M righe, 12/12 step, ~5 s) lo dice **P2 mentre digita**. È la sua
-evidenza misurata (5,2 s il 9/10), è lui a rimisurare quel tempo sulla macchina della
-presentazione, e la frase copre l'attesa. P3 prende i bullet 2–5 e la frase di chiusura.
+Demo (slide 11): **parla solo P3, P2 guida il terminale e non parla**: nessun cambio di voce
+dentro la slide. La macchina resta di P2: è lui a rimisurare il tempo di `scripts/demo.sh`
+(5,2 s il 9/10) sulla macchina della presentazione e a passarlo a P3 prima del talk, perché
+la slide dice «about 5 seconds».
 La demo gira da `main` (`fix/agentic_call` è stato unito il 9/10 e sul remote non c'è più):
 `ask` usa di default Ollama con qwen3:14b.
 Per questo il ripiego del bullet 03 si lancia con `--provider anthropic` e senza chiave:
@@ -83,7 +83,7 @@ lo possiede e lo dice chi ha il turno.
 | Titolo | P3 (tiene il contenuto del deck e la sua build) | **P1** | 20 s, nessun contenuto tecnico. P1 apre e prosegue dritto sulla 1: un handoff in meno e una voce sola, come vuole la nota del deck ("non presentarsi uno per uno"). |
 | 1. Il problema | **P1**; l'ultimo bullet ("far rispondere un agente") lo scrive P3 | **P1** | Ogni bullet è suo: 36 teste @1 Hz, 89 file, stato-non-eventi, 24,5% di duplicati, chiusura dal delta del contatore. È la frase-modello del suo ruolo. |
 | 2. Architettura | **P2**; livelli 3–4 li scrive P3, i livelli 1–2 li valida P1 (la riga WP5 non è più sulla slide: si dice a voce) | **P2** | Il C4 container è una vista di processo: casa sua. E deve piantare *clean* contro *merge* e lo store per-worker **prima** della slide 4, altrimenti 7,2× contro 3,83× non si capisce. Evita anche a P1 il blocco titolo-1-2-3 di fila. |
-| 11. Demo | **P2** (macchina, `demo.sh`, tempo rimisurato) + **P3** (sequenza `ask`, ripiego) | **P3** voce, **P2** terminale | Vedi la nota in testa al documento: il primo bullet lo dice P2 mentre digita. |
+| 11. Demo | **P2** (macchina, `demo.sh`, tempo rimisurato) + **P3** (sequenza `ask`, ripiego) | **P3** voce, **P2** terminale | P2 prepara la macchina e rimisura il tempo; in scena guida il terminale senza parlare (vedi la nota in testa al documento). |
 
 La 2 ridisegna nel deck il C4 container di [`docs/diagrams/C4_Container.png`](../diagrams/C4_Container.png).
 
@@ -270,5 +270,4 @@ stessa misura, convenzione dichiarata in `docs/bench/results.md`.)*
 - P3 → P1, fine 7: "…il modello sceglie il piano. Ecco cosa ci si comanda da riga di comando."
 - P1 → P2, fine 8: "…lo stesso report ogni volta. E il report ha trovato una cosa."
 - P2 → P3, fine 9: "…una testa sola. Adesso cosa **non** copriamo."
-- P2 → P3, dentro la 11: "12 su 12, senza modello. Ora con il modello."
 - P3 → chiusura: "il modello ha scelto le analisi; l'SQL ha prodotto ogni numero."
