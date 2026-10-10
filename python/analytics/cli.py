@@ -37,6 +37,10 @@ log = logging.getLogger("arol")
 # common case -- one store per checkout -- needs no flag on every command.
 DEFAULT_CONFIG = "arol.json"
 
+# Where the committed reports live, so a run from the repo root lands beside
+# them (docs/reports/ask/<timestamp>/ for an ask) instead of in a stray folder.
+DEFAULT_OUT = "docs/reports"
+
 
 def _build_parser():
     # The options live on a parent parser rather than on the top-level one so
@@ -47,8 +51,9 @@ def _build_parser():
     common.add_argument("--config", default=None,
                         help=f"JSON config file (default: ./{DEFAULT_CONFIG} if present, "
                              "else built-in defaults)")
-    common.add_argument("--out", default="reports",
-                        help="directory to write report directories into")
+    common.add_argument("--out", default=DEFAULT_OUT,
+                        help=f"directory to write report directories into "
+                             f"(default: {DEFAULT_OUT})")
     common.add_argument("--period", default=None,
                         help="'YYYY-MM' or 'YYYY-MM..YYYY-MM'; omit for the whole store")
     common.add_argument("--pdf", action="store_true", help="also export PDF if possible")
